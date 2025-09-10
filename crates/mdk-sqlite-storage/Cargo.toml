@@ -1,0 +1,27 @@
+[package]
+name = "mdk-sqlite-storage"
+version = "0.5.0"
+edition = "2021"
+description = "Sqlite database for nostr-mls that implements the MdkStorageProvider Trait"
+authors = ["Jeff Gardner <j@jeffg.me>", "Yuki Kishimoto <yukikishimoto@protonmail.com>", "MDK Developers"]
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+readme = "README.md"
+rust-version = "1.80.0"
+keywords = ["nostr", "mls", "openmls", "sqlite"]
+
+[dependencies]
+nostr = { workspace = true, features = ["std"] }
+mdk-storage-traits.workspace = true
+openmls = { version = "0.7.0", default-features = false }
+openmls_sqlite_storage = { version = "0.1.0", default-features = false }
+refinery = { version = "0.8", features = ["rusqlite"] }
+rusqlite = { version = "0.32", features = ["bundled"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+tracing = { workspace = true, features = ["std"] }
+
+[dev-dependencies]
+mdk-storage-traits = { workspace = true, features = ["test-utils"] }
+tempfile.workspace = true

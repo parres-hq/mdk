@@ -1,0 +1,26 @@
+[workspace]
+members = ["crates/*"]
+default-members = ["crates/*"]
+resolver = "2"
+
+[workspace.package]
+authors = ["Jeff Gardner <j@jeffg.me>", "MDK Developers"]
+homepage = "https://github.com/parres-hq/mdk"
+repository = "https://github.com/parres-hq/mdk.git"
+license = "MIT"
+rust-version = "1.80.0"
+
+[workspace.dependencies]
+hex = { version = "0.4", default-features = false }
+lru = { version = "0.16", default-features = false }
+nostr = { version = "0.43", default-features = false }
+mdk-memory-storage = { version = "0.5.0", path = "./crates/mdk-memory-storage", default-features = false }
+mdk-sqlite-storage = { version = "0.5.0", path = "./crates/mdk-sqlite-storage", default-features = false }
+mdk-storage-traits = { version = "0.5.0", path = "./crates/mdk-storage-traits", default-features = false }
+mdk-core = { version = "0.5.0", path = "./crates/mdk-core", default-features = false }
+serde = { version = "1.0", default-features = false }
+serde_json = { version = "1.0", default-features = false }
+tempfile = "3.20"
+tokio = { version = ">=1.37", default-features = false }
+tracing = { version = "0.1", default-features = false }
+tracing-subscriber = "0.3"
