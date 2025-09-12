@@ -23,4 +23,5 @@ docs:
 # Check all
 check:
     @bash scripts/check-all.sh
+    @just test
 
