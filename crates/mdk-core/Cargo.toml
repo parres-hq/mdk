@@ -19,6 +19,7 @@ openmls = { version = "0.7.0", default-features = false }
 openmls_basic_credential = { version = "0.4.0", default-features = false }
 openmls_rust_crypto = { version = "0.4.0", default-features = false }
 openmls_traits = { version = "0.4.0", default-features = false }
+serde = { workspace = true, features = ["derive"] }
 tls_codec = "0.4"
 tracing = { workspace = true, features = ["std"] }
 

@@ -11,6 +11,7 @@
 #![doc = include_str!("../README.md")]
 
 use mdk_storage_traits::MdkStorageProvider;
+use serde::{Deserialize, Serialize};
 use openmls::prelude::*;
 use openmls_rust_crypto::RustCrypto;
 
@@ -30,7 +31,7 @@ use self::constant::{DEFAULT_CIPHERSUITE, REQUIRED_EXTENSIONS};
 pub use self::error::Error;
 
 /// MDK Group ID wrapper around OpenMLS GroupId
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct GroupId(openmls::group::GroupId);
 
 impl GroupId {

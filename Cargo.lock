@@ -1219,6 +1219,7 @@ dependencies = [
  "openmls_rust_crypto",
  "openmls_traits",
  "rand 0.9.2",
+ "serde",
  "tempfile",
  "tls_codec",
  "tokio",
