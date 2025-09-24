@@ -17,8 +17,8 @@ pub mod crypto_utils {
 pub mod cross_storage {
     use std::collections::BTreeSet;
 
+    use crate::GroupId;
     use nostr::{EventId, RelayUrl, Timestamp};
-    use openmls::group::GroupId;
 
     use crate::groups::error::GroupError;
     use crate::groups::types::{Group, GroupExporterSecret, GroupState};

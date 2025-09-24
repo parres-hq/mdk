@@ -11,8 +11,8 @@ use mdk_storage_traits::messages::types::{
 use mdk_storage_traits::welcomes::types::{
     ProcessedWelcome, ProcessedWelcomeState, Welcome, WelcomeState,
 };
+use mdk_storage_traits::GroupId;
 use nostr::{EventId, JsonUtil, Kind, PublicKey, RelayUrl, Tags, Timestamp, UnsignedEvent};
-use openmls::group::GroupId;
 use rusqlite::types::{FromSql, FromSqlError, FromSqlResult, ToSql, ToSqlOutput, Type, ValueRef};
 use rusqlite::{Error, Result as SqliteResult, Row};
 

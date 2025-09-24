@@ -13,8 +13,8 @@ keywords = ["nostr", "mls", "openmls", "memory"]
 
 [dependencies]
 lru.workspace = true
-nostr = { workspace = true, features = ["std"] }
 mdk-storage-traits.workspace = true
+nostr = { workspace = true, features = ["std"] }
 openmls = { version = "0.7.0", default-features = false }
 openmls_memory_storage = { version = "0.4.0", default-features = false }
 parking_lot = "0.12"

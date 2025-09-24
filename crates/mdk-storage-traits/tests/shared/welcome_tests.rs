@@ -2,8 +2,8 @@
 
 use mdk_storage_traits::groups::GroupStorage;
 use mdk_storage_traits::welcomes::WelcomeStorage;
+use mdk_storage_traits::GroupId;
 use nostr::EventId;
-use openmls::group::GroupId;
 
 use super::{create_test_group, create_test_processed_welcome, create_test_welcome};
 

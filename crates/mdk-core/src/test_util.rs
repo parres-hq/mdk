@@ -126,13 +126,13 @@ where
         )
         .expect("Failed to create group");
 
-    let group_id = create_result.group.mls_group_id.clone();
+    let group_id = create_result.group.mls_group_id;
 
     // Merge the pending commit to apply the member additions
-    mdk.merge_pending_commit(&group_id.clone().into())
+    mdk.merge_pending_commit(&group_id.clone())
         .expect("Failed to merge pending commit");
 
-    group_id.into()
+    group_id
 }
 
 /// Creates a test message rumor (unsigned event)

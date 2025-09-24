@@ -11,7 +11,6 @@
 #![doc = include_str!("../README.md")]
 
 use mdk_storage_traits::MdkStorageProvider;
-use serde::{Deserialize, Serialize};
 use openmls::prelude::*;
 use openmls_rust_crypto::RustCrypto;
 
@@ -30,33 +29,8 @@ pub mod welcomes;
 use self::constant::{DEFAULT_CIPHERSUITE, REQUIRED_EXTENSIONS};
 pub use self::error::Error;
 
-/// MDK Group ID wrapper around OpenMLS GroupId
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct GroupId(openmls::group::GroupId);
-
-impl GroupId {
-    /// Create a new GroupId from a byte slice
-    pub fn from_slice(bytes: &[u8]) -> Self {
-        Self(openmls::group::GroupId::from_slice(bytes))
-    }
-
-    /// Get the underlying OpenMLS GroupId (internal use)
-    pub(crate) fn inner(&self) -> &openmls::group::GroupId {
-        &self.0
-    }
-}
-
-impl From<openmls::group::GroupId> for GroupId {
-    fn from(id: openmls::group::GroupId) -> Self {
-        Self(id)
-    }
-}
-
-impl From<&openmls::group::GroupId> for GroupId {
-    fn from(id: &openmls::group::GroupId) -> Self {
-        Self(id.clone())
-    }
-}
+// Re-export GroupId for convenience
+pub use mdk_storage_traits::GroupId;
 
 /// The main struct for the Nostr MLS implementation.
 ///

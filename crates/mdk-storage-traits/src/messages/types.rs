@@ -3,9 +3,9 @@
 use std::fmt;
 use std::str::FromStr;
 
+use crate::GroupId;
 use nostr::event::Kind;
 use nostr::{EventId, PublicKey, Tags, Timestamp, UnsignedEvent};
-use openmls::group::GroupId;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use super::error::MessageError;

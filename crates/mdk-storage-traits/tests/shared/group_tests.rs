@@ -5,8 +5,8 @@ use std::collections::BTreeSet;
 use mdk_storage_traits::groups::error::GroupError;
 use mdk_storage_traits::groups::types::GroupExporterSecret;
 use mdk_storage_traits::groups::GroupStorage;
+use mdk_storage_traits::GroupId;
 use nostr::RelayUrl;
-use openmls::group::GroupId;
 
 use super::create_test_group;
 

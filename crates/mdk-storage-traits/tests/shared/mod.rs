@@ -9,8 +9,8 @@ use mdk_storage_traits::messages::types::{
 use mdk_storage_traits::welcomes::types::{
     ProcessedWelcome, ProcessedWelcomeState, Welcome, WelcomeState,
 };
+use mdk_storage_traits::GroupId;
 use nostr::{EventId, PublicKey, RelayUrl, Timestamp};
-use openmls::group::GroupId;
 
 pub mod group_tests;
 pub mod message_tests;

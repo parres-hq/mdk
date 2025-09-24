@@ -8,8 +8,8 @@ use std::collections::BTreeSet;
 use mdk_memory_storage::MdkMemoryStorage;
 use mdk_sqlite_storage::MdkSqliteStorage;
 use mdk_storage_traits::groups::GroupStorage;
+use mdk_storage_traits::GroupId;
 use nostr::RelayUrl;
-use openmls::group::GroupId;
 use openmls_memory_storage::MemoryStorage;
 
 mod shared;

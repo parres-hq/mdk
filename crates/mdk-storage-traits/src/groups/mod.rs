@@ -9,8 +9,8 @@
 
 use std::collections::BTreeSet;
 
+use crate::GroupId;
 use nostr::{PublicKey, RelayUrl};
-use openmls::group::GroupId;
 
 pub mod error;
 pub mod types;

@@ -115,8 +115,8 @@ mod tests {
     use mdk_storage_traits::groups::types::{Group, GroupState};
     use mdk_storage_traits::groups::GroupStorage;
     use mdk_storage_traits::messages::types::{MessageState, ProcessedMessageState};
+    use mdk_storage_traits::GroupId;
     use nostr::{EventId, Kind, PublicKey, Tags, Timestamp, UnsignedEvent};
-    use openmls::group::GroupId;
 
     use super::*;
 

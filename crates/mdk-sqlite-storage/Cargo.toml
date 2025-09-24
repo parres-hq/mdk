@@ -12,8 +12,8 @@ rust-version = "1.85.0"
 keywords = ["nostr", "mls", "openmls", "sqlite"]
 
 [dependencies]
-nostr = { workspace = true, features = ["std"] }
 mdk-storage-traits.workspace = true
+nostr = { workspace = true, features = ["std"] }
 openmls = { version = "0.7.0", default-features = false }
 openmls_sqlite_storage = { version = "0.1.0", default-features = false }
 refinery = { version = "0.8", features = ["rusqlite"] }

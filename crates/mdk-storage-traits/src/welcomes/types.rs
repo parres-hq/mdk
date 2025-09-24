@@ -4,8 +4,8 @@ use std::collections::BTreeSet;
 use std::fmt;
 use std::str::FromStr;
 
+use crate::GroupId;
 use nostr::{EventId, PublicKey, RelayUrl, Timestamp, UnsignedEvent};
-use openmls::group::GroupId;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use super::error::WelcomeError;

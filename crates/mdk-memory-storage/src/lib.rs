@@ -17,9 +17,9 @@ use lru::LruCache;
 use mdk_storage_traits::groups::types::{Group, GroupExporterSecret, GroupRelay};
 use mdk_storage_traits::messages::types::{Message, ProcessedMessage};
 use mdk_storage_traits::welcomes::types::{ProcessedWelcome, Welcome};
+use mdk_storage_traits::GroupId;
 use mdk_storage_traits::{Backend, MdkStorageProvider};
 use nostr::EventId;
-use openmls::group::GroupId;
 use openmls_memory_storage::MemoryStorage;
 use parking_lot::RwLock;
 
@@ -178,8 +178,8 @@ mod tests {
     use mdk_storage_traits::test_utils::crypto_utils::generate_random_bytes;
     use mdk_storage_traits::welcomes::types::{ProcessedWelcomeState, Welcome, WelcomeState};
     use mdk_storage_traits::welcomes::WelcomeStorage;
+    use mdk_storage_traits::GroupId;
     use nostr::{EventId, Kind, PublicKey, RelayUrl, Tags, Timestamp, UnsignedEvent};
-    use openmls::group::GroupId;
     use openmls_memory_storage::MemoryStorage;
 
     use super::*;

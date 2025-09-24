@@ -6,8 +6,8 @@ use mdk_storage_traits::groups::error::GroupError;
 use mdk_storage_traits::groups::types::{Group, GroupExporterSecret, GroupRelay};
 use mdk_storage_traits::groups::GroupStorage;
 use mdk_storage_traits::messages::types::Message;
+use mdk_storage_traits::GroupId;
 use nostr::{PublicKey, RelayUrl};
-use openmls::group::GroupId;
 use rusqlite::{params, OptionalExtension};
 
 use crate::db::{Hash32, Nonce12};

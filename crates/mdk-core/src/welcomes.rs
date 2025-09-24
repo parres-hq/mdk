@@ -86,7 +86,8 @@ where
                 .staged_welcome
                 .group_context()
                 .group_id()
-                .clone(),
+                .clone()
+                .into(),
             nostr_group_id: welcome_preview.nostr_group_data.nostr_group_id,
             name: welcome_preview.nostr_group_data.name.clone(),
             description: welcome_preview.nostr_group_data.description.clone(),
@@ -104,7 +105,7 @@ where
             state: group_types::GroupState::Pending,
         };
 
-        let mls_group_id: GroupId = group.mls_group_id.clone();
+        let mls_group_id = group.mls_group_id.clone();
 
         // Save the pending group
         self.storage()
@@ -134,7 +135,8 @@ where
                 .staged_welcome
                 .group_context()
                 .group_id()
-                .clone(),
+                .clone()
+                .into(),
             nostr_group_id: welcome_preview.nostr_group_data.nostr_group_id,
             group_name: welcome_preview.nostr_group_data.name,
             group_description: welcome_preview.nostr_group_data.description,

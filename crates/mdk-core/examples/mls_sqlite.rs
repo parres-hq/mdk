@@ -95,10 +95,7 @@ async fn main() -> Result<(), Error> {
     // Now, let's also try sending a message to the group (using an unsigned Kind: 9 event)
     // We don't have to wait for Bob to join the group before we send our first message.
     let rumor = EventBuilder::new(Kind::Custom(9), "Hi Bob!").build(alice_keys.public_key());
-    let message_event = alice_mdk.create_message(
-        &GroupId::from_slice(alice_group.mls_group_id.as_slice()),
-        rumor.clone(),
-    )?;
+    let message_event = alice_mdk.create_message(&alice_group.mls_group_id, rumor.clone())?;
     // Alice would now publish the message_event to the Nostr network.
     tracing::info!("Message inner event created: {:?}", rumor);
     tracing::debug!("Message wrapper event created: {:?}", message_event);
@@ -121,7 +118,7 @@ async fn main() -> Result<(), Error> {
     assert_eq!(
         welcome.member_count as usize,
         alice_mdk
-            .get_members(&GroupId::from_slice(alice_group.mls_group_id.as_slice()))
+            .get_members(&alice_group.mls_group_id)
             .unwrap()
             .len(),
         "Welcome message group member count should match the group member count"
@@ -134,7 +131,7 @@ async fn main() -> Result<(), Error> {
     // Bob can now join the group
     bob_mdk.accept_welcome(welcome)?;
     let bobs_group = bob_mdk.get_groups()?.first().unwrap().clone();
-    let bob_mls_group_id = GroupId::from_slice(bobs_group.mls_group_id.as_slice());
+    let bob_mls_group_id = &bobs_group.mls_group_id;
 
     tracing::info!("Bob joined group");
 
@@ -169,9 +166,9 @@ async fn main() -> Result<(), Error> {
     );
     // Bob and Alice now have synced state for the group.
     assert_eq!(
-        bob_mdk.get_members(&bob_mls_group_id).unwrap().len(),
+        bob_mdk.get_members(bob_mls_group_id).unwrap().len(),
         alice_mdk
-            .get_members(&GroupId::from_slice(alice_group.mls_group_id.as_slice()))
+            .get_members(&alice_group.mls_group_id)
             .unwrap()
             .len(),
         "Groups should have 2 members"
@@ -189,7 +186,7 @@ async fn main() -> Result<(), Error> {
 
     tracing::info!("Bob processed message");
     let messages = bob_mdk
-        .get_messages(&bob_mls_group_id)
+        .get_messages(bob_mls_group_id)
         .map_err(|e| Error::Message(e.to_string()))?;
     tracing::info!("Bob got messages: {:?}", messages);
     let message = messages.first().unwrap();
@@ -218,7 +215,7 @@ async fn main() -> Result<(), Error> {
 
     assert_eq!(
         alice_mdk
-            .get_messages(&GroupId::from_slice(alice_group.mls_group_id.as_slice()))
+            .get_messages(&alice_group.mls_group_id)
             .unwrap()
             .len(),
         1,
@@ -233,7 +230,7 @@ async fn main() -> Result<(), Error> {
 
     assert_eq!(
         bob_mdk
-            .get_messages(&GroupId::from_slice(bobs_group.mls_group_id.as_slice()))
+            .get_messages(&bobs_group.mls_group_id)
             .unwrap()
             .len(),
         1,
@@ -243,9 +240,7 @@ async fn main() -> Result<(), Error> {
     tracing::info!("Alice about to process message");
     alice_mdk.process_message(&message_event)?;
 
-    let messages = alice_mdk
-        .get_messages(&GroupId::from_slice(alice_group.mls_group_id.as_slice()))
-        .unwrap();
+    let messages = alice_mdk.get_messages(&alice_group.mls_group_id).unwrap();
     let message = messages.first().unwrap();
     tracing::info!("Alice processed message: {:?}", message);
 
@@ -270,7 +265,7 @@ async fn main() -> Result<(), Error> {
     // Alice adds Charlie to the group
     tracing::info!("Alice adding Charlie to the group");
     let add_charlie_result = alice_mdk.add_members(
-        &GroupId::from_slice(alice_group.mls_group_id.as_slice()),
+        &alice_group.mls_group_id,
         std::slice::from_ref(&charlie_key_package_event),
     )?;
 
@@ -280,7 +275,7 @@ async fn main() -> Result<(), Error> {
     tracing::info!("Add commit processing result: {:?}", add_commit_result);
 
     // Alice merges the pending commit for adding Charlie
-    alice_mdk.merge_pending_commit(&GroupId::from_slice(alice_group.mls_group_id.as_slice()))?;
+    alice_mdk.merge_pending_commit(&alice_group.mls_group_id)?;
 
     // Charlie processes the welcome message
     if let Some(welcome_rumors) = add_charlie_result.welcome_rumors {
@@ -298,8 +293,7 @@ async fn main() -> Result<(), Error> {
         tracing::info!("Charlie joined the group");
 
         // Verify Charlie is in the group
-        let group_members =
-            alice_mdk.get_members(&GroupId::from_slice(alice_group.mls_group_id.as_slice()))?;
+        let group_members = alice_mdk.get_members(&alice_group.mls_group_id)?;
         assert_eq!(group_members.len(), 3, "Group should now have 3 members");
         assert!(
             group_members.contains(&charlie_keys.public_key()),
@@ -312,10 +306,8 @@ async fn main() -> Result<(), Error> {
     // ================================
 
     tracing::info!("Alice removing Charlie from the group");
-    let remove_charlie_result = alice_mdk.remove_members(
-        &GroupId::from_slice(alice_group.mls_group_id.as_slice()),
-        &[charlie_keys.public_key()],
-    )?;
+    let remove_charlie_result =
+        alice_mdk.remove_members(&alice_group.mls_group_id, &[charlie_keys.public_key()])?;
 
     // Bob processes the remove commit message
     tracing::info!("Bob processing Charlie removal commit");
@@ -326,11 +318,10 @@ async fn main() -> Result<(), Error> {
     );
 
     // Alice merges the pending commit for removing Charlie
-    alice_mdk.merge_pending_commit(&GroupId::from_slice(alice_group.mls_group_id.as_slice()))?;
+    alice_mdk.merge_pending_commit(&alice_group.mls_group_id)?;
 
     // Verify Charlie is no longer in the group
-    let group_members_after_removal =
-        alice_mdk.get_members(&GroupId::from_slice(alice_group.mls_group_id.as_slice()))?;
+    let group_members_after_removal = alice_mdk.get_members(&alice_group.mls_group_id)?;
     assert_eq!(
         group_members_after_removal.len(),
         2,
@@ -346,8 +337,7 @@ async fn main() -> Result<(), Error> {
     // ================================
 
     tracing::info!("Bob leaving the group");
-    let bob_leave_result =
-        bob_mdk.leave_group(&GroupId::from_slice(bobs_group.mls_group_id.as_slice()))?;
+    let bob_leave_result = bob_mdk.leave_group(&bobs_group.mls_group_id)?;
 
     // Alice processes Bob's leave proposal
     tracing::info!("Alice processing Bob's leave proposal");

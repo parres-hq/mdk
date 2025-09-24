@@ -88,7 +88,7 @@ where
     /// * `Err(Error)` - If there is an error accessing storage
     pub fn get_messages(&self, mls_group_id: &GroupId) -> Result<Vec<message_types::Message>> {
         self.storage()
-            .messages(mls_group_id.inner())
+            .messages(mls_group_id)
             .map_err(|e| Error::Message(e.to_string()))
     }
 
@@ -171,14 +171,14 @@ where
         // Get the rumor ID
         let rumor_id: EventId = rumor.id();
 
-        let event = self.build_encrypted_message_event(&mls_group.group_id().into(), message)?;
+        let event = self.build_encrypted_message_event(mls_group_id, message)?;
 
         // Create message to save to storage
         let message: message_types::Message = message_types::Message {
             id: rumor_id,
             pubkey: rumor.pubkey,
             kind: rumor.kind,
-            mls_group_id: mls_group_id.inner().clone(),
+            mls_group_id: mls_group_id.clone(),
             created_at: rumor.created_at,
             content: rumor.content.clone(),
             tags: rumor.tags.clone(),
@@ -572,7 +572,7 @@ where
 
         // Load the MLS group to get the current epoch
         let mls_group: MlsGroup = self
-            .load_mls_group(&group.mls_group_id.clone().into())
+            .load_mls_group(&group.mls_group_id)
             .map_err(|e| Error::Group(e.to_string()))?
             .ok_or(Error::GroupNotFound)?;
 
@@ -707,7 +707,7 @@ where
                         // Even though this is our own commit that we can't decrypt, we still need to
                         // sync the stored group metadata with the current MLS group state in case
                         // the group has been updated since the commit was created
-                        self.sync_group_metadata_from_mls(&group.mls_group_id.clone().into())
+                        self.sync_group_metadata_from_mls(&group.mls_group_id)
                             .map_err(|e| {
                                 Error::Message(format!("Failed to sync group metadata: {}", e))
                             })?;
@@ -738,7 +738,7 @@ where
                         tracing::debug!(target: "mdk_core::messages::process_message", "Found own commit with epoch mismatch, syncing group metadata");
 
                         // Sync the stored group metadata even though processing failed
-                        self.sync_group_metadata_from_mls(&group.mls_group_id.clone().into())
+                        self.sync_group_metadata_from_mls(&group.mls_group_id)
                             .map_err(|e| {
                                 Error::Message(format!("Failed to sync group metadata: {}", e))
                             })?;
@@ -837,7 +837,7 @@ where
         encrypted_content: &str,
         max_epoch_lookback: u64,
     ) -> Result<Vec<u8>> {
-        let group_id = mls_group.group_id();
+        let group_id: GroupId = mls_group.group_id().into();
         let current_epoch: u64 = mls_group.epoch().as_u64();
 
         // Start from current epoch and go backwards
@@ -855,7 +855,7 @@ where
             // Try to get the exporter secret for this epoch
             if let Ok(Some(secret)) = self
                 .storage()
-                .get_group_exporter_secret(group_id, epoch)
+                .get_group_exporter_secret(&group_id, epoch)
                 .map_err(|e| Error::Group(e.to_string()))
             {
                 // Try to decrypt with this epoch's secret
@@ -1182,7 +1182,7 @@ mod tests {
 
         // Verify all messages belong to the correct group
         for message in &messages {
-            assert_eq!(message.mls_group_id, group_id.inner().clone());
+            assert_eq!(message.mls_group_id, group_id.clone());
         }
     }
 
@@ -1196,7 +1196,7 @@ mod tests {
             )
             .unwrap(),
             kind: Kind::TextNote,
-            mls_group_id: openmls::group::GroupId::from_slice(&[1, 2, 3, 4]),
+            mls_group_id: GroupId::from_slice(&[1, 2, 3, 4]),
             created_at: Timestamp::now(),
             content: "Test".to_string(),
             tags: Tags::new(),

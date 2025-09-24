@@ -189,7 +189,7 @@ impl MdkStorageProvider for MdkSqliteStorage {
 mod tests {
     use std::collections::BTreeSet;
 
-    use openmls::group::GroupId;
+    use mdk_storage_traits::GroupId;
     use tempfile::tempdir;
 
     use super::*;
