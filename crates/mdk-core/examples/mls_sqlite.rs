@@ -25,7 +25,7 @@ fn generate_identity() -> (Keys, MDK<MdkSqliteStorage>, TempDir) {
 }
 
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() -> Result<(), Error> {
     let subscriber = FmtSubscriber::builder()
         .with_max_level(Level::INFO)
         .finish();

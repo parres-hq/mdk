@@ -41,9 +41,3 @@ pub use mdk_storage_traits::{Backend, MdkStorageProvider};
 pub use mdk_storage_traits::groups::types as group_types;
 pub use mdk_storage_traits::messages::types as message_types;
 pub use mdk_storage_traits::welcomes::types as welcome_types;
-
-// === Convenience Result Type ===
-/// A [`Result`] alias where the [`Err`] case is [`mdk_core::Error`](crate::Error).
-///
-/// This is a convenience type that is equivalent to `std::result::Result<T, mdk_core::Error>`.
-pub type Result<T> = std::result::Result<T, Error>;
