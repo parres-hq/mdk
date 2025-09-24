@@ -18,7 +18,6 @@ use mdk_storage_traits::groups::types as group_types;
 use mdk_storage_traits::messages::types as message_types;
 use mdk_storage_traits::MdkStorageProvider;
 use nostr::prelude::*;
-use openmls::group::GroupId;
 use openmls::prelude::*;
 use openmls_basic_credential::SignatureKeyPair;
 use tls_codec::Serialize as TlsSerialize;
@@ -26,6 +25,7 @@ use tls_codec::Serialize as TlsSerialize;
 use super::extension::NostrGroupDataExtension;
 use super::MDK;
 use crate::error::Error;
+use crate::GroupId;
 
 /// Result of creating a new MLS group
 #[derive(Debug)]
@@ -300,7 +300,7 @@ where
     /// * `Ok(None)` - If no group exists with the given ID
     /// * `Err(Error)` - If there is an error loading the group
     pub(crate) fn load_mls_group(&self, group_id: &GroupId) -> Result<Option<MlsGroup>, Error> {
-        MlsGroup::load(self.provider.storage(), group_id)
+        MlsGroup::load(self.provider.storage(), group_id.inner())
             .map_err(|e| Error::Provider(e.to_string()))
     }
 
@@ -325,7 +325,7 @@ where
 
         match self
             .storage()
-            .get_group_exporter_secret(group_id, group.epoch().as_u64())
+            .get_group_exporter_secret(group_id.inner(), group.epoch().as_u64())
             .map_err(|e| Error::Group(e.to_string()))?
         {
             Some(group_exporter_secret) => Ok(group_exporter_secret),
@@ -338,7 +338,7 @@ where
                         Error::Group("Failed to convert export secret to [u8; 32]".to_string())
                     })?;
                 let group_exporter_secret = group_types::GroupExporterSecret {
-                    mls_group_id: group_id.clone(),
+                    mls_group_id: group_id.inner().clone(),
                     epoch: group.epoch().as_u64(),
                     secret: export_secret,
                 };
@@ -365,7 +365,7 @@ where
     /// * `Err(Error)` - If there is an error accessing storage
     pub fn get_group(&self, group_id: &GroupId) -> Result<Option<group_types::Group>, Error> {
         self.storage()
-            .find_group_by_mls_group_id(group_id)
+            .find_group_by_mls_group_id(group_id.inner())
             .map_err(|e| Error::Group(e.to_string()))
     }
 
@@ -468,7 +468,7 @@ where
 
         // Check if current user is an admin
         let own_leaf = mls_group.own_leaf().ok_or(Error::OwnLeafNotFound)?;
-        if !self.is_leaf_node_admin(mls_group.group_id(), own_leaf)? {
+        if !self.is_leaf_node_admin(&mls_group.group_id().into(), own_leaf)? {
             return Err(Error::Group(
                 "Only group admins can add members".to_string(),
             ));
@@ -490,8 +490,10 @@ where
             .tls_serialize_detached()
             .map_err(|e| Error::Group(e.to_string()))?;
 
-        let commit_event =
-            self.build_encrypted_message_event(mls_group.group_id(), serialized_commit_message)?;
+        let commit_event = self.build_encrypted_message_event(
+            &mls_group.group_id().into(),
+            serialized_commit_message,
+        )?;
 
         // Create processed_message to track state of message
         let processed_message: message_types::ProcessedMessage = message_types::ProcessedMessage {
@@ -512,7 +514,7 @@ where
 
         // Get relays for this group
         let group_relays = self
-            .get_relays(mls_group.group_id())?
+            .get_relays(&mls_group.group_id().into())?
             .into_iter()
             .collect::<Vec<_>>();
 
@@ -593,8 +595,10 @@ where
             .tls_serialize_detached()
             .map_err(|e| Error::Group(e.to_string()))?;
 
-        let commit_event =
-            self.build_encrypted_message_event(mls_group.group_id(), serialized_commit_message)?;
+        let commit_event = self.build_encrypted_message_event(
+            &mls_group.group_id().into(),
+            serialized_commit_message,
+        )?;
 
         // Create processed_message to track state of message
         let processed_message: message_types::ProcessedMessage = message_types::ProcessedMessage {
@@ -660,7 +664,7 @@ where
             &signature_keypair,
         )?;
         let commit_event = self.build_encrypted_message_event(
-            mls_group.group_id(),
+            &mls_group.group_id().into(),
             message_out.tls_serialize_detached()?,
         )?;
 
@@ -769,7 +773,7 @@ where
     pub fn get_relays(&self, group_id: &GroupId) -> Result<BTreeSet<RelayUrl>, Error> {
         let relays = self
             .storage()
-            .group_relays(group_id)
+            .group_relays(group_id.inner())
             .map_err(|e| Error::Group(e.to_string()))?;
         Ok(relays.into_iter().map(|r| r.relay_url).collect())
     }
@@ -973,7 +977,7 @@ where
 
         let current_secret: group_types::GroupExporterSecret = self
             .storage()
-            .get_group_exporter_secret(group_id, mls_group.epoch().as_u64())
+            .get_group_exporter_secret(group_id.inner(), mls_group.epoch().as_u64())
             .map_err(|e| Error::Group(e.to_string()))?
             .ok_or(Error::GroupExporterSecretNotFound)?;
 
@@ -1022,8 +1026,10 @@ where
         // Serialize the message
         let serialized_commit_message = commit_message_bundle.commit().tls_serialize_detached()?;
 
-        let commit_event =
-            self.build_encrypted_message_event(mls_group.group_id(), serialized_commit_message)?;
+        let commit_event = self.build_encrypted_message_event(
+            &mls_group.group_id().into(),
+            serialized_commit_message,
+        )?;
 
         // Create processed_message to track state of message
         let processed_message: message_types::ProcessedMessage = message_types::ProcessedMessage {
@@ -1082,7 +1088,7 @@ where
             .map_err(|e| Error::Group(e.to_string()))?;
 
         let evolution_event =
-            self.build_encrypted_message_event(group.group_id(), serialized_message_out)?;
+            self.build_encrypted_message_event(&group.group_id().into(), serialized_message_out)?;
 
         // Create processed_message to track state of message
         let processed_message: message_types::ProcessedMessage = message_types::ProcessedMessage {
@@ -1153,7 +1159,7 @@ where
 
             // Sync relays atomically - replace entire relay set with current extension data
             self.storage()
-                .replace_group_relays(group_id, group_data.relays)
+                .replace_group_relays(group_id.inner(), group_data.relays)
                 .map_err(|e| Error::Group(e.to_string()))?;
         }
 
@@ -1288,7 +1294,6 @@ mod tests {
     use mdk_memory_storage::MdkMemoryStorage;
     use mdk_storage_traits::messages::{types as message_types, MessageStorage};
     use nostr::{Keys, PublicKey};
-    use openmls::group::GroupId;
     use openmls::prelude::BasicCredential;
 
     use super::NostrGroupDataExtension;
@@ -1350,7 +1355,7 @@ mod tests {
             )
             .expect("Failed to create group");
 
-        let group_id = &create_result.group.mls_group_id;
+        let group_id = &create_result.group.mls_group_id.into();
 
         // Merge the pending commit to apply the member additions
         creator_mdk
@@ -1391,7 +1396,7 @@ mod tests {
             )
             .expect("Failed to create group");
 
-        let group_id = &create_result.group.mls_group_id;
+        let group_id = &create_result.group.mls_group_id.into();
 
         // Merge the pending commit to apply the member additions
         creator_mdk
@@ -1432,7 +1437,7 @@ mod tests {
             )
             .expect("Failed to create group");
 
-        let group_id = &create_result.group.mls_group_id;
+        let group_id = &create_result.group.mls_group_id.into();
 
         // Merge the pending commit to apply the member additions
         creator_mdk
@@ -1511,7 +1516,7 @@ mod tests {
             )
             .expect("Failed to create group");
 
-        let group_id = &create_result.group.mls_group_id;
+        let group_id = &create_result.group.mls_group_id.into();
 
         // Merge the pending commit to apply the member additions
         creator_mdk
@@ -1556,7 +1561,7 @@ mod tests {
             )
             .expect("Failed to create group");
 
-        let group_id = &create_result.group.mls_group_id;
+        let group_id = &create_result.group.mls_group_id.into();
 
         // Merge the pending commit to apply the member additions
         creator_mdk
@@ -1603,7 +1608,7 @@ mod tests {
             )
             .expect("Failed to create group");
 
-        let group_id = &create_result.group.mls_group_id;
+        let group_id = &create_result.group.mls_group_id.into();
 
         // Merge the pending commit to apply the member additions
         admin_mdk
@@ -1658,7 +1663,7 @@ mod tests {
             )
             .expect("Failed to create group");
 
-        let group_id = &create_result.group.mls_group_id;
+        let group_id = &create_result.group.mls_group_id.into();
 
         // Merge the pending commit to apply the member additions
         creator_mdk
@@ -1700,10 +1705,8 @@ mod tests {
 
     #[test]
     fn test_remove_members_group_not_found() {
-        use openmls::group::GroupId;
-
         let mdk = create_test_mdk();
-        let non_existent_group_id = GroupId::from_slice(&[1, 2, 3, 4, 5]);
+        let non_existent_group_id = crate::GroupId::from_slice(&[1, 2, 3, 4, 5]);
         let dummy_pubkey = Keys::generate().public_key();
 
         let result = mdk.remove_members(&non_existent_group_id, &[dummy_pubkey]);
@@ -1735,7 +1738,7 @@ mod tests {
             )
             .expect("Failed to create group");
 
-        let group_id = &create_result.group.mls_group_id;
+        let group_id = &create_result.group.mls_group_id.into();
 
         // Merge the pending commit to apply the member additions
         creator_mdk
@@ -1777,7 +1780,7 @@ mod tests {
             )
             .expect("Failed to create group");
 
-        let group_id = &create_result.group.mls_group_id;
+        let group_id = &create_result.group.mls_group_id.into();
 
         // Merge the pending commit to apply the member additions
         creator_mdk
@@ -1853,7 +1856,7 @@ mod tests {
             )
             .expect("Failed to create group");
 
-        let group_id = &create_result.group.mls_group_id;
+        let group_id = &create_result.group.mls_group_id.into();
 
         // Merge the pending commit to apply the member additions
         creator_mdk
@@ -1935,10 +1938,8 @@ mod tests {
 
     #[test]
     fn test_self_update_group_not_found() {
-        use openmls::group::GroupId;
-
         let mdk = create_test_mdk();
-        let non_existent_group_id = GroupId::from_slice(&[1, 2, 3, 4, 5]);
+        let non_existent_group_id = crate::GroupId::from_slice(&[1, 2, 3, 4, 5]);
 
         let result = mdk.self_update(&non_existent_group_id);
         assert!(
@@ -1969,7 +1970,7 @@ mod tests {
             )
             .expect("Failed to create group");
 
-        let group_id = &create_result.group.mls_group_id;
+        let group_id = &create_result.group.mls_group_id.into();
 
         // Merge the pending commit to apply the member additions
         creator_mdk
@@ -2052,7 +2053,7 @@ mod tests {
             )
             .expect("Failed to create group");
 
-        let group_id = &create_result.group.mls_group_id;
+        let group_id = &create_result.group.mls_group_id.into();
 
         // Merge the pending commit to apply the member additions
         creator_mdk
@@ -2122,7 +2123,7 @@ mod tests {
             )
             .expect("Failed to create group");
 
-        let group_id = &create_result.group.mls_group_id;
+        let group_id = &create_result.group.mls_group_id.into();
 
         // Merge the pending commit to apply the member additions
         creator_mdk
@@ -2276,7 +2277,7 @@ mod tests {
             )
             .expect("Failed to create group");
 
-        let group_id = &create_result.group.mls_group_id;
+        let group_id = &create_result.group.mls_group_id.into();
 
         // Merge the pending commit to apply the member additions
         creator_mdk
@@ -2388,7 +2389,7 @@ mod tests {
             )
             .expect("Failed to create group");
 
-        let group_id = &create_result.group.mls_group_id;
+        let group_id = &create_result.group.mls_group_id.into();
 
         // Merge the pending commit to apply the member additions
         creator_mdk
@@ -2462,7 +2463,7 @@ mod tests {
             )
             .expect("Failed to create group");
 
-        let group_id = &create_result.group.mls_group_id;
+        let group_id = &create_result.group.mls_group_id.into();
 
         // Helper function to verify stored group epoch matches MLS group epoch
         let verify_epoch_sync = || {
@@ -2535,7 +2536,7 @@ mod tests {
         let creator_mdk = create_test_mdk();
 
         // Test with non-existent group
-        let non_existent_group_id = GroupId::from_slice(&[1, 2, 3, 4, 5]);
+        let non_existent_group_id = crate::GroupId::from_slice(&[1, 2, 3, 4, 5]);
         let result = creator_mdk.sync_group_metadata_from_mls(&non_existent_group_id);
         assert!(matches!(result, Err(crate::Error::GroupNotFound)));
     }

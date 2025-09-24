@@ -3,9 +3,9 @@
 //! This module provides shared test utilities used across multiple test modules
 //! to avoid code duplication and ensure consistency in test setup.
 
+use crate::GroupId;
 use mdk_storage_traits::MdkStorageProvider;
 use nostr::{Event, EventBuilder, Keys, Kind, PublicKey, RelayUrl};
-use openmls::group::GroupId;
 
 use crate::groups::NostrGroupConfigData;
 use crate::MDK;
@@ -129,10 +129,10 @@ where
     let group_id = create_result.group.mls_group_id.clone();
 
     // Merge the pending commit to apply the member additions
-    mdk.merge_pending_commit(&group_id)
+    mdk.merge_pending_commit(&group_id.clone().into())
         .expect("Failed to merge pending commit");
 
-    group_id
+    group_id.into()
 }
 
 /// Creates a test message rumor (unsigned event)

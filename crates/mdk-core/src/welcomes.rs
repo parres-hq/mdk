@@ -173,8 +173,8 @@ where
             .map_err(|e| Error::Welcome(e.to_string()))?;
 
         // Update the group to active
-        if let Some(mut group) = self.get_group(mls_group.group_id())? {
-            let mls_group_id: GroupId = group.mls_group_id.clone();
+        if let Some(mut group) = self.get_group(&mls_group.group_id().into())? {
+            let mls_group_id = group.mls_group_id.clone();
 
             // Update group state
             group.state = group_types::GroupState::Active;
@@ -207,7 +207,7 @@ where
             .map_err(|e| Error::Welcome(e.to_string()))?;
 
         // Update the group to inactive
-        if let Some(mut group) = self.get_group(mls_group_id)? {
+        if let Some(mut group) = self.get_group(&mls_group_id.into())? {
             group.state = group_types::GroupState::Inactive;
             self.storage()
                 .save_group(group)

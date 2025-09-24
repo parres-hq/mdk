@@ -15,7 +15,7 @@ use mdk_storage_traits::groups::types as group_types;
 use mdk_storage_traits::messages::types as message_types;
 use mdk_storage_traits::MdkStorageProvider;
 use nostr::{Event, EventId, JsonUtil, Kind, TagKind, Timestamp, UnsignedEvent};
-use openmls::group::{GroupId, MlsGroupStateError, ProcessMessageError, ValidationError};
+use openmls::group::{MlsGroupStateError, ProcessMessageError, ValidationError};
 use openmls::prelude::{
     ApplicationMessage, MlsGroup, MlsMessageIn, ProcessedMessageContent, QueuedProposal, Sender,
     StagedCommit,
@@ -26,7 +26,7 @@ use tls_codec::{Deserialize as TlsDeserialize, Serialize as TlsSerialize};
 
 use crate::error::Error;
 use crate::groups::UpdateGroupResult;
-use crate::{util, MDK};
+use crate::{util, GroupId, MDK};
 
 // Internal Result type alias for this module
 type Result<T> = std::result::Result<T, Error>;
@@ -88,7 +88,7 @@ where
     /// * `Err(Error)` - If there is an error accessing storage
     pub fn get_messages(&self, mls_group_id: &GroupId) -> Result<Vec<message_types::Message>> {
         self.storage()
-            .messages(mls_group_id)
+            .messages(mls_group_id.inner())
             .map_err(|e| Error::Message(e.to_string()))
     }
 
@@ -171,14 +171,14 @@ where
         // Get the rumor ID
         let rumor_id: EventId = rumor.id();
 
-        let event = self.build_encrypted_message_event(mls_group.group_id(), message)?;
+        let event = self.build_encrypted_message_event(&mls_group.group_id().into(), message)?;
 
         // Create message to save to storage
         let message: message_types::Message = message_types::Message {
             id: rumor_id,
             pubkey: rumor.pubkey,
             kind: rumor.kind,
-            mls_group_id: mls_group_id.clone(),
+            mls_group_id: mls_group_id.inner().clone(),
             created_at: rumor.created_at,
             content: rumor.content.clone(),
             tags: rumor.tags.clone(),
@@ -373,13 +373,13 @@ where
                 match member {
                     Some(member) => {
                         // Only process proposals from admins for now
-                        if self.is_member_admin(mls_group.group_id(), &member)? {
+                        if self.is_member_admin(&mls_group.group_id().into(), &member)? {
                             mls_group
                                 .store_pending_proposal(self.provider.storage(), staged_proposal)
                                 .map_err(|e| Error::Message(e.to_string()))?;
 
                             let _added_members =
-                                self.pending_added_members_pubkeys(mls_group.group_id())?;
+                                self.pending_added_members_pubkeys(&mls_group.group_id().into())?;
 
                             let mls_signer = self.load_mls_signer(mls_group)?;
 
@@ -391,7 +391,7 @@ where
                                 .map_err(|e| Error::Group(e.to_string()))?;
 
                             let commit_event = self.build_encrypted_message_event(
-                                mls_group.group_id(),
+                                &mls_group.group_id().into(),
                                 serialized_commit_message,
                             )?;
 
@@ -484,11 +484,11 @@ where
             .map_err(|e| Error::Message(e.to_string()))?;
 
         // Save exporter secret for the new epoch
-        self.exporter_secret(mls_group.group_id())?;
+        self.exporter_secret(&mls_group.group_id().into())?;
 
         // Sync the stored group metadata with the updated MLS group state
         // This ensures any group context extension changes are reflected in storage
-        self.sync_group_metadata_from_mls(mls_group.group_id())?;
+        self.sync_group_metadata_from_mls(&mls_group.group_id().into())?;
 
         // Save a processed message so we don't reprocess
         let processed_message = message_types::ProcessedMessage {
@@ -572,7 +572,7 @@ where
 
         // Load the MLS group to get the current epoch
         let mls_group: MlsGroup = self
-            .load_mls_group(&group.mls_group_id)
+            .load_mls_group(&group.mls_group_id.clone().into())
             .map_err(|e| Error::Group(e.to_string()))?
             .ok_or(Error::GroupNotFound)?;
 
@@ -707,7 +707,7 @@ where
                         // Even though this is our own commit that we can't decrypt, we still need to
                         // sync the stored group metadata with the current MLS group state in case
                         // the group has been updated since the commit was created
-                        self.sync_group_metadata_from_mls(&group.mls_group_id)
+                        self.sync_group_metadata_from_mls(&group.mls_group_id.clone().into())
                             .map_err(|e| {
                                 Error::Message(format!("Failed to sync group metadata: {}", e))
                             })?;
@@ -738,7 +738,7 @@ where
                         tracing::debug!(target: "mdk_core::messages::process_message", "Found own commit with epoch mismatch, syncing group metadata");
 
                         // Sync the stored group metadata even though processing failed
-                        self.sync_group_metadata_from_mls(&group.mls_group_id)
+                        self.sync_group_metadata_from_mls(&group.mls_group_id.clone().into())
                             .map_err(|e| {
                                 Error::Message(format!("Failed to sync group metadata: {}", e))
                             })?;
@@ -902,7 +902,7 @@ where
         encrypted_content: &str,
     ) -> Result<Vec<u8>> {
         // Get exporter secret for current epoch
-        let secret = self.exporter_secret(mls_group.group_id())?;
+        let secret = self.exporter_secret(&mls_group.group_id().into())?;
 
         // Try to decrypt it for the current epoch
         match util::decrypt_with_exporter_secret(&secret, encrypted_content) {
@@ -1182,7 +1182,7 @@ mod tests {
 
         // Verify all messages belong to the correct group
         for message in &messages {
-            assert_eq!(message.mls_group_id, group_id);
+            assert_eq!(message.mls_group_id, group_id.inner().clone());
         }
     }
 
@@ -1196,7 +1196,7 @@ mod tests {
             )
             .unwrap(),
             kind: Kind::TextNote,
-            mls_group_id: GroupId::from_slice(&[1, 2, 3, 4]),
+            mls_group_id: openmls::group::GroupId::from_slice(&[1, 2, 3, 4]),
             created_at: Timestamp::now(),
             content: "Test".to_string(),
             tags: Tags::new(),
