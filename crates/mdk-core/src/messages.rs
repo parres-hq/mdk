@@ -11,15 +11,25 @@
 //! The message content is encrypted using both MLS group keys and NIP-44 encryption.
 //! Message state is tracked to handle processing status and failure scenarios.
 
+use mdk_storage_traits::groups::types as group_types;
+use mdk_storage_traits::messages::types as message_types;
 use mdk_storage_traits::MdkStorageProvider;
-use nostr::{EventId, UnsignedEvent};
+use nostr::{Event, EventId, JsonUtil, Kind, TagKind, Timestamp, UnsignedEvent};
 use openmls::group::{GroupId, MlsGroupStateError, ProcessMessageError, ValidationError};
+use openmls::prelude::{
+    ApplicationMessage, MlsGroup, MlsMessageIn, ProcessedMessageContent, QueuedProposal, Sender,
+    StagedCommit,
+};
 use openmls_basic_credential::SignatureKeyPair;
+use openmls_traits::OpenMlsProvider;
 use tls_codec::{Deserialize as TlsDeserialize, Serialize as TlsSerialize};
 
 use crate::error::Error;
-use crate::prelude::*;
+use crate::groups::UpdateGroupResult;
 use crate::{util, MDK};
+
+// Internal Result type alias for this module
+type Result<T> = std::result::Result<T, Error>;
 
 /// Default number of epochs to look back when trying to decrypt messages with older exporter secrets
 const DEFAULT_EPOCH_LOOKBACK: u64 = 5;
@@ -57,7 +67,7 @@ where
     /// * `Ok(Some(Message))` - The message if found
     /// * `Ok(None)` - If no message exists with the given event ID
     /// * `Err(Error)` - If there is an error accessing storage
-    pub fn get_message(&self, event_id: &EventId) -> Result<Option<message_types::Message>, Error> {
+    pub fn get_message(&self, event_id: &EventId) -> Result<Option<message_types::Message>> {
         self.storage()
             .find_message_by_event_id(event_id)
             .map_err(|e| Error::Message(e.to_string()))
@@ -76,10 +86,7 @@ where
     ///
     /// * `Ok(Vec<Message>)` - List of all messages for the group
     /// * `Err(Error)` - If there is an error accessing storage
-    pub fn get_messages(
-        &self,
-        mls_group_id: &GroupId,
-    ) -> Result<Vec<message_types::Message>, Error> {
+    pub fn get_messages(&self, mls_group_id: &GroupId) -> Result<Vec<message_types::Message>> {
         self.storage()
             .messages(mls_group_id)
             .map_err(|e| Error::Message(e.to_string()))
@@ -106,7 +113,7 @@ where
         &self,
         group: &mut MlsGroup,
         rumor: &mut UnsignedEvent,
-    ) -> Result<Vec<u8>, Error> {
+    ) -> Result<Vec<u8>> {
         // Load signer
         let signer: SignatureKeyPair = self.load_mls_signer(group)?;
 
@@ -146,7 +153,7 @@ where
         &self,
         mls_group_id: &GroupId,
         mut rumor: UnsignedEvent,
-    ) -> Result<Event, Error> {
+    ) -> Result<Event> {
         // Load mls group
         let mut mls_group = self
             .load_mls_group(mls_group_id)?
@@ -230,7 +237,7 @@ where
         &self,
         group: &mut MlsGroup,
         message_bytes: &[u8],
-    ) -> Result<ProcessedMessageContent, Error> {
+    ) -> Result<ProcessedMessageContent> {
         let mls_message = MlsMessageIn::tls_deserialize_exact(message_bytes)?;
 
         tracing::debug!(target: "mdk_core::messages::process_message_for_group", "Received message: {:?}", mls_message);
@@ -285,7 +292,7 @@ where
         mut group: group_types::Group,
         event: &Event,
         application_message: ApplicationMessage,
-    ) -> Result<message_types::Message, Error> {
+    ) -> Result<message_types::Message> {
         // This is a message from a group member
         let bytes = application_message.into_bytes();
         let mut rumor: UnsignedEvent = UnsignedEvent::from_json(bytes)?;
@@ -358,7 +365,7 @@ where
         mls_group: &mut MlsGroup,
         event: &Event,
         staged_proposal: QueuedProposal,
-    ) -> Result<UpdateGroupResult, Error> {
+    ) -> Result<UpdateGroupResult> {
         match staged_proposal.sender() {
             Sender::Member(leaf_index) => {
                 let member = mls_group.member_at(*leaf_index);
@@ -471,7 +478,7 @@ where
         mls_group: &mut MlsGroup,
         event: &Event,
         staged_commit: StagedCommit,
-    ) -> Result<(), Error> {
+    ) -> Result<()> {
         mls_group
             .merge_staged_commit(&self.provider, staged_commit)
             .map_err(|e| Error::Message(e.to_string()))?;
@@ -511,7 +518,7 @@ where
     ///
     /// * `Ok([u8; 32])` - The extracted Nostr group ID
     /// * `Err(Error)` - If validation fails or group ID cannot be extracted
-    fn validate_event_and_extract_group_id(&self, event: &Event) -> Result<[u8; 32], Error> {
+    fn validate_event_and_extract_group_id(&self, event: &Event) -> Result<[u8; 32]> {
         if event.kind != Kind::MlsGroupMessage {
             return Err(Error::UnexpectedEvent {
                 expected: Kind::MlsGroupMessage,
@@ -556,7 +563,7 @@ where
         &self,
         nostr_group_id: [u8; 32],
         event: &Event,
-    ) -> Result<(group_types::Group, MlsGroup, Vec<u8>), Error> {
+    ) -> Result<(group_types::Group, MlsGroup, Vec<u8>)> {
         let group = self
             .storage()
             .find_group_by_nostr_group_id(&nostr_group_id)
@@ -598,7 +605,7 @@ where
         mls_group: &mut MlsGroup,
         message_bytes: &[u8],
         event: &Event,
-    ) -> Result<MessageProcessingResult, Error> {
+    ) -> Result<MessageProcessingResult> {
         match self.process_message_for_group(mls_group, message_bytes) {
             Ok(ProcessedMessageContent::ApplicationMessage(application_message)) => {
                 Ok(MessageProcessingResult::ApplicationMessage(
@@ -655,7 +662,7 @@ where
         error: Error,
         event: &Event,
         group: &group_types::Group,
-    ) -> Result<MessageProcessingResult, Error> {
+    ) -> Result<MessageProcessingResult> {
         match error {
             Error::CannotDecryptOwnMessage => {
                 tracing::debug!(target: "mdk_core::messages::process_message", "Cannot decrypt own message, checking for cached message");
@@ -829,7 +836,7 @@ where
         mls_group: &MlsGroup,
         encrypted_content: &str,
         max_epoch_lookback: u64,
-    ) -> Result<Vec<u8>, Error> {
+    ) -> Result<Vec<u8>> {
         let group_id = mls_group.group_id();
         let current_epoch: u64 = mls_group.epoch().as_u64();
 
@@ -893,7 +900,7 @@ where
         &self,
         mls_group: &MlsGroup,
         encrypted_content: &str,
-    ) -> Result<Vec<u8>, Error> {
+    ) -> Result<Vec<u8>> {
         // Get exporter secret for current epoch
         let secret = self.exporter_secret(mls_group.group_id())?;
 
@@ -937,7 +944,7 @@ where
     ///
     /// * `Ok(MessageProcessingResult)` - Result indicating the type of message processed
     /// * `Err(Error)` - If message processing fails
-    pub fn process_message(&self, event: &Event) -> Result<MessageProcessingResult, Error> {
+    pub fn process_message(&self, event: &Event) -> Result<MessageProcessingResult> {
         // Step 1: Validate event and extract group ID
         let nostr_group_id = self.validate_event_and_extract_group_id(event)?;
 
@@ -958,12 +965,14 @@ where
 
 #[cfg(test)]
 mod tests {
-    use nostr::{EventBuilder, Keys, Kind, PublicKey, Tag, TagKind};
+    use nostr::{EventBuilder, Keys, Kind, PublicKey, Tag, TagKind, Tags};
 
     use super::*;
+    use crate::extension::NostrGroupDataExtension;
     use crate::test_util::*;
     use crate::tests::create_test_mdk;
-    use crate::extension::NostrGroupDataExtension;
+    use mdk_storage_traits::groups::GroupStorage;
+    use mdk_storage_traits::messages::MessageStorage;
 
     #[test]
     fn test_get_message_not_found() {
@@ -1364,9 +1373,8 @@ mod tests {
             .expect("Failed to load post-merge MLS group")
             .expect("Post-merge MLS group should exist");
 
-        let group_data =
-            NostrGroupDataExtension::from_group(&post_merge_mls_group)
-                .expect("Failed to get group data extension");
+        let group_data = NostrGroupDataExtension::from_group(&post_merge_mls_group)
+            .expect("Failed to get group data extension");
 
         assert_eq!(
             post_merge_group.name, group_data.name,
