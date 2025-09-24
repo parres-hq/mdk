@@ -963,6 +963,7 @@ mod tests {
     use super::*;
     use crate::test_util::*;
     use crate::tests::create_test_mdk;
+    use crate::extension::NostrGroupDataExtension;
 
     #[test]
     fn test_get_message_not_found() {
@@ -1364,7 +1365,7 @@ mod tests {
             .expect("Post-merge MLS group should exist");
 
         let group_data =
-            super::extension::NostrGroupDataExtension::from_group(&post_merge_mls_group)
+            NostrGroupDataExtension::from_group(&post_merge_mls_group)
                 .expect("Failed to get group data extension");
 
         assert_eq!(
@@ -1531,7 +1532,7 @@ mod tests {
             "Stored and MLS group epochs should match"
         );
 
-        let group_data = super::extension::NostrGroupDataExtension::from_group(&mls_group)
+        let group_data = NostrGroupDataExtension::from_group(&mls_group)
             .expect("Failed to get group data extension");
 
         assert_eq!(

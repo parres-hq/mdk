@@ -18,4 +18,5 @@ pub use crate::extension::*;
 pub use crate::groups::*;
 pub use crate::messages::*;
 pub use crate::welcomes::*;
-pub use crate::*;
+// Re-export main types from crate root, but avoid glob to prevent conflicts
+pub use crate::{MDK, MdkProvider, Error};

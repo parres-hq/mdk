@@ -186,7 +186,7 @@ async fn main() -> Result<()> {
     tracing::info!("Bob processed message");
     let messages = bob_mdk
         .get_messages(&bob_mls_group_id)
-        .map_err(|e| crate::error::Error::Message(e.to_string()))?;
+        .map_err(|e| Error::Message(e.to_string()))?;
     tracing::info!("Bob got messages: {:?}", messages);
     let message = messages.first().unwrap();
     tracing::info!("Bob processed message: {:?}", message);
