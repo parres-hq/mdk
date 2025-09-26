@@ -25,5 +25,6 @@ You should have access to the Nostrbook MCP server that you can use to query the
         "@nostrbook/mcp@latest"
       ]
     }
+  }
 }
 ```

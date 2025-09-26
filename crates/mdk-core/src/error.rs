@@ -2,7 +2,7 @@
 // Copyright (c) 2025 Rust Nostr Developers
 // Distributed under the MIT software license
 
-//! Nostr MLS errors
+//! MDK errors
 
 use std::string::FromUtf8Error;
 use std::{fmt, str};
@@ -23,77 +23,112 @@ use openmls::key_packages::errors::{KeyPackageNewError, KeyPackageVerifyError};
 use openmls_traits::types::CryptoError;
 
 /// Nostr MLS error
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, thiserror::Error)]
 pub enum Error {
     /// Hex error
-    Hex(hex::FromHexError),
+    #[error(transparent)]
+    Hex(#[from] hex::FromHexError),
     /// Keys error
-    Keys(key::Error),
+    #[error(transparent)]
+    Keys(#[from] key::Error),
     /// Event error
-    Event(event::Error),
+    #[error(transparent)]
+    Event(#[from] event::Error),
     /// Event Builder error
-    EventBuilder(event::builder::Error),
+    #[error(transparent)]
+    EventBuilder(#[from] event::builder::Error),
     /// Nostr Signer error
-    Signer(SignerError),
+    #[error(transparent)]
+    Signer(#[from] SignerError),
     /// NIP44 error
-    NIP44(nip44::Error),
+    #[error(transparent)]
+    NIP44(#[from] nip44::Error),
     /// Relay URL error
-    RelayUrl(url::Error),
+    #[error(transparent)]
+    RelayUrl(#[from] url::Error),
     /// TLS error
-    Tls(tls_codec::Error),
+    #[error(transparent)]
+    Tls(#[from] tls_codec::Error),
     /// UTF8 error
-    Utf8(str::Utf8Error),
+    #[error(transparent)]
+    Utf8(#[from] str::Utf8Error),
     /// Crypto error
-    Crypto(CryptoError),
+    #[error(transparent)]
+    Crypto(#[from] CryptoError),
     /// Generic OpenMLS error
-    OpenMlsGeneric(LibraryError),
+    #[error(transparent)]
+    OpenMlsGeneric(#[from] LibraryError),
     /// Invalid extension error
-    InvalidExtension(InvalidExtensionError),
+    #[error(transparent)]
+    InvalidExtension(#[from] InvalidExtensionError),
     /// Create message error
-    CreateMessage(CreateMessageError),
+    #[error(transparent)]
+    CreateMessage(#[from] CreateMessageError),
     /// Export secret error
-    ExportSecret(ExportSecretError),
+    #[error(transparent)]
+    ExportSecret(#[from] ExportSecretError),
     /// Basic credential error
-    BasicCredential(BasicCredentialError),
+    #[error(transparent)]
+    BasicCredential(#[from] BasicCredentialError),
     /// Process message error
-    ProcessMessage(ProcessMessageError),
+    #[error(transparent)]
+    ProcessMessage(#[from] ProcessMessageError),
     /// Protocol message error
+    #[error("{0}")]
     ProtocolMessage(String),
     /// Key package error
+    #[error("{0}")]
     KeyPackage(String),
     /// Group error
+    #[error("{0}")]
     Group(String),
     /// Group exporter secret not found
+    #[error("group exporter secret not found")]
     GroupExporterSecretNotFound,
     /// Message error
+    #[error("{0}")]
     Message(String),
     /// Cannot decrypt own message
+    #[error("cannot decrypt own message")]
     CannotDecryptOwnMessage,
     /// Merge pending commit error
+    #[error("{0}")]
     MergePendingCommit(String),
     /// Commit to pending proposal
+    #[error("unable to commit to pending proposal")]
     CommitToPendingProposalsError,
     /// Self update error
+    #[error("{0}")]
     SelfUpdate(String),
     /// Welcome error
+    #[error("{0}")]
     Welcome(String),
     /// We're missing a Welcome for an existing ProcessedWelcome
+    #[error("missing welcome for processed welcome")]
     MissingWelcomeForProcessedWelcome,
     /// Processed welcome not found
+    #[error("processed welcome not found")]
     ProcessedWelcomeNotFound,
     /// Provider error
+    #[error("{0}")]
     Provider(String),
     /// Group not found
+    #[error("group not found")]
     GroupNotFound,
     /// Protocol message group ID doesn't match the current group ID
+    #[error("protocol message group ID doesn't match the current group ID")]
     ProtocolGroupIdMismatch,
     /// Own leaf not found
+    #[error("own leaf not found")]
     OwnLeafNotFound,
     /// Failed to load signer
+    #[error("can't load signer")]
     CantLoadSigner,
     /// Invalid Welcome message
+    #[error("invalid welcome message")]
     InvalidWelcomeMessage,
     /// Unexpected event
+    #[error("unexpected event kind: expected={expected}, received={received}")]
     UnexpectedEvent {
         /// Expected event kind
         expected: Kind,
@@ -101,203 +136,43 @@ pub enum Error {
         received: Kind,
     },
     /// Unexpected extension type
+    #[error("Unexpected extension type")]
     UnexpectedExtensionType,
     /// Nostr group data extension not found
+    #[error("Nostr group data extension not found")]
     NostrGroupDataExtensionNotFound,
     /// Message from a non-member of a group
+    #[error("Message received from non-member")]
     MessageFromNonMember,
     /// Code path is not yet implemented
+    #[error("{0}")]
     NotImplemented(String),
     /// Stored message not found
+    #[error("stored message not found")]
     MessageNotFound,
     /// Proposal message received from a non-admin
+    #[error("not processing proposal from non-admin")]
     ProposalFromNonAdmin,
     /// Commit message received from a non-admin
+    #[error("not processing commit from non-admin")]
     CommitFromNonAdmin,
     /// Error when updating group context extensions
+    #[error("Error when updating group context extensions {0}")]
     UpdateGroupContextExts(String),
     /// Invalid image hash length
+    #[error("invalid image hash length")]
     InvalidImageHashLength,
     /// Invalid image key length
+    #[error("invalid image key length")]
     InvalidImageKeyLength,
     /// Invalid image nonce length
+    #[error("invalid image nonce length")]
     InvalidImageNonceLength,
-}
-
-impl std::error::Error for Error {}
-
-impl fmt::Display for Error {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Hex(e) => write!(f, "{e}"),
-            Self::Keys(e) => write!(f, "{e}"),
-            Self::Event(e) => write!(f, "{e}"),
-            Self::EventBuilder(e) => write!(f, "{e}"),
-            Self::Signer(e) => write!(f, "{e}"),
-            Self::NIP44(e) => write!(f, "{e}"),
-            Self::RelayUrl(e) => write!(f, "{e}"),
-            Self::Tls(e) => write!(f, "{e}"),
-            Self::Utf8(e) => write!(f, "{e}"),
-            Self::Crypto(e) => write!(f, "{e}"),
-            Self::OpenMlsGeneric(e) => write!(f, "{e}"),
-            Self::InvalidExtension(e) => write!(f, "{e}"),
-            Self::CreateMessage(e) => write!(f, "{e}"),
-            Self::ExportSecret(e) => write!(f, "{e}"),
-            Self::BasicCredential(e) => write!(f, "{e}"),
-            Self::ProcessMessage(e) => write!(f, "{e}"),
-            Self::ProtocolMessage(e) => write!(f, "{e}"),
-            Self::KeyPackage(e) => write!(f, "{e}"),
-            Self::Group(e) => write!(f, "{e}"),
-            Self::GroupExporterSecretNotFound => write!(f, "group exporter secret not found"),
-            Self::Message(e) => write!(f, "{e}"),
-            Self::CannotDecryptOwnMessage => write!(f, "cannot decrypt own message"),
-            Self::Welcome(e) => write!(f, "{e}"),
-            Self::MissingWelcomeForProcessedWelcome => {
-                write!(f, "missing welcome for processed welcome")
-            }
-            Self::ProcessedWelcomeNotFound => write!(f, "processed welcome not found"),
-            Self::MergePendingCommit(e) => write!(f, "{e}"),
-            Self::CommitToPendingProposalsError => {
-                write!(f, "unable to commit to pending proposal")
-            }
-            Self::SelfUpdate(e) => write!(f, "{e}"),
-            Self::Provider(e) => write!(f, "{e}"),
-            Self::GroupNotFound => write!(f, "group not found"),
-            Self::ProtocolGroupIdMismatch => write!(
-                f,
-                "protocol message group ID doesn't match the current group ID"
-            ),
-            Self::OwnLeafNotFound => write!(f, "own leaf not found"),
-            Self::CantLoadSigner => write!(f, "can't load signer"),
-            Self::InvalidWelcomeMessage => write!(f, "invalid welcome message"),
-            Self::UnexpectedEvent { expected, received } => write!(
-                f,
-                "unexpected event kind: expected={expected}, received={received}"
-            ),
-            Self::UnexpectedExtensionType => {
-                write!(f, "Unexpected extension type")
-            }
-            Self::NostrGroupDataExtensionNotFound => {
-                write!(f, "Nostr group data extension not found")
-            }
-            Self::MessageFromNonMember => {
-                write!(f, "Message recieved from non-member")
-            }
-            Self::NotImplemented(e) => {
-                write!(f, "{e}")
-            }
-            Self::MessageNotFound => write!(f, "stored message not found"),
-            Self::ProposalFromNonAdmin => write!(f, "not processing proposal from non-admin"),
-            Self::CommitFromNonAdmin => write!(f, "not processing commit from non-admin"),
-            Self::UpdateGroupContextExts(e) => {
-                write!(f, "Error when updating group context extensions {e}")
-            }
-            Self::InvalidImageHashLength => write!(f, "invalid image hash length"),
-            Self::InvalidImageKeyLength => write!(f, "invalid image key length"),
-            Self::InvalidImageNonceLength => write!(f, "invalid image nonce length"),
-        }
-    }
-}
-
-impl From<hex::FromHexError> for Error {
-    fn from(e: hex::FromHexError) -> Self {
-        Self::Hex(e)
-    }
-}
-
-impl From<key::Error> for Error {
-    fn from(e: key::Error) -> Self {
-        Self::Keys(e)
-    }
-}
-
-impl From<event::Error> for Error {
-    fn from(e: event::Error) -> Self {
-        Self::Event(e)
-    }
-}
-
-impl From<event::builder::Error> for Error {
-    fn from(e: event::builder::Error) -> Self {
-        Self::EventBuilder(e)
-    }
-}
-
-impl From<SignerError> for Error {
-    fn from(e: SignerError) -> Self {
-        Self::Signer(e)
-    }
-}
-
-impl From<nip44::Error> for Error {
-    fn from(e: nip44::Error) -> Self {
-        Self::NIP44(e)
-    }
-}
-
-impl From<url::Error> for Error {
-    fn from(e: url::Error) -> Self {
-        Self::RelayUrl(e)
-    }
-}
-
-impl From<tls_codec::Error> for Error {
-    fn from(e: tls_codec::Error) -> Self {
-        Self::Tls(e)
-    }
-}
-
-impl From<str::Utf8Error> for Error {
-    fn from(e: str::Utf8Error) -> Self {
-        Self::Utf8(e)
-    }
 }
 
 impl From<FromUtf8Error> for Error {
     fn from(e: FromUtf8Error) -> Self {
         Self::Utf8(e.utf8_error())
-    }
-}
-
-impl From<CryptoError> for Error {
-    fn from(e: CryptoError) -> Self {
-        Self::Crypto(e)
-    }
-}
-
-impl From<LibraryError> for Error {
-    fn from(e: LibraryError) -> Self {
-        Self::OpenMlsGeneric(e)
-    }
-}
-
-impl From<InvalidExtensionError> for Error {
-    fn from(e: InvalidExtensionError) -> Self {
-        Self::InvalidExtension(e)
-    }
-}
-
-impl From<CreateMessageError> for Error {
-    fn from(e: CreateMessageError) -> Self {
-        Self::CreateMessage(e)
-    }
-}
-
-impl From<ExportSecretError> for Error {
-    fn from(e: ExportSecretError) -> Self {
-        Self::ExportSecret(e)
-    }
-}
-
-impl From<BasicCredentialError> for Error {
-    fn from(e: BasicCredentialError) -> Self {
-        Self::BasicCredential(e)
-    }
-}
-
-impl From<ProcessMessageError> for Error {
-    fn from(e: ProcessMessageError) -> Self {
-        Self::ProcessMessage(e)
     }
 }
 

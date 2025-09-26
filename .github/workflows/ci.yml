@@ -50,3 +50,57 @@ jobs:
     - name: Run full checks (Linux only)
       if: matrix.os == 'ubuntu-latest'
       run: just check
+
+  check-no-features:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Rust (stable)
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        components: rustfmt, clippy
+
+    - name: Cache Rust dependencies
+      uses: Swatinem/rust-cache@v2
+
+    - name: Install system dependencies
+      run: sudo apt-get update && sudo apt-get install -y pkg-config
+
+    - name: Check without optional features
+      run: cargo check --all-targets --no-default-features
+
+    - name: Build without optional features
+      run: cargo build --all-targets --no-default-features
+
+    - name: Test without optional features
+      run: cargo test --all-targets --no-default-features
+
+  check-mip04-feature:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Rust (stable)
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        components: rustfmt, clippy
+
+    - name: Cache Rust dependencies
+      uses: Swatinem/rust-cache@v2
+
+    - name: Install system dependencies
+      run: sudo apt-get update && sudo apt-get install -y pkg-config
+
+    - name: Check with mip04 feature only
+      run: cargo check --all-targets --no-default-features --features mip04
+
+    - name: Build with mip04 feature only
+      run: cargo build --all-targets --no-default-features --features mip04
+
+    - name: Test with mip04 feature only
+      run: cargo test --all-targets --no-default-features --features mip04

@@ -20,7 +20,7 @@ This project implements the MLS (Messaging Layer Security) protocol on top of No
 
 - **MLS Extensions**:
     - https://www.ietf.org/archive/id/draft-ietf-mls-extensions-08.txt
-    - Local copy: [docs/mls/draft-ietf-mls-extentions-08.txt]
+    - Local copy: [docs/mls/draft-ietf-mls-extensions-08.txt](mdc:docs/mls/draft-ietf-mls-extensions-08.txt)
 
 ## Marmot Protocol (MLS integration with Nostr protocol)
 
