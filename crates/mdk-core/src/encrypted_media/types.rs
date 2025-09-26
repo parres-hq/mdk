@@ -5,8 +5,8 @@
 
 use std::collections::HashMap;
 
-/// Maximum file size for encrypted media (50MB)
-pub const MAX_FILE_SIZE: usize = 50 * 1024 * 1024;
+/// Maximum file size for encrypted media (100MB)
+pub const MAX_FILE_SIZE: usize = 100 * 1024 * 1024;
 
 /// Maximum filename length
 pub const MAX_FILENAME_LENGTH: usize = 210;
