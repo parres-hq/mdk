@@ -15,6 +15,9 @@ use openmls::prelude::*;
 use openmls_rust_crypto::RustCrypto;
 
 mod constant;
+#[cfg(feature = "mip04")]
+#[cfg_attr(docsrs, doc(cfg(feature = "mip04")))]
+pub mod encrypted_media;
 pub mod error;
 pub mod extension;
 pub mod groups;
