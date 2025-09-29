@@ -53,8 +53,6 @@ jobs:
 
     - name: Cache Rust dependencies
       uses: Swatinem/rust-cache@v2
-      with:
-        key: lint-${{ matrix.features.name }}
 
     - name: Install system dependencies
       run: sudo apt-get update && sudo apt-get install -y pkg-config
@@ -108,9 +106,6 @@ jobs:
 
     - name: Setup Rust (stable)
       uses: dtolnay/rust-toolchain@stable
-
-    - name: Setup just
-      uses: extractions/setup-just@v2
 
     - name: Cache Rust dependencies
       uses: Swatinem/rust-cache@v2
