@@ -14,7 +14,7 @@ use crate::encrypted_media::metadata::extract_and_process_metadata;
 use crate::encrypted_media::types::{
     EncryptedMediaError, EncryptedMediaUpload, MediaProcessingOptions, MediaReference,
 };
-use crate::encrypted_media::validation::{validate_inputs, validate_mime_type, validate_filename};
+use crate::encrypted_media::validation::{validate_filename, validate_inputs, validate_mime_type};
 use crate::{GroupId, MDK};
 use mdk_storage_traits::MdkStorageProvider;
 
@@ -270,16 +270,14 @@ where
                         }
                     }
                 }
-                "filename" => {
-                    match validate_filename(parts[1]) {
-                        Ok(_) => filename = Some(parts[1].to_string()),
-                        Err(_) => {
-                            return Err(EncryptedMediaError::InvalidImetaTag {
-                                reason: format!("Invalid filename: {}", parts[1]),
-                            });
-                        }
+                "filename" => match validate_filename(parts[1]) {
+                    Ok(_) => filename = Some(parts[1].to_string()),
+                    Err(_) => {
+                        return Err(EncryptedMediaError::InvalidImetaTag {
+                            reason: format!("Invalid filename: {}", parts[1]),
+                        });
                     }
-                }
+                },
                 "v" => version = Some(parts[1].to_string()),
                 "blurhash" => {
                     // Blurhash is optional and not needed for decryption
