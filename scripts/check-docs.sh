@@ -11,5 +11,5 @@ cargo +$version --version || rustup install $version
 rustdoc +$version --version || rustup component add rust-docs --toolchain $version
 
 echo "Checking docs"
-cargo +$version doc --no-deps --all-features
+RUSTDOCFLAGS="-D warnings" cargo +$version doc --no-deps --all-features --document-private-items
 echo

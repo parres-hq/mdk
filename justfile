@@ -25,26 +25,17 @@ test-all:
     @echo "Testing with mip04 feature only..."
     @just test-mip04
 
-# Check clippy
+# Check clippy for all feature combinations
 lint:
     @bash scripts/check-clippy.sh
 
-# Check clippy without features
+# Check clippy without features (for individual testing)
 lint-no-features:
     cargo clippy --all-targets --no-default-features --no-deps -- -D warnings
 
-# Check clippy with mip04 feature only
+# Check clippy with mip04 feature only (for individual testing)
 lint-mip04:
     cargo clippy --all-targets --no-default-features --features mip04 --no-deps -- -D warnings
-
-# Check clippy for all feature combinations
-lint-all:
-    @echo "Checking clippy with all features..."
-    @just lint
-    @echo "Checking clippy without optional features..."
-    @just lint-no-features
-    @echo "Checking clippy with mip04 feature only..."
-    @just lint-mip04
 
 # Check fmt
 fmt:
@@ -59,14 +50,14 @@ check:
     @bash scripts/check-all.sh
     @just test-all
 
-# Full comprehensive check including all feature combinations for clippy
+# Full comprehensive check including all feature combinations
 check-full:
     @echo "Running format checks..."
     @just fmt
     @echo "Running documentation checks..."
     @just docs
     @echo "Running clippy checks for all feature combinations..."
-    @just lint-all
+    @just lint
     @echo "Running tests for all feature combinations..."
     @just test-all
 
