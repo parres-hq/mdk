@@ -6,7 +6,6 @@
 
 use crate::encrypted_media::types::{
     EncryptedMediaError, MediaProcessingOptions, MAX_FILENAME_LENGTH, MAX_FILE_SIZE,
-    MIME_TYPE_ALIASES, SUPPORTED_MIME_TYPES,
 };
 
 /// Validate input parameters for media encryption
@@ -39,15 +38,17 @@ pub fn validate_file_size(
     Ok(())
 }
 
-/// Validate MIME type format and support
+/// Validate MIME type format
 ///
 /// Returns the canonical (trimmed and lowercase) MIME type for consistent use
-/// in cryptographic operations and comparisons. Handles aliases by mapping them
-/// to their canonical forms.
+/// in cryptographic operations and comparisons.
 ///
 /// This is the centralized function for MIME type canonicalization used throughout
 /// the encrypted media system. All MIME type processing should use this function
 /// to ensure consistency in encryption keys, AAD construction, and imeta tags.
+///
+/// Note: This accepts any valid MIME type format - there is no whitelist of
+/// supported types, allowing maximum flexibility for different media types.
 pub fn validate_mime_type(mime_type: &str) -> Result<String, EncryptedMediaError> {
     // Normalize the MIME type: trim whitespace and convert to lowercase
     let normalized = mime_type.trim().to_ascii_lowercase();
@@ -59,21 +60,7 @@ pub fn validate_mime_type(mime_type: &str) -> Result<String, EncryptedMediaError
         });
     }
 
-    // Check if it's an alias and map to canonical form
-    let canonical = MIME_TYPE_ALIASES
-        .iter()
-        .find(|(alias, _)| *alias == normalized)
-        .map(|(_, canonical)| canonical.to_string())
-        .unwrap_or(normalized);
-
-    // Check if canonical MIME type is supported
-    if !SUPPORTED_MIME_TYPES.contains(&canonical.as_str()) {
-        return Err(EncryptedMediaError::UnsupportedMimeType {
-            mime_type: mime_type.to_string(),
-        });
-    }
-
-    Ok(canonical)
+    Ok(normalized)
 }
 
 /// Validate filename length and content
@@ -126,10 +113,14 @@ mod tests {
     fn test_validate_inputs() {
         let options = MediaProcessingOptions::default();
 
-        // Test valid inputs
+        // Test valid inputs with common image type
         let data = vec![0u8; 1000];
         let result = validate_inputs(&data, "image/jpeg", "test.jpg", &options);
         assert_eq!(result.unwrap(), "image/jpeg");
+
+        // Test valid inputs with any MIME type (no longer restricted)
+        let result = validate_inputs(&data, "application/pdf", "test.pdf", &options);
+        assert_eq!(result.unwrap(), "application/pdf");
 
         // Test file too large
         let large_data = vec![0u8; MAX_FILE_SIZE + 1];
@@ -137,14 +128,6 @@ mod tests {
         assert!(matches!(
             result,
             Err(EncryptedMediaError::FileTooLarge { .. })
-        ));
-
-        // Test unsupported MIME type
-        let data = vec![0u8; 1000];
-        let result = validate_inputs(&data, "application/pdf", "test.pdf", &options);
-        assert!(matches!(
-            result,
-            Err(EncryptedMediaError::UnsupportedMimeType { .. })
         ));
 
         // Test invalid MIME type format
@@ -166,8 +149,14 @@ mod tests {
         let result = validate_inputs(&data, "image/jpeg", "", &options);
         assert!(matches!(result, Err(EncryptedMediaError::EmptyFilename)));
 
-        // Test valid inputs
+        // Test valid inputs with various MIME types
         let result = validate_inputs(&data, "image/jpeg", "test.jpg", &options);
+        assert!(result.is_ok());
+
+        let result = validate_inputs(&data, "video/quicktime", "test.mov", &options);
+        assert!(result.is_ok());
+
+        let result = validate_inputs(&data, "application/octet-stream", "test.bin", &options);
         assert!(result.is_ok());
     }
 
@@ -201,7 +190,7 @@ mod tests {
 
     #[test]
     fn test_validate_mime_type() {
-        // Test valid MIME types return canonical form
+        // Test valid MIME types return canonical (lowercase) form
         assert_eq!(validate_mime_type("image/jpeg").unwrap(), "image/jpeg");
         assert_eq!(validate_mime_type("video/mp4").unwrap(), "video/mp4");
         assert_eq!(validate_mime_type("audio/wav").unwrap(), "audio/wav");
@@ -220,24 +209,22 @@ mod tests {
         // Test combined normalization
         assert_eq!(validate_mime_type("  Image/WEBP  ").unwrap(), "image/webp");
 
-        // Test MIME type aliases map to canonical forms
-        assert_eq!(validate_mime_type("audio/mp3").unwrap(), "audio/mpeg");
-        assert_eq!(validate_mime_type("audio/x-wav").unwrap(), "audio/wav");
-        assert_eq!(validate_mime_type("audio/wave").unwrap(), "audio/wav");
+        // Test that any valid MIME type format is accepted (no whitelist)
+        assert_eq!(
+            validate_mime_type("application/pdf").unwrap(),
+            "application/pdf"
+        );
+        assert_eq!(validate_mime_type("text/plain").unwrap(), "text/plain");
+        assert_eq!(
+            validate_mime_type("video/quicktime").unwrap(),
+            "video/quicktime"
+        );
+        assert_eq!(
+            validate_mime_type("application/octet-stream").unwrap(),
+            "application/octet-stream"
+        );
 
-        // Test aliases with case normalization
-        assert_eq!(validate_mime_type("Audio/MP3").unwrap(), "audio/mpeg");
-        assert_eq!(validate_mime_type("AUDIO/X-WAV").unwrap(), "audio/wav");
-        assert_eq!(validate_mime_type("  audio/wave  ").unwrap(), "audio/wav");
-
-        // Test unsupported MIME type
-        let result = validate_mime_type("application/pdf");
-        assert!(matches!(
-            result,
-            Err(EncryptedMediaError::UnsupportedMimeType { .. })
-        ));
-
-        // Test invalid format
+        // Test invalid format (no slash)
         let result = validate_mime_type("invalid");
         assert!(matches!(
             result,
@@ -331,12 +318,9 @@ mod tests {
             Err(EncryptedMediaError::FileTooLarge { .. })
         ));
 
-        // Test unsupported MIME type
+        // Test that any valid MIME type is accepted (no whitelist)
         let result = validate_inputs(&valid_data, "application/pdf", "document.pdf", &options);
-        assert!(matches!(
-            result,
-            Err(EncryptedMediaError::UnsupportedMimeType { .. })
-        ));
+        assert_eq!(result.unwrap(), "application/pdf");
 
         // Test invalid MIME type format
         let result = validate_inputs(&valid_data, "invalid", "file.txt", &options);

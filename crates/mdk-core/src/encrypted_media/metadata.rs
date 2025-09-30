@@ -85,7 +85,7 @@ pub fn process_image_metadata(
     }
 
     // Process EXIF data (doesn't require image decode)
-    if !options.strip_exif {
+    if !options.sanitize_exif {
         metadata.cleaned_exif = extract_safe_exif(data);
     }
 
@@ -599,7 +599,7 @@ mod tests {
         let options = MediaProcessingOptions {
             preserve_dimensions: true,
             generate_blurhash: false,
-            strip_exif: true,
+            sanitize_exif: true,
             max_dimension: Some(100),
             max_file_size: None,
         };
@@ -614,7 +614,7 @@ mod tests {
         let strict_options = MediaProcessingOptions {
             preserve_dimensions: true,
             generate_blurhash: false,
-            strip_exif: true,
+            sanitize_exif: true,
             max_dimension: Some(0), // This should cause validation to fail
             max_file_size: None,
         };

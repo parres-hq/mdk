@@ -14,31 +14,11 @@ pub const MAX_FILENAME_LENGTH: usize = 210;
 /// Maximum image dimension (width or height) - supports flagship phone cameras (200MP)
 pub const MAX_IMAGE_DIMENSION: u32 = 16384;
 
-/// Supported MIME types for encrypted media (canonical forms)
-pub const SUPPORTED_MIME_TYPES: &[&str] = &[
-    "image/jpeg",
-    "image/png",
-    "image/webp",
-    "image/gif",
-    "video/mp4",
-    "video/webm",
-    "audio/mpeg", // Canonical form for MP3
-    "audio/wav",
-    "audio/ogg",
-];
-
-/// MIME type aliases that map to canonical forms
-pub const MIME_TYPE_ALIASES: &[(&str, &str)] = &[
-    ("audio/mp3", "audio/mpeg"),  // Legacy alias for MP3
-    ("audio/x-wav", "audio/wav"), // Alternative WAV format
-    ("audio/wave", "audio/wav"),  // Alternative WAV format
-];
-
 /// Configuration options for media processing
 #[derive(Debug, Clone)]
 pub struct MediaProcessingOptions {
-    /// Strip EXIF and other metadata for privacy (default: true)
-    pub strip_exif: bool,
+    /// Sanitize EXIF and other metadata for privacy (default: true)
+    pub sanitize_exif: bool,
     /// Preserve image dimensions in metadata (default: true)
     pub preserve_dimensions: bool,
     /// Generate blurhash for images (default: true)
@@ -52,7 +32,7 @@ pub struct MediaProcessingOptions {
 impl Default for MediaProcessingOptions {
     fn default() -> Self {
         Self {
-            strip_exif: true,          // Privacy-first default
+            sanitize_exif: true,       // Privacy-first default
             preserve_dimensions: true, // Useful for display
             generate_blurhash: true,   // Good UX
             max_dimension: Some(MAX_IMAGE_DIMENSION),
@@ -216,7 +196,7 @@ mod tests {
     #[test]
     fn test_media_processing_options_default() {
         let options = MediaProcessingOptions::default();
-        assert!(options.strip_exif);
+        assert!(options.sanitize_exif);
         assert!(options.preserve_dimensions);
         assert!(options.generate_blurhash);
         assert_eq!(options.max_dimension, Some(MAX_IMAGE_DIMENSION));
@@ -224,37 +204,9 @@ mod tests {
     }
 
     #[test]
-    fn test_supported_mime_types() {
-        assert!(SUPPORTED_MIME_TYPES.contains(&"image/jpeg"));
-        assert!(SUPPORTED_MIME_TYPES.contains(&"image/png"));
-        assert!(SUPPORTED_MIME_TYPES.contains(&"video/mp4"));
-        assert!(SUPPORTED_MIME_TYPES.contains(&"audio/mpeg")); // Canonical form for MP3
-        assert!(SUPPORTED_MIME_TYPES.contains(&"audio/wav"));
-        assert!(!SUPPORTED_MIME_TYPES.contains(&"audio/mp3")); // This is now an alias, not canonical
-        assert!(!SUPPORTED_MIME_TYPES.contains(&"application/pdf"));
-    }
-
-    #[test]
-    fn test_mime_type_aliases() {
-        // Test that aliases are properly defined
-        assert!(MIME_TYPE_ALIASES.contains(&("audio/mp3", "audio/mpeg")));
-        assert!(MIME_TYPE_ALIASES.contains(&("audio/x-wav", "audio/wav")));
-        assert!(MIME_TYPE_ALIASES.contains(&("audio/wave", "audio/wav")));
-
-        // Verify all alias targets are in supported types
-        for (_, canonical) in MIME_TYPE_ALIASES {
-            assert!(
-                SUPPORTED_MIME_TYPES.contains(canonical),
-                "Alias target '{}' not found in SUPPORTED_MIME_TYPES",
-                canonical
-            );
-        }
-    }
-
-    #[test]
     fn test_media_processing_options() {
         let default_options = MediaProcessingOptions::default();
-        assert!(default_options.strip_exif);
+        assert!(default_options.sanitize_exif);
         assert!(default_options.preserve_dimensions);
         assert!(default_options.generate_blurhash);
         assert_eq!(default_options.max_dimension, Some(MAX_IMAGE_DIMENSION));
@@ -262,14 +214,14 @@ mod tests {
 
         // Test custom options
         let custom_options = MediaProcessingOptions {
-            strip_exif: false,
+            sanitize_exif: false,
             preserve_dimensions: false,
             generate_blurhash: false,
             max_dimension: Some(1024),
             max_file_size: Some(1024 * 1024),
         };
 
-        assert!(!custom_options.strip_exif);
+        assert!(!custom_options.sanitize_exif);
         assert!(!custom_options.preserve_dimensions);
         assert!(!custom_options.generate_blurhash);
         assert_eq!(custom_options.max_dimension, Some(1024));
@@ -327,9 +279,6 @@ mod tests {
             EncryptedMediaError::FileTooLarge {
                 size: 1000,
                 max_size: 500,
-            },
-            EncryptedMediaError::UnsupportedMimeType {
-                mime_type: "application/pdf".to_string(),
             },
             EncryptedMediaError::InvalidMimeType {
                 mime_type: "invalid".to_string(),

@@ -478,61 +478,47 @@ mod tests {
     }
 
     #[test]
-    fn test_encrypt_for_upload_with_mime_type_aliases() {
+    fn test_encrypt_for_upload_accepts_any_mime_type() {
         let mdk = create_test_mdk();
         let group_id = GroupId::from_slice(&[1, 2, 3, 4]);
         let manager = mdk.media_manager(group_id);
 
-        // Test data (not real audio, but that's fine for this test)
+        // Test data (not real files, but that's fine for this test)
         let test_data = vec![0u8; 1000];
-        let options = MediaProcessingOptions::default();
+        // Use options that skip metadata extraction for images to avoid format errors
+        let options = MediaProcessingOptions {
+            sanitize_exif: true,
+            preserve_dimensions: false,
+            generate_blurhash: false,
+            max_dimension: None,
+            max_file_size: None,
+        };
 
-        // Test with MIME type alias - should canonicalize to proper form
-        let result = manager.encrypt_for_upload_with_options(
-            &test_data,
-            "audio/mp3", // This is an alias for audio/mpeg
-            "song.mp3",
-            &options,
-        );
+        // Test with various non-image MIME types - all should pass validation
+        let test_cases = vec![
+            ("application/pdf", "document.pdf"),
+            ("video/quicktime", "video.mov"),
+            ("audio/mpeg", "song.mp3"),
+            ("text/plain", "note.txt"),
+            ("application/octet-stream", "file.bin"),
+        ];
 
-        // This will fail because we don't have a real MLS group, but we can check
-        // that the validation passes and the error is about the missing group
-        assert!(result.is_err());
-        if let Err(EncryptedMediaError::GroupNotFound) = result {
-            // This is expected - the MIME type validation passed, but we don't have a real group
-        } else {
-            panic!("Expected GroupNotFound error, got: {:?}", result);
+        for (mime_type, filename) in test_cases {
+            let result =
+                manager.encrypt_for_upload_with_options(&test_data, mime_type, filename, &options);
+
+            // This will fail because we don't have a real MLS group, but we can check
+            // that the validation passes and the error is about the missing group
+            assert!(result.is_err());
+            if let Err(EncryptedMediaError::GroupNotFound) = result {
+                // This is expected - the MIME type validation passed, but we don't have a real group
+            } else {
+                panic!(
+                    "Expected GroupNotFound error for MIME type {}, got: {:?}",
+                    mime_type, result
+                );
+            }
         }
-
-        // Test with another alias
-        let result = manager.encrypt_for_upload_with_options(
-            &test_data,
-            "audio/x-wav", // This is an alias for audio/wav
-            "sound.wav",
-            &options,
-        );
-
-        // Should also fail with GroupNotFound (not a MIME type error)
-        assert!(result.is_err());
-        if let Err(EncryptedMediaError::GroupNotFound) = result {
-            // This is expected - the MIME type validation passed
-        } else {
-            panic!("Expected GroupNotFound error, got: {:?}", result);
-        }
-
-        // Test with unsupported MIME type - should fail with UnsupportedMimeType
-        let result = manager.encrypt_for_upload_with_options(
-            &test_data,
-            "application/pdf", // Unsupported
-            "document.pdf",
-            &options,
-        );
-
-        assert!(result.is_err());
-        assert!(matches!(
-            result,
-            Err(EncryptedMediaError::UnsupportedMimeType { .. })
-        ));
     }
 
     #[test]
@@ -779,62 +765,15 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_imeta_tag_with_aliases() {
-        let mdk = create_test_mdk();
-        let group_id = GroupId::from_slice(&[1, 2, 3, 4]);
-        let manager = mdk.media_manager(group_id);
-
-        // Test parsing IMETA tag with MIME type alias
-        let tag_values = vec![
-            "url https://example.com/test.mp3".to_string(),
-            "m audio/mp3".to_string(), // This is an alias for audio/mpeg
-            "filename song.mp3".to_string(),
-            format!("x {}", hex::encode([0x44; 32])),
-            "v mip04-v1".to_string(),
-        ];
-        let imeta_tag = NostrTag::custom(TagKind::Custom("imeta".into()), tag_values);
-
-        let result = manager.parse_imeta_tag(&imeta_tag);
-        assert!(result.is_ok());
-
-        let media_ref = result.unwrap();
-        // Should be canonicalized to the proper MIME type
-        assert_eq!(media_ref.mime_type, "audio/mpeg");
-        assert_eq!(media_ref.url, "https://example.com/test.mp3");
-        assert_eq!(media_ref.filename, "song.mp3");
-        assert_eq!(media_ref.original_hash, [0x44; 32]);
-
-        // Test with another alias
-        let tag_values = vec![
-            "url https://example.com/test.wav".to_string(),
-            "m audio/x-wav".to_string(), // This is an alias for audio/wav
-            "filename sound.wav".to_string(),
-            format!("x {}", hex::encode([0x45; 32])),
-            "v mip04-v1".to_string(),
-        ];
-        let imeta_tag = NostrTag::custom(TagKind::Custom("imeta".into()), tag_values);
-
-        let result = manager.parse_imeta_tag(&imeta_tag);
-        assert!(result.is_ok());
-
-        let media_ref = result.unwrap();
-        // Should be canonicalized to the proper MIME type
-        assert_eq!(media_ref.mime_type, "audio/wav");
-        assert_eq!(media_ref.url, "https://example.com/test.wav");
-        assert_eq!(media_ref.filename, "sound.wav");
-        assert_eq!(media_ref.original_hash, [0x45; 32]);
-    }
-
-    #[test]
     fn test_parse_imeta_tag_with_invalid_mime_type() {
         let mdk = create_test_mdk();
         let group_id = GroupId::from_slice(&[1, 2, 3, 4]);
         let manager = mdk.media_manager(group_id);
 
-        // Test parsing IMETA tag with unsupported MIME type
+        // Test parsing IMETA tag with any MIME type (all should be accepted)
         let tag_values = vec![
             "url https://example.com/test.pdf".to_string(),
-            "m application/pdf".to_string(), // Unsupported MIME type
+            "m application/pdf".to_string(),
             "filename document.pdf".to_string(),
             format!("x {}", hex::encode([0x46; 32])),
             "v mip04-v1".to_string(),
@@ -842,13 +781,11 @@ mod tests {
         let imeta_tag = NostrTag::custom(TagKind::Custom("imeta".into()), tag_values);
 
         let result = manager.parse_imeta_tag(&imeta_tag);
-        assert!(result.is_err());
-        assert!(matches!(
-            result,
-            Err(EncryptedMediaError::InvalidImetaTag { .. })
-        ));
+        assert!(result.is_ok());
+        let media_ref = result.unwrap();
+        assert_eq!(media_ref.mime_type, "application/pdf");
 
-        // Test parsing IMETA tag with invalid MIME type format
+        // Test parsing IMETA tag with invalid MIME type format (no slash)
         let tag_values = vec![
             "url https://example.com/test.file".to_string(),
             "m invalid".to_string(), // Invalid format
