@@ -115,11 +115,12 @@ fn encrypt_group_image(image_data: &[u8]) -> Result<GroupImageEncrypted, GroupIm
     })?;
 
     let nonce = Nonce::from_slice(&image_nonce);
-    let encrypted_data = cipher.encrypt(nonce, image_data).map_err(|e| {
-        GroupImageError::EncryptionFailed {
-            reason: format!("Encryption failed: {}", e),
-        }
-    })?;
+    let encrypted_data =
+        cipher
+            .encrypt(nonce, image_data)
+            .map_err(|e| GroupImageError::EncryptionFailed {
+                reason: format!("Encryption failed: {}", e),
+            })?;
 
     // Calculate hash of encrypted data
     let encrypted_hash: [u8; 32] = Sha256::digest(&encrypted_data).into();
@@ -168,11 +169,12 @@ pub fn decrypt_group_image(
     })?;
 
     let nonce = Nonce::from_slice(image_nonce);
-    let decrypted_data = cipher.decrypt(nonce, encrypted_data).map_err(|e| {
-        GroupImageError::DecryptionFailed {
-            reason: format!("Decryption failed (possible tampering): {}", e),
-        }
-    })?;
+    let decrypted_data =
+        cipher
+            .decrypt(nonce, encrypted_data)
+            .map_err(|e| GroupImageError::DecryptionFailed {
+                reason: format!("Decryption failed (possible tampering): {}", e),
+            })?;
 
     Ok(decrypted_data)
 }
@@ -300,7 +302,10 @@ mod tests {
         );
 
         assert!(result.is_err());
-        assert!(matches!(result, Err(GroupImageError::DecryptionFailed { .. })));
+        assert!(matches!(
+            result,
+            Err(GroupImageError::DecryptionFailed { .. })
+        ));
     }
 
     #[test]
@@ -316,7 +321,10 @@ mod tests {
         );
 
         assert!(result.is_err());
-        assert!(matches!(result, Err(GroupImageError::DecryptionFailed { .. })));
+        assert!(matches!(
+            result,
+            Err(GroupImageError::DecryptionFailed { .. })
+        ));
     }
 
     #[test]
@@ -362,9 +370,12 @@ mod tests {
         assert_eq!(prepared.encrypted_hash, calculated_hash);
 
         // Verify we can decrypt
-        let decrypted =
-            decrypt_group_image(&prepared.encrypted_data, &prepared.image_key, &prepared.image_nonce)
-                .unwrap();
+        let decrypted = decrypt_group_image(
+            &prepared.encrypted_data,
+            &prepared.image_key,
+            &prepared.image_nonce,
+        )
+        .unwrap();
         assert_eq!(decrypted.as_slice(), image_data);
 
         // Verify keypair derivation is correct
@@ -397,7 +408,9 @@ mod tests {
         // Decryption should fail
         let result = decrypt_group_image(&tampered, &encrypted.image_key, &encrypted.image_nonce);
         assert!(result.is_err());
-        assert!(matches!(result, Err(GroupImageError::DecryptionFailed { .. })));
+        assert!(matches!(
+            result,
+            Err(GroupImageError::DecryptionFailed { .. })
+        ));
     }
-
 }

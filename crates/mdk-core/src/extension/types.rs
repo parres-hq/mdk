@@ -346,7 +346,9 @@ impl NostrGroupDataExtension {
     ///     )?;
     /// }
     /// ```
-    pub fn group_image_encryption_data(&self) -> Option<crate::extension::group_image::GroupImageEncryptionInfo> {
+    pub fn group_image_encryption_data(
+        &self,
+    ) -> Option<crate::extension::group_image::GroupImageEncryptionInfo> {
         match (self.image_hash, self.image_key, self.image_nonce) {
             (Some(hash), Some(key), Some(nonce)) => {
                 Some(crate::extension::group_image::GroupImageEncryptionInfo {
