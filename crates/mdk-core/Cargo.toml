@@ -11,6 +11,10 @@ readme = "README.md"
 rust-version = "1.85.0"
 keywords = ["nostr", "mls", "openmls"]
 
+[features]
+default = []
+mip04 = ["dep:image", "dep:blurhash", "dep:kamadak-exif"]
+
 [dependencies]
 hex = { workspace = true, features = ["std"] }
 nostr = { workspace = true, features = ["std", "nip44"] }
@@ -22,6 +26,17 @@ openmls_traits = { version = "0.4.0", default-features = false }
 serde = { workspace = true, features = ["derive"] }
 tls_codec = "0.4"
 tracing = { workspace = true, features = ["std"] }
+thiserror = "1.0"
+
+# Crypto dependencies for MIP-01 (group image encryption) - mandatory
+chacha20poly1305 = "0.10"
+hkdf = "0.12"
+sha2 = "0.10"
+
+# Optional dependencies for MIP-04 (encrypted media) feature
+image = { version = "0.25", optional = true, default-features = false, features = ["jpeg", "png", "webp", "gif"] }
+blurhash = { version = "0.2", optional = true }
+kamadak-exif = { version = "0.6", optional = true }
 
 [dev-dependencies]
 mdk-storage-traits = { workspace = true, features = ["test-utils"] }

@@ -10,17 +10,9 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  check:
-    strategy:
-      matrix:
-        include:
-          - os: ubuntu-latest
-            target: native
-          - os: macos-latest
-            target: native
-          - os: macos-14
-            target: native
-    runs-on: ${{ matrix.os }}
+  format:
+    runs-on: ubuntu-latest
+    name: Format
 
     steps:
     - name: Checkout code
@@ -29,24 +21,110 @@ jobs:
     - name: Setup Rust (stable)
       uses: dtolnay/rust-toolchain@stable
       with:
-        components: rustfmt, clippy
+        components: rustfmt
 
-    - name: Setup just
-      uses: extractions/setup-just@v2
+    - name: Check formatting
+      run: cargo fmt --all -- --check
+
+  lint:
+    needs: format
+    strategy:
+      fail-fast: false
+      matrix:
+        features:
+          - name: "all-features"
+            flags: "--all-features"
+          - name: "no-features"
+            flags: "--no-default-features"
+          - name: "mip04-only"
+            flags: "--no-default-features --features mip04"
+
+    runs-on: ubuntu-latest
+    name: Lint (${{ matrix.features.name }})
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Rust (stable)
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        components: clippy
 
     - name: Cache Rust dependencies
       uses: Swatinem/rust-cache@v2
+
+    - name: Install system dependencies
+      run: sudo apt-get update && sudo apt-get install -y pkg-config
+
+    - name: Run clippy
+      run: cargo clippy --all-targets ${{ matrix.features.flags }} --no-deps -- -D warnings
+
+  docs:
+    needs: format
+    runs-on: ubuntu-latest
+    name: Documentation
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Rust (stable)
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Cache Rust dependencies
+      uses: Swatinem/rust-cache@v2
+
+    - name: Install system dependencies
+      run: sudo apt-get update && sudo apt-get install -y pkg-config
+
+    - name: Check documentation
+      run: cargo doc --all-features --no-deps --document-private-items
+      env:
+        RUSTDOCFLAGS: "-D warnings"
+
+  test:
+    needs: [format, lint]
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, macos-14]
+        features:
+          - name: "all-features"
+            flags: "--all-features"
+          - name: "no-features"
+            flags: "--no-default-features"
+          - name: "mip04-only"
+            flags: "--no-default-features --features mip04"
+
+    runs-on: ${{ matrix.os }}
+    name: Test (${{ matrix.os }}, ${{ matrix.features.name }})
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Rust (stable)
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Cache Rust dependencies
+      uses: Swatinem/rust-cache@v2
+      with:
+        key: ${{ matrix.os }}-${{ matrix.features.name }}
 
     - name: Install system dependencies
       if: runner.os == 'Linux'
       run: sudo apt-get update && sudo apt-get install -y pkg-config
 
     - name: Check
-      run: cargo check --all-targets --all-features
+      run: cargo check --all-targets ${{ matrix.features.flags }}
 
     - name: Build
-      run: cargo build --all-targets --all-features
+      run: cargo build --all-targets ${{ matrix.features.flags }}
 
-    - name: Run full checks (Linux only)
-      if: matrix.os == 'ubuntu-latest'
-      run: just check
+    - name: Test
+      run: cargo test --all-targets ${{ matrix.features.flags }}
+
+    - name: Test docs
+      if: matrix.features.name == 'all-features'
+      run: cargo test --doc ${{ matrix.features.flags }}
