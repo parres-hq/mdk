@@ -1,7 +1,3 @@
-// Copyright (c) 2024-2025 Jeff Gardner
-// Copyright (c) 2025 Rust Nostr Developers
-// Distributed under the MIT software license
-
 //! Nostr Group Extension functionality for MLS Group Context.
 //! This is a required extension for Nostr Groups as per NIP-104.
 
@@ -332,6 +328,35 @@ impl NostrGroupDataExtension {
     /// * `image_nonce` - The new image encryption key (optional)
     pub fn set_image_nonce(&mut self, image_nonce: Option<[u8; 12]>) {
         self.image_nonce = image_nonce;
+    }
+
+    /// Get group image encryption data if all three fields are set
+    ///
+    /// Returns `Some` only when image_hash, image_key, and image_nonce are all present.
+    /// This ensures you have all necessary data to download and decrypt the group image.
+    ///
+    /// # Example
+    /// ```ignore
+    /// if let Some(info) = extension.group_image_encryption_data() {
+    ///     let encrypted_blob = download_from_blossom(&info.image_hash).await?;
+    ///     let image = group_image::decrypt_group_image(
+    ///         &encrypted_blob,
+    ///         &info.image_key,
+    ///         &info.image_nonce
+    ///     )?;
+    /// }
+    /// ```
+    pub fn group_image_encryption_data(&self) -> Option<crate::extension::group_image::GroupImageEncryptionInfo> {
+        match (self.image_hash, self.image_key, self.image_nonce) {
+            (Some(hash), Some(key), Some(nonce)) => {
+                Some(crate::extension::group_image::GroupImageEncryptionInfo {
+                    image_hash: hash,
+                    image_key: key,
+                    image_nonce: nonce,
+                })
+            }
+            _ => None,
+        }
     }
 
     pub(crate) fn as_raw(&self) -> TlsNostrGroupDataExtension {
