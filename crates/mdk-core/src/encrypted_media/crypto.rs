@@ -206,26 +206,22 @@ mod tests {
     }
 
     #[test]
-    fn test_encryption_decryption_roundtrip() {
+    fn test_errors_without_group() {
         let mdk = create_test_mdk();
         let group_id = GroupId::from_slice(&[1, 2, 3, 4]);
 
         let original_data =
             b"This is test image data that should be encrypted and decrypted properly";
         let mime_type = "image/jpeg";
-        let _filename = "test.jpg";
-
-        // Test the encryption/decryption flow
-        // For this test, we'll focus on the internal encryption/decryption methods
-        // since the full encrypt_for_upload requires a proper MLS group setup
+        let filename = "test.jpg";
 
         let original_hash: [u8; 32] = Sha256::digest(original_data).into();
 
         // Test key and nonce derivation (these will fail without a proper group, but we can test the logic)
         let key_result =
-            derive_encryption_key(&mdk, &group_id, &original_hash, mime_type, _filename);
+            derive_encryption_key(&mdk, &group_id, &original_hash, mime_type, filename);
         let nonce_result =
-            derive_encryption_nonce(&mdk, &group_id, &original_hash, mime_type, _filename);
+            derive_encryption_nonce(&mdk, &group_id, &original_hash, mime_type, filename);
 
         // These should fail gracefully since we don't have a real MLS group
         assert!(key_result.is_err());

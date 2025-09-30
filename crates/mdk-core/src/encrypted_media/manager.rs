@@ -174,8 +174,8 @@ where
         // x field contains SHA256 hash of original file content (hex-encoded)
         tag_values.push(format!("x {}", hex::encode(upload.original_hash)));
 
-        // v field contains encryption version number (currently "1")
-        tag_values.push("v 1".to_string());
+        // v field contains encryption version number (currently "mip04-v1")
+        tag_values.push("v mip04-v1".to_string());
 
         NostrTag::custom(TagKind::Custom("imeta".into()), tag_values)
     }
@@ -302,11 +302,11 @@ where
             reason: "Missing required 'filename' field".to_string(),
         })?;
 
-        // Validate version (currently only support version 1)
+        // Validate version (currently only support mip04-v1)
         if let Some(v) = version {
-            if v != "1" {
+            if v != "mip04-v1" {
                 return Err(EncryptedMediaError::DecryptionFailed {
-                    reason: format!("Unsupported encryption version: {}", v),
+                    reason: format!("Unsupported MIP-04 encryption version: {}", v),
                 });
             }
         }
@@ -377,7 +377,7 @@ mod tests {
         assert!(values
             .iter()
             .any(|v| v.starts_with(&format!("x {}", hex::encode([0x42; 32])))));
-        assert!(values.iter().any(|v| v.starts_with("v 1")));
+        assert!(values.iter().any(|v| v.starts_with("v mip04-v1")));
     }
 
     #[test]
@@ -394,7 +394,7 @@ mod tests {
             "dim 1920x1080".to_string(),
             "blurhash LKO2?U%2Tw=w]~RBVZRi};RPxuwH".to_string(),
             format!("x {}", hex::encode([0x42; 32])),
-            "v 1".to_string(),
+            "v mip04-v1".to_string(),
         ];
 
         let imeta_tag = NostrTag::custom(TagKind::Custom("imeta".into()), tag_values);
@@ -603,7 +603,7 @@ mod tests {
             "m image/jpeg".to_string(),
             "filename photo.jpg".to_string(),
             format!("x {}", hex::encode([0x42; 32])),
-            "v 2".to_string(), // Unsupported version
+            "v mip04-v2".to_string(), // Unsupported version
         ];
         let tag = NostrTag::custom(TagKind::Custom("imeta".into()), tag_values);
         let result = manager.parse_imeta_tag(&tag);
@@ -618,7 +618,7 @@ mod tests {
             "m image/jpeg".to_string(),
             "filename photo.jpg".to_string(),
             format!("x {}", hex::encode([0x42; 32])),
-            "v 1".to_string(),
+            "v mip04-v1".to_string(),
         ];
         let tag = NostrTag::custom(TagKind::Custom("imeta".into()), tag_values);
         let result = manager.parse_imeta_tag(&tag);
@@ -735,7 +735,7 @@ mod tests {
             "m IMAGE/JPEG".to_string(), // Mixed case from producer
             "filename photo.jpg".to_string(),
             format!("x {}", hex::encode([0x42; 32])),
-            "v 1".to_string(),
+            "v mip04-v1".to_string(),
         ];
         let imeta_tag = NostrTag::custom(TagKind::Custom("imeta".into()), tag_values);
 
@@ -768,7 +768,7 @@ mod tests {
             "m audio/mp3".to_string(), // This is an alias for audio/mpeg
             "filename song.mp3".to_string(),
             format!("x {}", hex::encode([0x44; 32])),
-            "v 1".to_string(),
+            "v mip04-v1".to_string(),
         ];
         let imeta_tag = NostrTag::custom(TagKind::Custom("imeta".into()), tag_values);
 
