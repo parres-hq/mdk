@@ -264,12 +264,11 @@ where
                 "dim" => {
                     // Parse dimensions in format "widthxheight"
                     let dim_parts: Vec<&str> = parts[1].split('x').collect();
-                    if dim_parts.len() == 2 {
-                        if let (Ok(width), Ok(height)) =
+                    if dim_parts.len() == 2
+                        && let (Ok(width), Ok(height)) =
                             (dim_parts[0].parse::<u32>(), dim_parts[1].parse::<u32>())
-                        {
-                            dimensions = Some((width, height));
-                        }
+                    {
+                        dimensions = Some((width, height));
                     }
                 }
                 "filename" => match validate_filename(parts[1]) {

@@ -641,27 +641,3 @@ pub mod cross_storage {
         assert!(result.is_none());
     }
 }
-
-/// Macro to generate cross-storage tests for both SQLite and Memory implementations
-#[macro_export]
-macro_rules! test_both_storages {
-    ($test_name:ident, $test_fn:path) => {
-        mod $test_name {
-            use super::*;
-
-            #[test]
-            fn sqlite() {
-                let storage = $crate::MdkSqliteStorage::new_in_memory().unwrap();
-                $test_fn(storage);
-            }
-
-            #[test]
-            fn memory() {
-                let storage = $crate::MdkMemoryStorage::new(
-                    ::openmls_memory_storage::MemoryStorage::default(),
-                );
-                $test_fn(storage);
-            }
-        }
-    };
-}

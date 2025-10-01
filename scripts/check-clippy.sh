@@ -10,8 +10,8 @@ if [ "$version" != "stable" ]; then
     cargo +$version --version || rustup install $version
     cargo +$version clippy --version || rustup component add clippy --toolchain $version
 else
-    cargo +$version --version || rustup update stable
-    cargo +$version clippy --version || rustup component add clippy
+    cargo +$version --version || rustup update "$version"
+    cargo +$version clippy --version || rustup component add clippy --toolchain $version
 fi
 
 echo "Checking clippy with $version..."

@@ -729,20 +729,18 @@ where
                     .storage()
                     .find_processed_message_by_event_id(&event.id)
                     .map_err(|e| Error::Message(e.to_string()))
-                {
-                    if processed_message.state
+                    && processed_message.state
                         == message_types::ProcessedMessageState::ProcessedCommit
-                    {
-                        tracing::debug!(target: "mdk_core::messages::process_message", "Found own commit with epoch mismatch, syncing group metadata");
+                {
+                    tracing::debug!(target: "mdk_core::messages::process_message", "Found own commit with epoch mismatch, syncing group metadata");
 
-                        // Sync the stored group metadata even though processing failed
-                        self.sync_group_metadata_from_mls(&group.mls_group_id)
-                            .map_err(|e| {
-                                Error::Message(format!("Failed to sync group metadata: {}", e))
-                            })?;
+                    // Sync the stored group metadata even though processing failed
+                    self.sync_group_metadata_from_mls(&group.mls_group_id)
+                        .map_err(|e| {
+                            Error::Message(format!("Failed to sync group metadata: {}", e))
+                        })?;
 
-                        return Ok(MessageProcessingResult::Commit);
-                    }
+                    return Ok(MessageProcessingResult::Commit);
                 }
 
                 // Not our own commit - this is a genuine error

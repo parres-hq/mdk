@@ -68,6 +68,7 @@ When you need to bump the MSRV, update these locations:
 1. `/Cargo.toml` - `workspace.package.rust-version`
 2. `/scripts/check-msrv.sh` - `msrv` variable
 3. `/.github/workflows/ci.yml` - matrix `rust` array
+4. `docs/DEVELOPMENT.md` - hard-coded MSRV version references
 
 ### Recommended Workflow
 

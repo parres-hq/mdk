@@ -19,8 +19,8 @@ if [ "$version" != "stable" ]; then
     cargo +$version --version || rustup install $version
     cargo +$version fmt --version || rustup component add rustfmt --toolchain $version
 else
-    cargo +$version --version || rustup update stable
-    cargo +$version fmt --version || rustup component add rustfmt
+    cargo +$version --version || rustup update "$version"
+    cargo +$version fmt --version || rustup component add rustfmt --toolchain "$version"
 fi
 
 echo "Checking fmt with $version"

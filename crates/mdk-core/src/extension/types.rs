@@ -104,7 +104,8 @@ impl NostrGroupDataExtension {
     {
         // Generate a random 32-byte group ID
         let mut rng = OsRng;
-        let random_bytes: [u8; 32] = rng.r#gen();
+        let mut random_bytes = [0u8; 32];
+        rng.fill(&mut random_bytes);
 
         Self {
             nostr_group_id: random_bytes,

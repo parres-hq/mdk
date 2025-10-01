@@ -13,7 +13,7 @@ keywords = ["nostr", "mls", "openmls"]
 
 [features]
 default = []
-# Enabld test utils module
+# Enable test utils module
 test-utils = []
 
 [dependencies]

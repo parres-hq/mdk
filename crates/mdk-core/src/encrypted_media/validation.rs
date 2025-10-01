@@ -93,14 +93,14 @@ pub fn validate_image_dimensions(
     height: u32,
     options: &MediaProcessingOptions,
 ) -> Result<(), EncryptedMediaError> {
-    if let Some(max_dim) = options.max_dimension {
-        if width > max_dim || height > max_dim {
-            return Err(EncryptedMediaError::DimensionsTooLarge {
-                width,
-                height,
-                max_dimension: max_dim,
-            });
-        }
+    if let Some(max_dim) = options.max_dimension
+        && (width > max_dim || height > max_dim)
+    {
+        return Err(EncryptedMediaError::DimensionsTooLarge {
+            width,
+            height,
+            max_dimension: max_dim,
+        });
     }
     Ok(())
 }
