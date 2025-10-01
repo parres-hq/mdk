@@ -25,7 +25,7 @@ test-all:
     @echo "Testing with mip04 feature only..."
     @just test-mip04
 
-# Check clippy for all feature combinations
+# Check clippy for all feature combinations (uses stable by default)
 lint:
     @bash scripts/check-clippy.sh
 
@@ -37,27 +37,39 @@ lint-no-features:
 lint-mip04:
     cargo clippy --all-targets --no-default-features --features mip04 --no-deps -- -D warnings
 
-# Check fmt
+# Check fmt (uses stable by default)
 fmt:
     @bash scripts/check-fmt.sh
 
-# Check docs
+# Check docs (uses stable by default)
 docs:
     @bash scripts/check-docs.sh
 
-# Check all (comprehensive like CI)
+# Quick check with stable (fast for local development)
 check:
     @bash scripts/check-all.sh
     @just test-all
 
-# Full comprehensive check including all feature combinations
-check-full:
-    @echo "Running format checks..."
-    @just fmt
-    @echo "Running documentation checks..."
-    @just docs
-    @echo "Running clippy checks for all feature combinations..."
-    @just lint
-    @echo "Running tests for all feature combinations..."
+# Pre-commit check: runs both stable and MSRV checks
+precommit:
+    @echo "=========================================="
+    @echo "Running pre-commit checks (stable + MSRV)"
+    @echo "=========================================="
+    @echo ""
+    @echo "→ Checking with stable Rust..."
+    @bash scripts/check-all.sh stable
+    @echo ""
+    @echo "→ Checking with MSRV (1.85.0)..."
+    @bash scripts/check-msrv.sh
+    @echo ""
+    @echo "→ Running tests..."
     @just test-all
+    @echo ""
+    @echo "=========================================="
+    @echo "✓ All pre-commit checks passed!"
+    @echo "=========================================="
+
+# Full comprehensive check including all feature combinations (same as check for now)
+check-full:
+    @just check
 

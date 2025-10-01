@@ -2,7 +2,7 @@
 // Distributed under the MIT software license
 
 use mdk_core::prelude::*;
-use mdk_core::{messages::MessageProcessingResult, Error};
+use mdk_core::{Error, messages::MessageProcessingResult};
 use mdk_sqlite_storage::MdkSqliteStorage;
 use mdk_storage_traits::test_utils::crypto_utils::generate_random_bytes;
 use nostr::event::builder::EventBuilder;

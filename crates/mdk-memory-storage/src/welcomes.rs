@@ -1,8 +1,8 @@
 //! Memory-based storage implementation of the MdkStorageProvider trait for Nostr MLS welcomes
 
+use mdk_storage_traits::welcomes::WelcomeStorage;
 use mdk_storage_traits::welcomes::error::WelcomeError;
 use mdk_storage_traits::welcomes::types::*;
-use mdk_storage_traits::welcomes::WelcomeStorage;
 use nostr::EventId;
 
 use crate::MdkMemoryStorage;

@@ -11,11 +11,11 @@
 //! The message content is encrypted using both MLS group keys and NIP-44 encryption.
 //! Message state is tracked to handle processing status and failure scenarios.
 
+use mdk_storage_traits::MdkStorageProvider;
 use mdk_storage_traits::groups::types as group_types;
 use mdk_storage_traits::messages::types as message_types;
-use mdk_storage_traits::MdkStorageProvider;
 use nostr::{Event, EventId, JsonUtil, Kind, TagKind, Timestamp, UnsignedEvent};
-use openmls::group::{MlsGroupStateError, ProcessMessageError, ValidationError};
+use openmls::group::{ProcessMessageError, ValidationError};
 use openmls::prelude::{
     ApplicationMessage, MlsGroup, MlsMessageIn, ProcessedMessageContent, QueuedProposal, Sender,
     StagedCommit,
@@ -26,7 +26,7 @@ use tls_codec::{Deserialize as TlsDeserialize, Serialize as TlsSerialize};
 
 use crate::error::Error;
 use crate::groups::UpdateGroupResult;
-use crate::{util, GroupId, MDK};
+use crate::{GroupId, MDK, util};
 
 // Internal Result type alias for this module
 type Result<T> = std::result::Result<T, Error>;
@@ -255,7 +255,7 @@ where
             }
             Err(e) => {
                 tracing::error!(target: "mdk_core::messages::process_message_for_group", "Error processing message: {:?}", e);
-                return Err(Error::ProcessMessage(e));
+                return Err(e.into());
             }
         };
 
@@ -721,9 +721,7 @@ where
                     }
                 }
             }
-            Error::ProcessMessage(ProcessMessageError::ValidationError(
-                ValidationError::WrongEpoch,
-            )) => {
+            Error::ProcessMessageWrongEpoch => {
                 // Epoch mismatch - check if this is our own commit that we've already processed
                 tracing::debug!(target: "mdk_core::messages::process_message", "Epoch mismatch error, checking if this is our own commit");
 
@@ -762,9 +760,7 @@ where
 
                 Ok(MessageProcessingResult::Unprocessable)
             }
-            Error::ProcessMessage(ProcessMessageError::ValidationError(
-                ValidationError::WrongGroupId,
-            )) => {
+            Error::ProcessMessageWrongGroupId => {
                 tracing::error!(target: "mdk_core::messages::process_message", "Group ID mismatch: {:?}", error);
                 let processed_message = message_types::ProcessedMessage {
                     wrapper_event_id: event.id,
@@ -779,9 +775,7 @@ where
 
                 Ok(MessageProcessingResult::Unprocessable)
             }
-            Error::ProcessMessage(ProcessMessageError::GroupStateError(
-                MlsGroupStateError::UseAfterEviction,
-            )) => {
+            Error::ProcessMessageUseAfterEviction => {
                 tracing::error!(target: "mdk_core::messages::process_message", "Attempted to use group after eviction: {:?}", error);
                 let processed_message = message_types::ProcessedMessage {
                     wrapper_event_id: event.id,
@@ -915,7 +909,9 @@ where
             }
             // Decryption failed using the current epoch exporter secret
             Err(_) => {
-                tracing::debug!("Failed to decrypt message with current exporter secret. Trying with past ones.");
+                tracing::debug!(
+                    "Failed to decrypt message with current exporter secret. Trying with past ones."
+                );
 
                 // Try with past exporter secrets
                 self.try_decrypt_with_past_epochs(

@@ -16,8 +16,8 @@ use std::sync::{Arc, Mutex};
 use mdk_storage_traits::{Backend, MdkStorageProvider};
 use openmls_sqlite_storage::{Codec, SqliteStorageProvider};
 use rusqlite::Connection;
-use serde::de::DeserializeOwned;
 use serde::Serialize;
+use serde::de::DeserializeOwned;
 
 mod db;
 pub mod error;
@@ -93,7 +93,7 @@ impl MdkSqliteStorage {
         let mut openmls_storage: MlsStorage = SqliteStorageProvider::new(mls_connection);
 
         // Initialize the OpenMLS storage
-        openmls_storage.initialize()?;
+        openmls_storage.run_migrations()?;
 
         // Create a new connection for the Nostr MLS storage
         let mut mdk_connection = Connection::open(&file_path)?;
@@ -127,7 +127,7 @@ impl MdkSqliteStorage {
         let mut openmls_storage: MlsStorage = SqliteStorageProvider::new(mls_connection);
 
         // Initialize the OpenMLS storage
-        openmls_storage.initialize()?;
+        openmls_storage.run_migrations()?;
 
         // For in-memory databases, we need to share the connection
         // to keep the database alive, so we will clone the connection
@@ -282,8 +282,8 @@ mod tests {
 
     #[test]
     fn test_group_exporter_secrets() {
-        use mdk_storage_traits::groups::types::{Group, GroupExporterSecret, GroupState};
         use mdk_storage_traits::groups::GroupStorage;
+        use mdk_storage_traits::groups::types::{Group, GroupExporterSecret, GroupState};
 
         // Create an in-memory SQLite database
         let storage = MdkSqliteStorage::new_in_memory().unwrap();

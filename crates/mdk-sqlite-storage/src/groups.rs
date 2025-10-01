@@ -2,16 +2,16 @@
 
 use std::collections::BTreeSet;
 
+use mdk_storage_traits::GroupId;
+use mdk_storage_traits::groups::GroupStorage;
 use mdk_storage_traits::groups::error::GroupError;
 use mdk_storage_traits::groups::types::{Group, GroupExporterSecret, GroupRelay};
-use mdk_storage_traits::groups::GroupStorage;
 use mdk_storage_traits::messages::types::Message;
-use mdk_storage_traits::GroupId;
 use nostr::{PublicKey, RelayUrl};
-use rusqlite::{params, OptionalExtension};
+use rusqlite::{OptionalExtension, params};
 
 use crate::db::{Hash32, Nonce12};
-use crate::{db, MdkSqliteStorage};
+use crate::{MdkSqliteStorage, db};
 
 #[inline]
 fn into_group_err<T>(e: T) -> GroupError

@@ -7,8 +7,8 @@ use crate::GroupId;
 use mdk_storage_traits::MdkStorageProvider;
 use nostr::{Event, EventBuilder, Keys, Kind, PublicKey, RelayUrl};
 
-use crate::groups::NostrGroupConfigData;
 use crate::MDK;
+use crate::groups::NostrGroupConfigData;
 
 /// Creates test group members with standard configuration
 ///

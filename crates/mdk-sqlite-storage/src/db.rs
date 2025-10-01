@@ -4,6 +4,7 @@ use std::collections::BTreeSet;
 use std::io::{Error as IoError, ErrorKind};
 use std::str::FromStr;
 
+use mdk_storage_traits::GroupId;
 use mdk_storage_traits::groups::types::{Group, GroupExporterSecret, GroupRelay, GroupState};
 use mdk_storage_traits::messages::types::{
     Message, MessageState, ProcessedMessage, ProcessedMessageState,
@@ -11,7 +12,6 @@ use mdk_storage_traits::messages::types::{
 use mdk_storage_traits::welcomes::types::{
     ProcessedWelcome, ProcessedWelcomeState, Welcome, WelcomeState,
 };
-use mdk_storage_traits::GroupId;
 use nostr::{EventId, JsonUtil, Kind, PublicKey, RelayUrl, Tags, Timestamp, UnsignedEvent};
 use rusqlite::types::{FromSql, FromSqlError, FromSqlResult, ToSql, ToSqlOutput, Type, ValueRef};
 use rusqlite::{Error, Result as SqliteResult, Row};

@@ -5,7 +5,7 @@
 //! and protocol requirements.
 
 use crate::encrypted_media::types::{
-    EncryptedMediaError, MediaProcessingOptions, MAX_FILENAME_LENGTH, MAX_FILE_SIZE,
+    EncryptedMediaError, MAX_FILE_SIZE, MAX_FILENAME_LENGTH, MediaProcessingOptions,
 };
 
 /// Validate input parameters for media encryption

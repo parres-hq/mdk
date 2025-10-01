@@ -1,13 +1,13 @@
 //! Implementation of WelcomeStorage trait for SQLite storage.
 
+use mdk_storage_traits::welcomes::WelcomeStorage;
 use mdk_storage_traits::welcomes::error::WelcomeError;
 use mdk_storage_traits::welcomes::types::{ProcessedWelcome, Welcome};
-use mdk_storage_traits::welcomes::WelcomeStorage;
 use nostr::{EventId, JsonUtil};
-use rusqlite::{params, OptionalExtension};
+use rusqlite::{OptionalExtension, params};
 
 use crate::db::{Hash32, Nonce12};
-use crate::{db, MdkSqliteStorage};
+use crate::{MdkSqliteStorage, db};
 
 #[inline]
 fn into_welcome_err<T>(e: T) -> WelcomeError
@@ -145,12 +145,12 @@ impl WelcomeStorage for MdkSqliteStorage {
 
 #[cfg(test)]
 mod tests {
+    use mdk_storage_traits::GroupId;
     use mdk_storage_traits::groups::GroupStorage;
     use mdk_storage_traits::test_utils::cross_storage::{
         create_test_group, create_test_processed_welcome, create_test_welcome,
     };
     use mdk_storage_traits::welcomes::types::ProcessedWelcomeState;
-    use mdk_storage_traits::GroupId;
     use nostr::EventId;
 
     use super::*;

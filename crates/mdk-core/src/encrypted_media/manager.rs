@@ -257,7 +257,7 @@ where
                         _ => {
                             return Err(EncryptedMediaError::InvalidImetaTag {
                                 reason: "Invalid 'x' (file_hash) field".to_string(),
-                            })
+                            });
                         }
                     }
                 }
@@ -368,18 +368,24 @@ mod tests {
         let values = tag.to_vec();
 
         // Check required fields
-        assert!(values
-            .iter()
-            .any(|v| v.starts_with("url https://example.com/file.jpg")));
+        assert!(
+            values
+                .iter()
+                .any(|v| v.starts_with("url https://example.com/file.jpg"))
+        );
         assert!(values.iter().any(|v| v.starts_with("m image/jpeg")));
         assert!(values.iter().any(|v| v.starts_with("filename test.jpg")));
         assert!(values.iter().any(|v| v.starts_with("dim 1920x1080")));
-        assert!(values
-            .iter()
-            .any(|v| v.starts_with("blurhash LKO2?U%2Tw=w]~RBVZRi};RPxuwH")));
-        assert!(values
-            .iter()
-            .any(|v| v.starts_with(&format!("x {}", hex::encode([0x42; 32])))));
+        assert!(
+            values
+                .iter()
+                .any(|v| v.starts_with("blurhash LKO2?U%2Tw=w]~RBVZRi};RPxuwH"))
+        );
+        assert!(
+            values
+                .iter()
+                .any(|v| v.starts_with(&format!("x {}", hex::encode([0x42; 32]))))
+        );
         assert!(values.iter().any(|v| v.starts_with("v mip04-v1")));
     }
 

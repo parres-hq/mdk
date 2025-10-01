@@ -1,8 +1,8 @@
 //! Memory-based storage implementation of the MdkStorageProvider trait for Nostr MLS messages
 
+use mdk_storage_traits::messages::MessageStorage;
 use mdk_storage_traits::messages::error::MessageError;
 use mdk_storage_traits::messages::types::*;
-use mdk_storage_traits::messages::MessageStorage;
 use nostr::EventId;
 
 use crate::MdkMemoryStorage;

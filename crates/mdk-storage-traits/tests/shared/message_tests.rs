@@ -1,8 +1,8 @@
 //! Message storage test functions
 
+use mdk_storage_traits::GroupId;
 use mdk_storage_traits::groups::GroupStorage;
 use mdk_storage_traits::messages::MessageStorage;
-use mdk_storage_traits::GroupId;
 use nostr::EventId;
 
 use super::{create_test_group, create_test_message, create_test_processed_message};
