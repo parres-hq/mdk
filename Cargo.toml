@@ -54,7 +54,7 @@ parking_lot = "0.12"
 thiserror = "2"
 
 # Async
-tokio = { version = ">=1.47", default-features = false }
+tokio = { version = "1.47", default-features = false }
 
 # Logging
 tracing = { version = "0.1", default-features = false }
