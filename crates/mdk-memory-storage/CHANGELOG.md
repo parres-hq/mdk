@@ -27,6 +27,30 @@
 
 ### Breaking changes
 
+### Changed
+
+### Added
+
+### Fixed
+
+### Removed
+
+### Deprecated
+
+## [0.5.1] - 2025-10-01
+
+### Changed
+
+- Update MSRV to 1.90.0 (required by openmls 0.7.1)
+- Update openmls to 0.7.1
+
+## [0.5.0] - 2025-09-10
+
+**Note**: This is the first release as an independent library. Previously, this code was part of the `rust-nostr` project.
+
+### Breaking changes
+
+- Library split from rust-nostr into independent MDK (Marmot Development Kit) project
 - Remove group type from groups
 - Replaced `save_group_relay` with `replace_group_relays` trait method (https://github.com/rust-nostr/nostr/pull/1056)
 - `image_hash` instead of `image_url` (https://github.com/rust-nostr/nostr/pull/1059)

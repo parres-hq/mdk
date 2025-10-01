@@ -2,7 +2,7 @@
 
 ## Rust Version Support
 
-This project maintains compatibility with a **Minimum Supported Rust Version (MSRV)** of **1.85.0** while also ensuring compatibility with the latest stable Rust.
+This project maintains compatibility with a **Minimum Supported Rust Version (MSRV)** of **1.90.0** while also ensuring compatibility with the latest stable Rust.
 
 ### Local Development
 
@@ -24,7 +24,7 @@ just test-all     # All test combinations
 Before committing, run comprehensive checks against both Rust versions:
 
 ```bash
-just precommit    # Checks both stable AND MSRV (1.85.0)
+just precommit    # Checks both stable AND MSRV (1.90.0)
 ```
 
 This ensures your code works on both the latest stable and the minimum supported version.
@@ -35,10 +35,10 @@ You can manually specify which Rust version to use:
 
 ```bash
 # Check with MSRV
-./scripts/check-all.sh 1.85.0
-./scripts/check-clippy.sh 1.85.0
-./scripts/check-fmt.sh 1.85.0
-./scripts/check-docs.sh 1.85.0
+./scripts/check-all.sh 1.90.0
+./scripts/check-clippy.sh 1.90.0
+./scripts/check-fmt.sh 1.90.0
+./scripts/check-docs.sh 1.90.0
 
 # Check with stable (default)
 ./scripts/check-all.sh stable
@@ -51,7 +51,7 @@ You can manually specify which Rust version to use:
 ### CI/CD
 
 GitHub Actions runs the full test matrix:
-- **Rust versions**: 1.85.0 (MSRV) + stable
+- **Rust versions**: 1.90.0 (MSRV) + stable
 - **Operating systems**: Ubuntu, macOS (latest), macOS (M1)
 - **Feature combinations**: all-features, no-features, mip04-only
 

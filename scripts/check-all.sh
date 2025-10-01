@@ -3,7 +3,7 @@
 set -euo pipefail
 
 # Default to stable for fast local checks
-# Pass version as argument: ./scripts/check-all.sh 1.85.0
+# Pass version as argument: ./scripts/check-all.sh 1.90.0
 version="${1:-stable}"
 
 echo "========================================"

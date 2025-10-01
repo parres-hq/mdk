@@ -31,7 +31,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        rust: ["1.85.0", "stable"]
+        rust: ["1.90.0", "stable"]
         features:
           - name: "all-features"
             flags: "--all-features"
@@ -69,7 +69,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        rust: ["1.85.0", "stable"]
+        rust: ["1.90.0", "stable"]
 
     runs-on: ubuntu-latest
     name: Documentation (${{ matrix.rust }})
@@ -102,7 +102,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, macos-14]
-        rust: ["1.85.0", "stable"]
+        rust: ["1.90.0", "stable"]
         features:
           - name: "all-features"
             flags: "--all-features"

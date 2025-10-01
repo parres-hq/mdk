@@ -8,14 +8,14 @@ authors = ["Jeff Gardner <j@jeffg.me>", "MDK Developers"]
 homepage = "https://github.com/parres-hq/mdk"
 repository = "https://github.com/parres-hq/mdk.git"
 license = "MIT"
-rust-version = "1.85.0"
+rust-version = "1.90.0"
 
 [workspace.dependencies]
 # Internal crates
-mdk-memory-storage = { version = "0.5.0", path = "./crates/mdk-memory-storage", default-features = false }
-mdk-sqlite-storage = { version = "0.5.0", path = "./crates/mdk-sqlite-storage", default-features = false }
-mdk-storage-traits = { version = "0.5.0", path = "./crates/mdk-storage-traits", default-features = false }
-mdk-core = { version = "0.5.0", path = "./crates/mdk-core", default-features = false }
+mdk-memory-storage = { version = "0.5.1", path = "./crates/mdk-memory-storage", default-features = false }
+mdk-sqlite-storage = { version = "0.5.1", path = "./crates/mdk-sqlite-storage", default-features = false }
+mdk-storage-traits = { version = "0.5.1", path = "./crates/mdk-storage-traits", default-features = false }
+mdk-core = { version = "0.5.1", path = "./crates/mdk-core", default-features = false }
 
 # OpenMLS family
 openmls = { version = "0.7.1", default-features = false }
@@ -54,7 +54,7 @@ parking_lot = "0.12"
 thiserror = "2"
 
 # Async
-tokio = { version = ">=1.37", default-features = false }
+tokio = { version = ">=1.47", default-features = false }
 
 # Logging
 tracing = { version = "0.1", default-features = false }
@@ -62,4 +62,3 @@ tracing-subscriber = "0.3"
 
 # Testing
 tempfile = "3.20"
-rand = "0.9.2"

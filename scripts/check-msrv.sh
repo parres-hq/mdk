@@ -3,7 +3,7 @@
 set -euo pipefail
 
 # MSRV (Minimum Supported Rust Version) - should match Cargo.toml rust-version
-msrv="1.85.0"
+msrv="1.90.0"
 
 echo "========================================"
 echo "Running MSRV checks with Rust $msrv"

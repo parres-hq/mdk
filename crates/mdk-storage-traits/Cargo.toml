@@ -1,6 +1,6 @@
 [package]
 name = "mdk-storage-traits"
-version = "0.5.0"
+version = "0.5.1"
 edition = "2024"
 description = "Storage abstraction for nostr-mls that wraps OpenMLS storage backends"
 authors = ["Jeff Gardner <j@jeffg.me>", "Yuki Kishimoto <yukikishimoto@protonmail.com>", "MDK Developers"]
@@ -8,7 +8,7 @@ homepage.workspace = true
 repository.workspace = true
 license.workspace = true
 readme = "README.md"
-rust-version = "1.85.0"
+rust-version = "1.90.0"
 keywords = ["nostr", "mls", "openmls"]
 
 [features]
