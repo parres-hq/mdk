@@ -288,7 +288,7 @@ cargo test -p mdk-core
 
 ### Prerequisites
 
-- Rust 1.85.0 or later
+- Rust 1.90.0 or later
 - SQLite (for sqlite storage tests)
 - [just](https://github.com/casey/just) (recommended for development)
 

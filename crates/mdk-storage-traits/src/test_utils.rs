@@ -2,13 +2,13 @@
 
 /// Random data generation utilities for testing MLS group features
 pub mod crypto_utils {
-    use aes_gcm::aead::rand_core::RngCore;
-    use aes_gcm::aead::OsRng;
+    use nostr::secp256k1::rand::{RngCore, rngs::OsRng};
 
     /// Generates random bytes as `Vec<u8>` of the specified length
     pub fn generate_random_bytes(length: usize) -> Vec<u8> {
         let mut bytes = vec![0u8; length];
-        RngCore::fill_bytes(&mut OsRng, &mut bytes);
+        let mut rng = OsRng;
+        rng.fill_bytes(&mut bytes);
         bytes
     }
 }
@@ -20,13 +20,13 @@ pub mod cross_storage {
     use crate::GroupId;
     use nostr::{EventId, RelayUrl, Timestamp};
 
+    use crate::groups::GroupStorage;
     use crate::groups::error::GroupError;
     use crate::groups::types::{Group, GroupExporterSecret, GroupState};
-    use crate::groups::GroupStorage;
-    use crate::messages::types::{Message, MessageState, ProcessedMessage, ProcessedMessageState};
     use crate::messages::MessageStorage;
-    use crate::welcomes::types::{ProcessedWelcome, ProcessedWelcomeState, Welcome, WelcomeState};
+    use crate::messages::types::{Message, MessageState, ProcessedMessage, ProcessedMessageState};
     use crate::welcomes::WelcomeStorage;
+    use crate::welcomes::types::{ProcessedWelcome, ProcessedWelcomeState, Welcome, WelcomeState};
 
     /// Creates a test group with the given ID for testing purposes
     pub fn create_test_group(mls_group_id: GroupId) -> Group {
@@ -640,28 +640,4 @@ pub mod cross_storage {
             .unwrap();
         assert!(result.is_none());
     }
-}
-
-/// Macro to generate cross-storage tests for both SQLite and Memory implementations
-#[macro_export]
-macro_rules! test_both_storages {
-    ($test_name:ident, $test_fn:path) => {
-        mod $test_name {
-            use super::*;
-
-            #[test]
-            fn sqlite() {
-                let storage = $crate::MdkSqliteStorage::new_in_memory().unwrap();
-                $test_fn(storage);
-            }
-
-            #[test]
-            fn memory() {
-                let storage = $crate::MdkMemoryStorage::new(
-                    ::openmls_memory_storage::MemoryStorage::default(),
-                );
-                $test_fn(storage);
-            }
-        }
-    };
 }

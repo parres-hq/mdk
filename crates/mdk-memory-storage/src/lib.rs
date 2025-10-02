@@ -14,10 +14,10 @@ use std::collections::BTreeSet;
 use std::num::NonZeroUsize;
 
 use lru::LruCache;
+use mdk_storage_traits::GroupId;
 use mdk_storage_traits::groups::types::{Group, GroupExporterSecret, GroupRelay};
 use mdk_storage_traits::messages::types::{Message, ProcessedMessage};
 use mdk_storage_traits::welcomes::types::{ProcessedWelcome, Welcome};
-use mdk_storage_traits::GroupId;
 use mdk_storage_traits::{Backend, MdkStorageProvider};
 use nostr::EventId;
 use openmls_memory_storage::MemoryStorage;
@@ -171,14 +171,14 @@ impl MdkStorageProvider for MdkMemoryStorage {
 mod tests {
     use std::collections::BTreeSet;
 
-    use mdk_storage_traits::groups::types::{Group, GroupExporterSecret, GroupState};
-    use mdk_storage_traits::groups::GroupStorage;
-    use mdk_storage_traits::messages::types::{Message, MessageState, ProcessedMessageState};
-    use mdk_storage_traits::messages::MessageStorage;
-    use mdk_storage_traits::test_utils::crypto_utils::generate_random_bytes;
-    use mdk_storage_traits::welcomes::types::{ProcessedWelcomeState, Welcome, WelcomeState};
-    use mdk_storage_traits::welcomes::WelcomeStorage;
     use mdk_storage_traits::GroupId;
+    use mdk_storage_traits::groups::GroupStorage;
+    use mdk_storage_traits::groups::types::{Group, GroupExporterSecret, GroupState};
+    use mdk_storage_traits::messages::MessageStorage;
+    use mdk_storage_traits::messages::types::{Message, MessageState, ProcessedMessageState};
+    use mdk_storage_traits::test_utils::crypto_utils::generate_random_bytes;
+    use mdk_storage_traits::welcomes::WelcomeStorage;
+    use mdk_storage_traits::welcomes::types::{ProcessedWelcomeState, Welcome, WelcomeState};
     use nostr::{EventId, Kind, PublicKey, RelayUrl, Tags, Timestamp, UnsignedEvent};
     use openmls_memory_storage::MemoryStorage;
 

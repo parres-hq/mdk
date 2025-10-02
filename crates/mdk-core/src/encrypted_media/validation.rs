@@ -5,7 +5,7 @@
 //! and protocol requirements.
 
 use crate::encrypted_media::types::{
-    EncryptedMediaError, MediaProcessingOptions, MAX_FILENAME_LENGTH, MAX_FILE_SIZE,
+    EncryptedMediaError, MAX_FILE_SIZE, MAX_FILENAME_LENGTH, MediaProcessingOptions,
 };
 
 /// Validate input parameters for media encryption
@@ -93,14 +93,14 @@ pub fn validate_image_dimensions(
     height: u32,
     options: &MediaProcessingOptions,
 ) -> Result<(), EncryptedMediaError> {
-    if let Some(max_dim) = options.max_dimension {
-        if width > max_dim || height > max_dim {
-            return Err(EncryptedMediaError::DimensionsTooLarge {
-                width,
-                height,
-                max_dimension: max_dim,
-            });
-        }
+    if let Some(max_dim) = options.max_dimension
+        && (width > max_dim || height > max_dim)
+    {
+        return Err(EncryptedMediaError::DimensionsTooLarge {
+            width,
+            height,
+            max_dimension: max_dim,
+        });
     }
     Ok(())
 }

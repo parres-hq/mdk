@@ -13,6 +13,6 @@ pub use types::NostrGroupDataExtension;
 
 // Re-export group image types and functions
 pub use group_image::{
-    decrypt_group_image, derive_upload_keypair, prepare_group_image_for_upload,
-    GroupImageEncryptionInfo, GroupImageError, GroupImageUploadPrepared,
+    GroupImageEncryptionInfo, GroupImageError, GroupImageUploadPrepared, decrypt_group_image,
+    derive_upload_keypair, prepare_group_image_for_upload,
 };

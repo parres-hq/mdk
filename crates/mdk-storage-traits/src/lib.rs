@@ -12,6 +12,7 @@ pub mod groups;
 pub mod messages;
 #[cfg(feature = "test-utils")]
 pub mod test_utils;
+
 pub mod welcomes;
 
 // Re-export GroupId for convenience

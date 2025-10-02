@@ -2,6 +2,7 @@
 
 use std::collections::BTreeSet;
 
+use mdk_storage_traits::GroupId;
 use mdk_storage_traits::groups::types::{Group, GroupState};
 use mdk_storage_traits::messages::types::{
     Message, MessageState, ProcessedMessage, ProcessedMessageState,
@@ -9,7 +10,6 @@ use mdk_storage_traits::messages::types::{
 use mdk_storage_traits::welcomes::types::{
     ProcessedWelcome, ProcessedWelcomeState, Welcome, WelcomeState,
 };
-use mdk_storage_traits::GroupId;
 use nostr::{EventId, PublicKey, RelayUrl, Timestamp};
 
 pub mod group_tests;

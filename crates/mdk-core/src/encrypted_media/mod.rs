@@ -22,4 +22,4 @@ pub use types::{
 pub use manager::EncryptedMediaManager;
 
 // Re-export constants that users might need
-pub use types::{MAX_FILENAME_LENGTH, MAX_FILE_SIZE, MAX_IMAGE_DIMENSION};
+pub use types::{MAX_FILE_SIZE, MAX_FILENAME_LENGTH, MAX_IMAGE_DIMENSION};

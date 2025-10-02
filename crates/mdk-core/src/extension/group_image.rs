@@ -10,11 +10,11 @@
 //! 2. ChaCha20-Poly1305 auth tag (detects tampering/corruption)
 
 use chacha20poly1305::{
-    aead::{Aead, KeyInit},
     ChaCha20Poly1305, Nonce,
+    aead::{Aead, KeyInit},
 };
 use hkdf::Hkdf;
-use nostr::secp256k1::rand::{rngs::OsRng, RngCore};
+use nostr::secp256k1::rand::{RngCore, rngs::OsRng};
 use sha2::{Digest, Sha256};
 
 /// Domain separation label for upload keypair derivation (MIP-01 spec)

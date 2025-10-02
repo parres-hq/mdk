@@ -9,7 +9,7 @@ use std::{fmt, str};
 
 use nostr::nips::nip44;
 use nostr::types::url;
-use nostr::{event, key, Kind, SignerError};
+use nostr::{Kind, SignerError, event, key};
 use openmls::credentials::errors::BasicCredentialError;
 use openmls::error::LibraryError;
 use openmls::extensions::errors::InvalidExtensionError;
@@ -20,6 +20,7 @@ use openmls::group::{
     ProcessMessageError, SelfUpdateError, WelcomeError,
 };
 use openmls::key_packages::errors::{KeyPackageNewError, KeyPackageVerifyError};
+use openmls::prelude::{MlsGroupStateError, ValidationError};
 use openmls_traits::types::CryptoError;
 
 /// Nostr MLS error
@@ -70,9 +71,18 @@ pub enum Error {
     /// Basic credential error
     #[error(transparent)]
     BasicCredential(#[from] BasicCredentialError),
-    /// Process message error
-    #[error(transparent)]
-    ProcessMessage(#[from] ProcessMessageError),
+    /// Process message error - epoch mismatch
+    #[error("Message epoch differs from the group's epoch")]
+    ProcessMessageWrongEpoch,
+    /// Process message error - wrong group ID
+    #[error("Wrong group ID")]
+    ProcessMessageWrongGroupId,
+    /// Process message error - use after eviction
+    #[error("Use after eviction")]
+    ProcessMessageUseAfterEviction,
+    /// Process message error - other
+    #[error("{0}")]
+    ProcessMessageOther(String),
     /// Protocol message error
     #[error("{0}")]
     ProtocolMessage(String),
@@ -254,5 +264,27 @@ where
 {
     fn from(e: CreateGroupContextExtProposalError<T>) -> Self {
         Self::UpdateGroupContextExts(e.to_string())
+    }
+}
+
+/// Convert ProcessMessageError to our structured error variants
+impl<T> From<ProcessMessageError<T>> for Error
+where
+    T: fmt::Display,
+{
+    fn from(e: ProcessMessageError<T>) -> Self {
+        match e {
+            ProcessMessageError::ValidationError(validation_error) => match validation_error {
+                ValidationError::WrongEpoch => Self::ProcessMessageWrongEpoch,
+                ValidationError::WrongGroupId => Self::ProcessMessageWrongGroupId,
+                ValidationError::CannotDecryptOwnMessage => Self::CannotDecryptOwnMessage,
+                _ => Self::ProcessMessageOther(validation_error.to_string()),
+            },
+            ProcessMessageError::GroupStateError(group_state_error) => match group_state_error {
+                MlsGroupStateError::UseAfterEviction => Self::ProcessMessageUseAfterEviction,
+                _ => Self::ProcessMessageOther(group_state_error.to_string()),
+            },
+            _ => Self::ProcessMessageOther(e.to_string()),
+        }
     }
 }

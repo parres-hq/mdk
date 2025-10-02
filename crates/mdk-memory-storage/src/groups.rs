@@ -2,11 +2,11 @@
 
 use std::collections::BTreeSet;
 
+use mdk_storage_traits::GroupId;
+use mdk_storage_traits::groups::GroupStorage;
 use mdk_storage_traits::groups::error::{GroupError, InvalidGroupState};
 use mdk_storage_traits::groups::types::*;
-use mdk_storage_traits::groups::GroupStorage;
 use mdk_storage_traits::messages::types::Message;
-use mdk_storage_traits::GroupId;
 use nostr::{PublicKey, RelayUrl};
 
 use crate::MdkMemoryStorage;

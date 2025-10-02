@@ -1,15 +1,15 @@
 //! Nostr MLS Welcomes
 
+use mdk_storage_traits::MdkStorageProvider;
 use mdk_storage_traits::groups::types as group_types;
 use mdk_storage_traits::welcomes::types as welcome_types;
-use mdk_storage_traits::MdkStorageProvider;
 use nostr::{EventId, Timestamp, UnsignedEvent};
 use openmls::prelude::*;
 use tls_codec::Deserialize as TlsDeserialize;
 
+use crate::MDK;
 use crate::error::Error;
 use crate::extension::NostrGroupDataExtension;
-use crate::MDK;
 
 /// Welcome preview
 #[derive(Debug)]

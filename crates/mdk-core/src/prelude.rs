@@ -17,10 +17,10 @@
 // === Core MDK Types ===
 /// MDK error type
 pub use crate::Error;
-/// MDK provider for OpenMLS integration
-pub use crate::MdkProvider;
 /// The main MDK struct for Nostr MLS operations
 pub use crate::MDK;
+/// MDK provider for OpenMLS integration
+pub use crate::MdkProvider;
 /// MDK group identifier
 pub use mdk_storage_traits::GroupId;
 

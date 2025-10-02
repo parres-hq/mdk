@@ -1,12 +1,12 @@
 //! Implementation of MessageStorage trait for SQLite storage.
 
+use mdk_storage_traits::messages::MessageStorage;
 use mdk_storage_traits::messages::error::MessageError;
 use mdk_storage_traits::messages::types::{Message, ProcessedMessage};
-use mdk_storage_traits::messages::MessageStorage;
 use nostr::{EventId, JsonUtil};
-use rusqlite::{params, OptionalExtension};
+use rusqlite::{OptionalExtension, params};
 
-use crate::{db, MdkSqliteStorage};
+use crate::{MdkSqliteStorage, db};
 
 #[inline]
 fn into_message_err<T>(e: T) -> MessageError
@@ -112,10 +112,10 @@ impl MessageStorage for MdkSqliteStorage {
 mod tests {
     use std::collections::BTreeSet;
 
-    use mdk_storage_traits::groups::types::{Group, GroupState};
-    use mdk_storage_traits::groups::GroupStorage;
-    use mdk_storage_traits::messages::types::{MessageState, ProcessedMessageState};
     use mdk_storage_traits::GroupId;
+    use mdk_storage_traits::groups::GroupStorage;
+    use mdk_storage_traits::groups::types::{Group, GroupState};
+    use mdk_storage_traits::messages::types::{MessageState, ProcessedMessageState};
     use nostr::{EventId, Kind, PublicKey, Tags, Timestamp, UnsignedEvent};
 
     use super::*;

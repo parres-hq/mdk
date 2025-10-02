@@ -1306,7 +1306,7 @@ dependencies = [
 
 [[package]]
 name = "mdk-core"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "blurhash",
  "chacha20poly1305",
@@ -1322,11 +1322,10 @@ dependencies = [
  "openmls_basic_credential",
  "openmls_rust_crypto",
  "openmls_traits",
- "rand 0.9.2",
  "serde",
  "sha2",
  "tempfile",
- "thiserror 1.0.69",
+ "thiserror 2.0.16",
  "tls_codec",
  "tokio",
  "tracing",
@@ -1335,7 +1334,7 @@ dependencies = [
 
 [[package]]
 name = "mdk-memory-storage"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "lru",
  "mdk-storage-traits",
@@ -1347,7 +1346,7 @@ dependencies = [
 
 [[package]]
 name = "mdk-sqlite-storage"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "mdk-storage-traits",
  "nostr",
@@ -1363,9 +1362,8 @@ dependencies = [
 
 [[package]]
 name = "mdk-storage-traits"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
- "aes-gcm",
  "mdk-memory-storage",
  "mdk-sqlite-storage",
  "nostr",
@@ -1508,23 +1506,25 @@ checksum = "c08d65885ee38876c4f86fa503fb49d7b507c2b62552df7c70b2fce627e06381"
 
 [[package]]
 name = "openmls"
-version = "0.7.0"
+version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4d63c0968d4ec14a79259ad7287b03da934ffecd7cddacf9054224cafe8a9aa7"
+checksum = "7af47d535cef7b75806a2b5fcf81ba8e68179f5923aca9bc6a4d8d563e4f8757"
 dependencies = [
  "log",
  "openmls_traits",
  "rayon",
  "serde",
+ "serde_bytes",
  "thiserror 2.0.16",
  "tls_codec",
+ "zeroize",
 ]
 
 [[package]]
 name = "openmls_basic_credential"
-version = "0.4.0"
+version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ef01a72cab1d27a047d47ef3f084f049c2b25a081cd996d3a8904ed16fd523f8"
+checksum = "e3e6454b2b1b6749fc2f142d7f74eb387f7793be88187ed372e9f5f4cf10c34c"
 dependencies = [
  "ed25519-dalek",
  "openmls_traits",
@@ -1536,9 +1536,9 @@ dependencies = [
 
 [[package]]
 name = "openmls_memory_storage"
-version = "0.4.0"
+version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "29ef51988f762610917d071606ec641c6e8007262589634f7b8e77b35ded7423"
+checksum = "9e7b071ea5573a97efaa72b7c53e81cebc644b62ef0fe992bad685cc0f7dd4ea"
 dependencies = [
  "log",
  "openmls_traits",
@@ -1549,9 +1549,9 @@ dependencies = [
 
 [[package]]
 name = "openmls_rust_crypto"
-version = "0.4.0"
+version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a08aebf5bf9ed2ab567b253e6d1b93a5c11e0ce456fe2f8761d80b88a0a90ae0"
+checksum = "3faef09e17a15c8065b9ec6b1e150c19dcb0c4cb810a636b6f010a94a189678e"
 dependencies = [
  "aes-gcm",
  "chacha20poly1305",
@@ -1574,9 +1574,9 @@ dependencies = [
 
 [[package]]
 name = "openmls_sqlite_storage"
-version = "0.1.0"
+version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "712c09cdf8e245479b553c28f1f4c89a5d91e67146e9ab4418fb9583cb8c7f91"
+checksum = "a3e6a68f5cf720fb3827164049d6cba7262dfca2537c23909efbb480f9013731"
 dependencies = [
  "log",
  "openmls_traits",
@@ -1588,9 +1588,9 @@ dependencies = [
 
 [[package]]
 name = "openmls_traits"
-version = "0.4.0"
+version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c0b50a33e77f6bb34610f7b10548518abe22858c194d3c994670931510530a74"
+checksum = "e21d8877bacdbc407060df29bf59b145bb886a8fa0099b87ae8067a34b902a13"
 dependencies = [
  "serde",
  "tls_codec",
@@ -2144,6 +2144,16 @@ checksum = "0dca6411025b24b60bfa7ec1fe1f8e710ac09782dca409ee8237ba74b51295fd"
 dependencies = [
  "serde_core",
  "serde_derive",
+]
+
+[[package]]
+name = "serde_bytes"
+version = "0.11.19"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a5d440709e79d88e51ac01c4b72fc6cb7314017bb7da9eeff678aa94c10e3ea8"
+dependencies = [
+ "serde",
+ "serde_core",
 ]
 
 [[package]]

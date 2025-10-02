@@ -2,21 +2,28 @@
 
 set -euo pipefail
 
-version="1.85.0"
+# Default to stable for fast local checks
+version="${1:-stable}"
 flags=""
 
-# Check if "check" is passed as an argument
-if [[ "$#" -gt 0 && "$1" == "check" ]]; then
+# Check if "check" is passed as a second argument (after version)
+if [[ "$#" -gt 1 && "$2" == "check" ]] || [[ "$#" -eq 1 && "$1" == "check" ]]; then
+    if [[ "$1" == "check" ]]; then
+        version="stable"
+    fi
     flags="--check"
 fi
 
 # Install toolchain
-cargo +$version --version || rustup install $version
+if [ "$version" != "stable" ]; then
+    cargo +$version --version || rustup install $version
+    cargo +$version fmt --version || rustup component add rustfmt --toolchain $version
+else
+    cargo +$version --version || rustup update "$version"
+    cargo +$version fmt --version || rustup component add rustfmt --toolchain "$version"
+fi
 
-# Install rustfmt
-cargo +$version fmt --version || rustup component add rustfmt --toolchain $version
-
-echo "Checking fmt"
+echo "Checking fmt with $version"
 
 # Check workspace crates
 cargo +$version fmt --all -- --config format_code_in_doc_comments=true $flags
