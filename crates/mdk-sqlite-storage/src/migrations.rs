@@ -16,9 +16,12 @@ refinery::embed_migrations!("migrations");
 ///
 /// Result indicating success or failure of the migration process.
 pub fn run_migrations(conn: &mut Connection) -> Result<(), Error> {
-    // Run the migrations
+    // We use this custom migration table name for legacy reasons
+    // As the code used to be part of the rust-nostr project
+    // and we need to keep the same migration table name for backwards compatibility
+    let migration_table_name = "_refinery_schema_history_nostr_mls";
     let report = migrations::runner()
-        .set_migration_table_name("_refinery_schema_history_mdk")
+        .set_migration_table_name(migration_table_name)
         .run(conn)?;
 
     // Log the results
