@@ -48,7 +48,8 @@ pub fn extract_and_process_metadata(
             // (e.g., for animated GIF/WebP which would be flattened)
             match strip_exif_and_return_image(data, mime_type) {
                 Ok((cleaned_data, decoded_img)) => {
-                    metadata = extract_metadata_from_decoded_image(&decoded_img, metadata, options)?;
+                    metadata =
+                        extract_metadata_from_decoded_image(&decoded_img, metadata, options)?;
                     processed_data = cleaned_data;
                 }
                 Err(_) => {
@@ -208,11 +209,12 @@ fn strip_exif_and_return_image(
             reason: format!("Failed to read image for EXIF stripping: {}", e),
         })?;
 
-    let mut img = img_reader
-        .decode()
-        .map_err(|e| EncryptedMediaError::MetadataExtractionFailed {
-            reason: format!("Failed to decode image for EXIF stripping: {}", e),
-        })?;
+    let mut img =
+        img_reader
+            .decode()
+            .map_err(|e| EncryptedMediaError::MetadataExtractionFailed {
+                reason: format!("Failed to decode image for EXIF stripping: {}", e),
+            })?;
 
     // Apply EXIF orientation transform before re-encoding
     // This "bakes in" the correct orientation so the image displays correctly
@@ -302,15 +304,15 @@ fn apply_exif_orientation(
 
     // Apply the appropriate transform based on orientation value
     let transformed = match orientation {
-        1 => img, // Normal - no transformation needed
-        2 => img.fliph(), // Flip horizontal
-        3 => img.rotate180(), // Rotate 180°
-        4 => img.flipv(), // Flip vertical
+        1 => img,                     // Normal - no transformation needed
+        2 => img.fliph(),             // Flip horizontal
+        3 => img.rotate180(),         // Rotate 180°
+        4 => img.flipv(),             // Flip vertical
         5 => img.rotate270().fliph(), // Flip horizontal + Rotate 270° CW
-        6 => img.rotate90(), // Rotate 90° CW
-        7 => img.rotate90().fliph(), // Flip horizontal + Rotate 90° CW
-        8 => img.rotate270(), // Rotate 270° CW (or 90° CCW)
-        _ => img, // Unknown orientation value - return as-is
+        6 => img.rotate90(),          // Rotate 90° CW
+        7 => img.rotate90().fliph(),  // Flip horizontal + Rotate 90° CW
+        8 => img.rotate270(),         // Rotate 270° CW (or 90° CCW)
+        _ => img,                     // Unknown orientation value - return as-is
     };
 
     Ok(transformed)
@@ -417,7 +419,10 @@ mod tests {
 
         // Test that GIF with sanitize_exif=true falls back to original data
         let result = extract_and_process_metadata(&gif_data, "image/gif", &options);
-        assert!(result.is_ok(), "GIF processing should succeed with fallback");
+        assert!(
+            result.is_ok(),
+            "GIF processing should succeed with fallback"
+        );
 
         let (processed_data, metadata) = result.unwrap();
         // Should return original data since sanitization isn't supported
@@ -427,7 +432,10 @@ mod tests {
 
         // Test WebP fallback behavior
         let result = extract_and_process_metadata(&gif_data, "image/webp", &options);
-        assert!(result.is_ok(), "WebP processing should succeed with fallback");
+        assert!(
+            result.is_ok(),
+            "WebP processing should succeed with fallback"
+        );
 
         let (processed_data, _) = result.unwrap();
         // Should return original data since sanitization isn't supported
@@ -460,7 +468,10 @@ mod tests {
 
         // Test that GIF without sanitization works normally
         let result = extract_and_process_metadata(&gif_data, "image/gif", &options);
-        assert!(result.is_ok(), "GIF processing without sanitization should succeed");
+        assert!(
+            result.is_ok(),
+            "GIF processing without sanitization should succeed"
+        );
 
         let (processed_data, metadata) = result.unwrap();
         assert_eq!(processed_data, gif_data, "Should return original GIF data");
