@@ -408,11 +408,7 @@ mod tests {
             .map(|s| s.to_string())
             .collect();
 
-        assert_eq!(
-            relays_values.len(),
-            2,
-            "Should have exactly 2 relay URLs"
-        );
+        assert_eq!(relays_values.len(), 2, "Should have exactly 2 relay URLs");
         assert!(
             relays_values.contains(&"wss://relay1.example.com".to_string()),
             "Should contain relay1"

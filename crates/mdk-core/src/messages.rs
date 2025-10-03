@@ -1491,9 +1491,7 @@ mod tests {
         );
 
         // 5. Verify h tag is valid 32-byte hex
-        let group_id_hex = group_id_tag
-            .content()
-            .expect("h tag should have content");
+        let group_id_hex = group_id_tag.content().expect("h tag should have content");
         assert_eq!(
             group_id_hex.len(),
             64,
@@ -1501,8 +1499,7 @@ mod tests {
             group_id_hex.len()
         );
 
-        let group_id_bytes = hex::decode(group_id_hex)
-            .expect("Group ID should be valid hex");
+        let group_id_bytes = hex::decode(group_id_hex).expect("Group ID should be valid hex");
         assert_eq!(
             group_id_bytes.len(),
             32,
@@ -1566,7 +1563,8 @@ mod tests {
         let real_pubkey = creator.public_key();
         for (i, pubkey) in pubkeys.iter().enumerate() {
             assert_ne!(
-                *pubkey, real_pubkey,
+                *pubkey,
+                real_pubkey,
                 "Message {} should not use sender's real pubkey",
                 i + 1
             );
@@ -1846,9 +1844,18 @@ mod tests {
         let pubkey2 = msg_event2.pubkey;
 
         // 5. Verify all use different ephemeral keys
-        assert_ne!(pubkey1, pubkey2, "Different messages should use different ephemeral keys");
-        assert_ne!(pubkey1, commit_event.pubkey, "Message and commit should use different ephemeral keys");
-        assert_ne!(pubkey2, commit_event.pubkey, "Message and commit should use different ephemeral keys");
+        assert_ne!(
+            pubkey1, pubkey2,
+            "Different messages should use different ephemeral keys"
+        );
+        assert_ne!(
+            pubkey1, commit_event.pubkey,
+            "Message and commit should use different ephemeral keys"
+        );
+        assert_ne!(
+            pubkey2, commit_event.pubkey,
+            "Message and commit should use different ephemeral keys"
+        );
 
         // 6. Verify all reference the same group ID
         let msg1_tags: Vec<&nostr::Tag> = msg_event1.tags.iter().collect();
@@ -1859,8 +1866,14 @@ mod tests {
         let group_id_hex2 = commit_tags[0].content().unwrap();
         let group_id_hex3 = msg2_tags[0].content().unwrap();
 
-        assert_eq!(group_id_hex1, group_id_hex2, "All events should reference same group");
-        assert_eq!(group_id_hex2, group_id_hex3, "All events should reference same group");
+        assert_eq!(
+            group_id_hex1, group_id_hex2,
+            "All events should reference same group"
+        );
+        assert_eq!(
+            group_id_hex2, group_id_hex3,
+            "All events should reference same group"
+        );
     }
 
     /// Test that message events are properly validated before sending

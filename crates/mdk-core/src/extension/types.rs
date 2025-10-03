@@ -177,7 +177,8 @@ impl NostrGroupDataExtension {
             None
         } else {
             Some(
-                legacy.image_hash
+                legacy
+                    .image_hash
                     .try_into()
                     .map_err(|_| Error::InvalidImageHashLength)?,
             )
@@ -187,7 +188,8 @@ impl NostrGroupDataExtension {
             None
         } else {
             Some(
-                legacy.image_key
+                legacy
+                    .image_key
                     .try_into()
                     .map_err(|_| Error::InvalidImageKeyLength)?,
             )
@@ -197,7 +199,8 @@ impl NostrGroupDataExtension {
             None
         } else {
             Some(
-                legacy.image_nonce
+                legacy
+                    .image_nonce
                     .try_into()
                     .map_err(|_| Error::InvalidImageNonceLength)?,
             )
@@ -949,8 +952,7 @@ mod tests {
 
         // Verify migration preserved all data and added version
         assert_eq!(
-            migrated_extension.version,
-            1,
+            migrated_extension.version, 1,
             "Migrated extension should have version 1"
         );
         assert_eq!(
@@ -958,13 +960,11 @@ mod tests {
             "Group ID should be preserved"
         );
         assert_eq!(
-            migrated_extension.name,
-            "Legacy Group",
+            migrated_extension.name, "Legacy Group",
             "Name should be preserved"
         );
         assert_eq!(
-            migrated_extension.description,
-            "Created before version field was added",
+            migrated_extension.description, "Created before version field was added",
             "Description should be preserved"
         );
         assert_eq!(

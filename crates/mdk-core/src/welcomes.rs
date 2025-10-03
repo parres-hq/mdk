@@ -406,8 +406,8 @@ mod tests {
             );
 
             // Verify decoded content is substantial (MLS Welcome messages are typically > 50 bytes)
-            let decoded_content = hex::decode(&welcome_rumor.content)
-                .expect("Failed to decode welcome content");
+            let decoded_content =
+                hex::decode(&welcome_rumor.content).expect("Failed to decode welcome content");
             assert!(
                 decoded_content.len() > 50,
                 "Welcome content should be substantial (typically > 50 bytes), got {} bytes",
@@ -477,8 +477,8 @@ mod tests {
         let welcome_rumor = &create_result.welcome_rumors[0];
 
         // Decode hex content
-        let decoded_content = hex::decode(&welcome_rumor.content)
-            .expect("Welcome content should be valid hex");
+        let decoded_content =
+            hex::decode(&welcome_rumor.content).expect("Welcome content should be valid hex");
 
         // Verify it's valid TLS-serialized MLS message
         // We can't fully deserialize without processing, but we can check basic structure
@@ -613,7 +613,10 @@ mod tests {
         );
 
         // First element is the tag name "relays"
-        assert_eq!(relays_slice[0], "relays", "First element should be 'relays'");
+        assert_eq!(
+            relays_slice[0], "relays",
+            "First element should be 'relays'"
+        );
 
         // Remaining elements should be relay URLs
         for i in 1..relays_slice.len() {
@@ -657,10 +660,17 @@ mod tests {
         // Verify welcome was stored correctly
         assert_eq!(welcome.state, welcome_types::WelcomeState::Pending);
         assert_eq!(welcome.wrapper_event_id, wrapper_event_id);
-        assert!(welcome.member_count >= 2, "Group should have at least 2 members (creator + member)");
+        assert!(
+            welcome.member_count >= 2,
+            "Group should have at least 2 members (creator + member)"
+        );
 
         // Verify the welcome event structure was correct (this is what we're really testing)
-        assert_eq!(welcome_rumor.kind, Kind::MlsWelcome, "Welcome should be kind 444");
+        assert_eq!(
+            welcome_rumor.kind,
+            Kind::MlsWelcome,
+            "Welcome should be kind 444"
+        );
         assert_eq!(welcome_rumor.tags.len(), 2, "Welcome should have 2 tags");
     }
 
@@ -703,14 +713,8 @@ mod tests {
 
         let first_tags: Vec<&nostr::Tag> = first_welcome.tags.iter().collect();
         let second_tags: Vec<&nostr::Tag> = second_welcome.tags.iter().collect();
-        assert_eq!(
-            first_tags[0].kind(),
-            second_tags[0].kind()
-        );
-        assert_eq!(
-            first_tags[1].kind(),
-            second_tags[1].kind()
-        );
+        assert_eq!(first_tags[0].kind(), second_tags[0].kind());
+        assert_eq!(first_tags[1].kind(), second_tags[1].kind());
 
         // Both should be valid hex
         assert!(hex::decode(&first_welcome.content).is_ok());
