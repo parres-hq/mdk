@@ -109,20 +109,23 @@ pub fn validate_image_dimensions(
         });
     }
 
-    // Check total pixel count to prevent decompression bombs
+    // Check total pixel count and memory to prevent decompression bombs
     let total_pixels = width as u64 * height as u64;
+
+    // Check pixel count limit first
     if total_pixels > MAX_IMAGE_PIXELS {
-        // Calculate what the memory usage would be
-        let estimated_mb = (total_pixels * 4) / (1024 * 1024); // 4 bytes per pixel (RGBA)
-        return Err(EncryptedMediaError::ImageMemoryTooLarge {
-            estimated_mb,
-            max_mb: MAX_IMAGE_MEMORY_MB,
+        return Err(EncryptedMediaError::TooManyPixels {
+            total_pixels,
+            max_pixels: MAX_IMAGE_PIXELS,
         });
     }
 
-    // Double-check memory estimate as a hard limit
-    // This catches cases where pixel format might use more than 4 bytes per pixel
-    let estimated_mb = (total_pixels * 4) / (1024 * 1024);
+    // Calculate memory with ceiling division to avoid underestimating
+    let bytes_per_pixel = 4u64; // RGBA
+    let total_bytes = total_pixels * bytes_per_pixel;
+    let estimated_mb = total_bytes.div_ceil(1024 * 1024);
+
+    // Check memory limit
     if estimated_mb > MAX_IMAGE_MEMORY_MB {
         return Err(EncryptedMediaError::ImageMemoryTooLarge {
             estimated_mb,
@@ -311,11 +314,11 @@ mod tests {
             max_dimension: None,
             ..Default::default()
         };
-        // 50000 x 40000 = 2 billion pixels, should fail memory check
+        // 50000 x 40000 = 2 billion pixels, should fail pixel count check
         let result = validate_image_dimensions(50000, 40000, &no_limit_options);
         assert!(matches!(
             result,
-            Err(EncryptedMediaError::ImageMemoryTooLarge { .. })
+            Err(EncryptedMediaError::TooManyPixels { .. })
         ));
 
         // Test reasonable high-res image (12000 x 4000 = 48M pixels, just under 50M limit)
@@ -344,27 +347,36 @@ mod tests {
         // sqrt(50M) ≈ 7071, so 7071 x 7071 ≈ 50M pixels
         assert!(validate_image_dimensions(7071, 7071, &options).is_ok());
 
-        // Test just over pixel limit (should fail)
+        // Test just over pixel limit (should fail with TooManyPixels)
         let result = validate_image_dimensions(7100, 7100, &options);
         assert!(matches!(
             result,
-            Err(EncryptedMediaError::ImageMemoryTooLarge { .. })
+            Err(EncryptedMediaError::TooManyPixels { .. })
         ));
+        if let Err(EncryptedMediaError::TooManyPixels {
+            total_pixels,
+            max_pixels,
+        }) = result
+        {
+            assert_eq!(total_pixels, 7100 * 7100);
+            assert_eq!(max_pixels, MAX_IMAGE_PIXELS);
+        }
 
         // Test extreme decompression bomb attempt
         // 16384 x 16384 = 268M pixels, would be ~1GB RAM
+        // This should fail the pixel count check first
         let result = validate_image_dimensions(16384, 16384, &options);
         assert!(matches!(
             result,
-            Err(EncryptedMediaError::ImageMemoryTooLarge { .. })
+            Err(EncryptedMediaError::TooManyPixels { .. })
         ));
-        if let Err(EncryptedMediaError::ImageMemoryTooLarge {
-            estimated_mb,
-            max_mb,
+        if let Err(EncryptedMediaError::TooManyPixels {
+            total_pixels,
+            max_pixels,
         }) = result
         {
-            assert!(estimated_mb > 1000); // Should be over 1GB
-            assert_eq!(max_mb, MAX_IMAGE_MEMORY_MB);
+            assert_eq!(total_pixels, 16384 * 16384);
+            assert_eq!(max_pixels, MAX_IMAGE_PIXELS);
         }
 
         // Test wide panorama (within limits)

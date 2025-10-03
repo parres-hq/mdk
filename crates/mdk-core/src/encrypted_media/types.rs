@@ -154,6 +154,15 @@ pub enum EncryptedMediaError {
         max_dimension: u32,
     },
 
+    /// Image has too many pixels (decompression bomb protection)
+    #[error("Image has {total_pixels} pixels, exceeding maximum {max_pixels}")]
+    TooManyPixels {
+        /// Total number of pixels
+        total_pixels: u64,
+        /// Maximum allowed pixels
+        max_pixels: u64,
+    },
+
     /// Image would require too much memory to decode (decompression bomb protection)
     #[error("Image would require {estimated_mb}MB to decode, exceeding maximum {max_mb}MB")]
     ImageMemoryTooLarge {
@@ -307,6 +316,10 @@ mod tests {
                 width: 20000,
                 height: 15000,
                 max_dimension: 16384,
+            },
+            EncryptedMediaError::TooManyPixels {
+                total_pixels: 100_000_000,
+                max_pixels: 50_000_000,
             },
             EncryptedMediaError::ImageMemoryTooLarge {
                 estimated_mb: 1024,
