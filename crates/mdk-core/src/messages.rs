@@ -1543,7 +1543,7 @@ mod tests {
             .expect("Failed to create third message");
 
         // Collect all ephemeral pubkeys
-        let pubkeys = vec![event1.pubkey, event2.pubkey, event3.pubkey];
+        let pubkeys = [event1.pubkey, event2.pubkey, event3.pubkey];
 
         // 1. Verify all 3 use different ephemeral pubkeys
         assert_ne!(

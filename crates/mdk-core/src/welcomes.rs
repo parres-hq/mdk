@@ -619,8 +619,7 @@ mod tests {
         );
 
         // Remaining elements should be relay URLs
-        for i in 1..relays_slice.len() {
-            let relay = &relays_slice[i];
+        for relay in relays_slice.iter().skip(1) {
             assert!(
                 relay.starts_with("wss://") || relay.starts_with("ws://"),
                 "Relay URLs should start with wss:// or ws://, got: {}",
