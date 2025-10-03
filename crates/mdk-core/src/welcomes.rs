@@ -451,8 +451,8 @@ mod tests {
             );
 
             // 6. Verify event is unsigned (UnsignedEvent - no sig field when serialized)
-            // The welcome_rumor is an UnsignedEvent, so it should have id = None initially
-            // This is correct for NIP-59 gift wrapping
+            // Although the type is UnsignedEvent, the NIP-59 gift-wrapping step computes
+            // and attaches an ID to the rumor before sealing, so the ID is expected to be Some here.
             assert!(
                 welcome_rumor.id.is_some(),
                 "Welcome rumor should have ID computed"
