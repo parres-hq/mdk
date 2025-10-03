@@ -229,7 +229,7 @@ fn strip_exif_and_return_image(
             use image::codecs::jpeg::JpegEncoder;
             // Use high quality (95) to minimize quality loss during re-encoding
             // This is important for preserving image fidelity while still stripping metadata
-            let mut encoder = JpegEncoder::new_with_quality(&mut output, 95);
+            let mut encoder = JpegEncoder::new_with_quality(&mut output, 100);
             encoder
                 .encode(
                     img.as_bytes(),

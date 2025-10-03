@@ -41,7 +41,7 @@ sha2 = "0.10"
 # Image processing (optional features)
 image = { version = "0.25", default-features = false }
 blurhash = "0.2"
-kamadak-exif = "0.5"
+kamadak-exif = "0.6"
 
 # Storage
 rusqlite = "0.32"
