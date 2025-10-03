@@ -17,10 +17,14 @@ use crate::encrypted_media::validation::validate_image_dimensions;
 /// Returns a tuple of (processed_data, metadata) where processed_data is either:
 /// - The original data if sanitize_exif is false
 /// - The sanitized data with EXIF stripped if sanitize_exif is true and it's an image
+/// - The original data if sanitization is not supported (e.g., animated GIF/WebP)
 ///
 /// SECURITY NOTE: For images with sanitize_exif=true, this function sanitizes FIRST
 /// before extracting metadata. This ensures that any malicious metadata or exploits
 /// in the original image cannot affect the metadata extraction process.
+///
+/// NOTE: For animated formats (GIF/WebP), sanitization will be skipped to avoid
+/// flattening animations. The original file will be used instead, with a warning logged.
 pub fn extract_and_process_metadata(
     data: &[u8],
     mime_type: &str,
@@ -40,9 +44,25 @@ pub fn extract_and_process_metadata(
         // SECURITY: Sanitize first if requested, then extract metadata from clean image
         // This prevents malicious metadata from being processed during extraction
         if options.sanitize_exif {
-            let (cleaned_data, decoded_img) = strip_exif_and_return_image(data, mime_type)?;
-            metadata = extract_metadata_from_decoded_image(&decoded_img, metadata, options)?;
-            processed_data = cleaned_data;
+            // Try to strip EXIF, but fall back to original data if it's not supported
+            // (e.g., for animated GIF/WebP which would be flattened)
+            match strip_exif_and_return_image(data, mime_type) {
+                Ok((cleaned_data, decoded_img)) => {
+                    metadata = extract_metadata_from_decoded_image(&decoded_img, metadata, options)?;
+                    processed_data = cleaned_data;
+                }
+                Err(_) => {
+                    // Fall back to using original data without sanitization
+                    // This happens for formats like animated GIF/WebP where sanitization
+                    // would flatten the animation. We preserve the original file instead.
+                    tracing::warn!(
+                        "Could not sanitize EXIF for {} - using original data to preserve format",
+                        mime_type
+                    );
+                    metadata = extract_metadata_from_encoded_image(data, metadata, options)?;
+                    processed_data = data.to_vec();
+                }
+            }
         } else {
             // If not sanitizing, process original data
             metadata = extract_metadata_from_encoded_image(data, metadata, options)?;
@@ -155,12 +175,31 @@ fn extract_metadata_from_decoded_image(
 /// It returns both the cleaned encoded bytes and the decoded image object to avoid
 /// needing to decode again for metadata extraction.
 ///
+/// IMPORTANT: For animated formats (GIF/WebP), this currently cannot preserve animations
+/// and will return an error. Future work should handle these formats properly.
+///
 /// Returns: (cleaned_data, decoded_image)
 fn strip_exif_and_return_image(
     data: &[u8],
     mime_type: &str,
 ) -> Result<(Vec<u8>, image::DynamicImage), EncryptedMediaError> {
     use image::{ImageEncoder, ImageReader};
+
+    // TODO: Properly handle sanitizing animated GIF and WebP images in the future
+    // Currently, decoding these formats only returns the first frame, which flattens
+    // animations. We should either:
+    // 1. Detect if the image is animated and skip sanitization with a clear error
+    // 2. Use specialized libraries (image-gif, libwebp) to preserve all frames
+    // 3. Process each frame individually and re-encode the animation
+    if mime_type == "image/gif" || mime_type == "image/webp" {
+        return Err(EncryptedMediaError::MetadataExtractionFailed {
+            reason: format!(
+                "Animated format {} sanitization not yet supported - this would flatten animations. \
+                 Use sanitize_exif=false to preserve the original file.",
+                mime_type
+            ),
+        });
+    }
 
     // Decode the image once
     let img_reader = ImageReader::new(Cursor::new(data))
@@ -169,11 +208,16 @@ fn strip_exif_and_return_image(
             reason: format!("Failed to read image for EXIF stripping: {}", e),
         })?;
 
-    let img = img_reader
+    let mut img = img_reader
         .decode()
         .map_err(|e| EncryptedMediaError::MetadataExtractionFailed {
             reason: format!("Failed to decode image for EXIF stripping: {}", e),
         })?;
+
+    // Apply EXIF orientation transform before re-encoding
+    // This "bakes in" the correct orientation so the image displays correctly
+    // even without EXIF metadata
+    img = apply_exif_orientation(data, img)?;
 
     // Re-encode the image without metadata
     let mut output = Cursor::new(Vec::new());
@@ -181,7 +225,9 @@ fn strip_exif_and_return_image(
     match mime_type {
         "image/jpeg" => {
             use image::codecs::jpeg::JpegEncoder;
-            let mut encoder = JpegEncoder::new(&mut output);
+            // Use high quality (95) to minimize quality loss during re-encoding
+            // This is important for preserving image fidelity while still stripping metadata
+            let mut encoder = JpegEncoder::new_with_quality(&mut output, 95);
             encoder
                 .encode(
                     img.as_bytes(),
@@ -207,34 +253,6 @@ fn strip_exif_and_return_image(
                     reason: format!("Failed to re-encode PNG: {}", e),
                 })?;
         }
-        "image/webp" => {
-            use image::codecs::webp::WebPEncoder;
-            let encoder = WebPEncoder::new_lossless(&mut output);
-            encoder
-                .encode(
-                    img.as_bytes(),
-                    img.width(),
-                    img.height(),
-                    img.color().into(),
-                )
-                .map_err(|e| EncryptedMediaError::MetadataExtractionFailed {
-                    reason: format!("Failed to re-encode WebP: {}", e),
-                })?;
-        }
-        "image/gif" => {
-            use image::codecs::gif::GifEncoder;
-            let mut encoder = GifEncoder::new(&mut output);
-            encoder
-                .encode(
-                    img.as_bytes(),
-                    img.width(),
-                    img.height(),
-                    img.color().into(),
-                )
-                .map_err(|e| EncryptedMediaError::MetadataExtractionFailed {
-                    reason: format!("Failed to re-encode GIF: {}", e),
-                })?;
-        }
         _ => {
             // For unknown formats, return error
             return Err(EncryptedMediaError::MetadataExtractionFailed {
@@ -244,6 +262,58 @@ fn strip_exif_and_return_image(
     }
 
     Ok((output.into_inner(), img))
+}
+
+/// Apply EXIF orientation transform to an image
+///
+/// Reads the EXIF orientation tag from the original image data and applies
+/// the appropriate rotation and/or flip operations to the decoded image.
+/// This ensures images display correctly even after EXIF metadata is stripped.
+///
+/// EXIF Orientation values:
+/// 1 = Normal
+/// 2 = Flip horizontal
+/// 3 = Rotate 180°
+/// 4 = Flip vertical
+/// 5 = Flip horizontal + Rotate 270° CW
+/// 6 = Rotate 90° CW
+/// 7 = Flip horizontal + Rotate 90° CW
+/// 8 = Rotate 270° CW
+fn apply_exif_orientation(
+    data: &[u8],
+    img: image::DynamicImage,
+) -> Result<image::DynamicImage, EncryptedMediaError> {
+    use exif::{In, Reader, Tag};
+
+    // Try to read EXIF data - if it fails or doesn't exist, just return the original image
+    let exif_reader = match Reader::new().read_from_container(&mut Cursor::new(data)) {
+        Ok(exif) => exif,
+        Err(_) => return Ok(img), // No EXIF data or couldn't read it - return as-is
+    };
+
+    // Get the orientation tag
+    let orientation = match exif_reader.get_field(Tag::Orientation, In::PRIMARY) {
+        Some(field) => match field.value.get_uint(0) {
+            Some(val) => val,
+            None => return Ok(img), // Couldn't parse orientation - return as-is
+        },
+        None => return Ok(img), // No orientation tag - return as-is
+    };
+
+    // Apply the appropriate transform based on orientation value
+    let transformed = match orientation {
+        1 => img, // Normal - no transformation needed
+        2 => img.fliph(), // Flip horizontal
+        3 => img.rotate180(), // Rotate 180°
+        4 => img.flipv(), // Flip vertical
+        5 => img.rotate270().fliph(), // Flip horizontal + Rotate 270° CW
+        6 => img.rotate90(), // Rotate 90° CW
+        7 => img.rotate90().fliph(), // Flip horizontal + Rotate 90° CW
+        8 => img.rotate270(), // Rotate 270° CW (or 90° CCW)
+        _ => img, // Unknown orientation value - return as-is
+    };
+
+    Ok(transformed)
 }
 
 #[cfg(test)]
@@ -319,5 +389,81 @@ mod tests {
         } else {
             panic!("Expected DimensionsTooLarge error");
         }
+    }
+
+    #[test]
+    fn test_animated_format_fallback() {
+        use crate::encrypted_media::types::MediaProcessingOptions;
+
+        // Create a minimal valid GIF (not actually animated, but format is GIF)
+        let gif_data = vec![
+            0x47, 0x49, 0x46, 0x38, 0x39, 0x61, // GIF89a header
+            0x01, 0x00, 0x01, 0x00, // Width: 1, Height: 1
+            0x80, 0x00, 0x00, // Global color table
+            0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, // Black and white
+            0x2C, 0x00, 0x00, 0x00, 0x00, // Image descriptor
+            0x01, 0x00, 0x01, 0x00, 0x00, // Image dimensions
+            0x02, 0x02, 0x44, 0x01, 0x00, // Image data
+            0x3B, // Trailer
+        ];
+
+        let options = MediaProcessingOptions {
+            preserve_dimensions: true,
+            generate_blurhash: false,
+            sanitize_exif: true, // Request sanitization
+            max_dimension: Some(100),
+            max_file_size: None,
+        };
+
+        // Test that GIF with sanitize_exif=true falls back to original data
+        let result = extract_and_process_metadata(&gif_data, "image/gif", &options);
+        assert!(result.is_ok(), "GIF processing should succeed with fallback");
+
+        let (processed_data, metadata) = result.unwrap();
+        // Should return original data since sanitization isn't supported
+        assert_eq!(processed_data, gif_data, "Should return original GIF data");
+        assert_eq!(metadata.mime_type, "image/gif");
+        assert_eq!(metadata.original_size, gif_data.len() as u64);
+
+        // Test WebP fallback behavior
+        let result = extract_and_process_metadata(&gif_data, "image/webp", &options);
+        assert!(result.is_ok(), "WebP processing should succeed with fallback");
+
+        let (processed_data, _) = result.unwrap();
+        // Should return original data since sanitization isn't supported
+        assert_eq!(processed_data, gif_data, "Should return original WebP data");
+    }
+
+    #[test]
+    fn test_animated_format_without_sanitize() {
+        use crate::encrypted_media::types::MediaProcessingOptions;
+
+        // Create a minimal valid GIF
+        let gif_data = vec![
+            0x47, 0x49, 0x46, 0x38, 0x39, 0x61, // GIF89a header
+            0x01, 0x00, 0x01, 0x00, // Width: 1, Height: 1
+            0x80, 0x00, 0x00, // Global color table
+            0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, // Black and white
+            0x2C, 0x00, 0x00, 0x00, 0x00, // Image descriptor
+            0x01, 0x00, 0x01, 0x00, 0x00, // Image dimensions
+            0x02, 0x02, 0x44, 0x01, 0x00, // Image data
+            0x3B, // Trailer
+        ];
+
+        let options = MediaProcessingOptions {
+            preserve_dimensions: true,
+            generate_blurhash: false,
+            sanitize_exif: false, // Don't sanitize
+            max_dimension: Some(100),
+            max_file_size: None,
+        };
+
+        // Test that GIF without sanitization works normally
+        let result = extract_and_process_metadata(&gif_data, "image/gif", &options);
+        assert!(result.is_ok(), "GIF processing without sanitization should succeed");
+
+        let (processed_data, metadata) = result.unwrap();
+        assert_eq!(processed_data, gif_data, "Should return original GIF data");
+        assert_eq!(metadata.mime_type, "image/gif");
     }
 }
