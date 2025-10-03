@@ -72,8 +72,15 @@ where
     ) -> Result<EncryptedMediaUpload, EncryptedMediaError> {
         let canonical_mime_type = validate_inputs(data, mime_type, filename, options)?;
 
-        let metadata = extract_and_process_metadata(data, &canonical_mime_type, options)?;
-        let original_hash: [u8; 32] = Sha256::digest(data).into();
+        // Extract metadata and optionally sanitize the file
+        // If sanitize_exif is true, processed_data will have EXIF stripped
+        // If sanitize_exif is false, processed_data will be the original with EXIF intact
+        let (processed_data, metadata) =
+            extract_and_process_metadata(data, &canonical_mime_type, options)?;
+
+        // Calculate hash of the PROCESSED (potentially sanitized) data
+        // This ensures the hash is of the clean file, not the original with EXIF
+        let original_hash: [u8; 32] = Sha256::digest(&processed_data).into();
         let encryption_key = derive_encryption_key(
             self.mdk,
             &self.group_id,
@@ -89,8 +96,9 @@ where
             filename,
         )?;
 
+        // Encrypt the PROCESSED data (which may have EXIF stripped)
         let encrypted_data = encrypt_data_with_aad(
-            data,
+            &processed_data,
             &encryption_key,
             &nonce,
             &original_hash,
@@ -106,7 +114,7 @@ where
             encrypted_hash,
             mime_type: metadata.mime_type,
             filename: filename.to_string(),
-            original_size: data.len() as u64,
+            original_size: processed_data.len() as u64,
             encrypted_size,
             dimensions: metadata.dimensions,
             blurhash: metadata.blurhash,

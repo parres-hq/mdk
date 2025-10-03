@@ -36,7 +36,6 @@ sha2.workspace = true
 # Optional dependencies for MIP-04 (encrypted media) feature
 image = { workspace = true, optional = true, features = ["jpeg", "png", "webp", "gif"] }
 blurhash = { workspace = true, optional = true }
-kamadak-exif = { workspace = true }
 
 [dev-dependencies]
 mdk-storage-traits = { workspace = true, features = ["test-utils"] }

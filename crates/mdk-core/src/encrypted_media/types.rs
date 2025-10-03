@@ -3,8 +3,6 @@
 //! This module contains all the core types, constants, and error definitions
 //! used throughout the encrypted media system.
 
-use std::collections::HashMap;
-
 /// Maximum file size for encrypted media (100MB)
 pub const MAX_FILE_SIZE: usize = 100 * 1024 * 1024;
 
@@ -52,8 +50,6 @@ pub struct MediaMetadata {
     pub blurhash: Option<String>,
     /// Original file size in bytes
     pub original_size: u64,
-    /// Cleaned EXIF data (if any should be preserved)
-    pub cleaned_exif: HashMap<String, String>,
 }
 
 /// Encrypted media ready for upload
