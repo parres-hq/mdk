@@ -3,8 +3,6 @@
 //! This module contains all the core types, constants, and error definitions
 //! used throughout the encrypted media system.
 
-use std::collections::HashMap;
-
 /// Maximum file size for encrypted media (100MB)
 pub const MAX_FILE_SIZE: usize = 100 * 1024 * 1024;
 
@@ -13,6 +11,16 @@ pub const MAX_FILENAME_LENGTH: usize = 210;
 
 /// Maximum image dimension (width or height) - supports flagship phone cameras (200MP)
 pub const MAX_IMAGE_DIMENSION: u32 = 16384;
+
+/// Maximum total pixels allowed in an image (50 million pixels)
+/// This prevents decompression bombs. At 50M pixels with 4 bytes per pixel (RGBA),
+/// this allows ~200MB of decoded image data, which is reasonable for high-res images
+/// but protects against malicious images that could exhaust memory.
+pub const MAX_IMAGE_PIXELS: u64 = 50_000_000;
+
+/// Maximum memory allowed for decoded images in MB (256MB)
+/// This is a hard limit on memory allocation to prevent OOM from decompression bombs.
+pub const MAX_IMAGE_MEMORY_MB: u64 = 256;
 
 /// Configuration options for media processing
 #[derive(Debug, Clone)]
@@ -52,8 +60,6 @@ pub struct MediaMetadata {
     pub blurhash: Option<String>,
     /// Original file size in bytes
     pub original_size: u64,
-    /// Cleaned EXIF data (if any should be preserved)
-    pub cleaned_exif: HashMap<String, String>,
 }
 
 /// Encrypted media ready for upload
@@ -146,6 +152,24 @@ pub enum EncryptedMediaError {
         height: u32,
         /// The maximum allowed dimension
         max_dimension: u32,
+    },
+
+    /// Image has too many pixels (decompression bomb protection)
+    #[error("Image has {total_pixels} pixels, exceeding maximum {max_pixels}")]
+    TooManyPixels {
+        /// Total number of pixels
+        total_pixels: u64,
+        /// Maximum allowed pixels
+        max_pixels: u64,
+    },
+
+    /// Image would require too much memory to decode (decompression bomb protection)
+    #[error("Image would require {estimated_mb}MB to decode, exceeding maximum {max_mb}MB")]
+    ImageMemoryTooLarge {
+        /// Estimated memory requirement in MB
+        estimated_mb: u64,
+        /// Maximum allowed memory in MB
+        max_mb: u64,
     },
 
     /// Encryption failed
@@ -292,6 +316,14 @@ mod tests {
                 width: 20000,
                 height: 15000,
                 max_dimension: 16384,
+            },
+            EncryptedMediaError::TooManyPixels {
+                total_pixels: 100_000_000,
+                max_pixels: 50_000_000,
+            },
+            EncryptedMediaError::ImageMemoryTooLarge {
+                estimated_mb: 1024,
+                max_mb: 256,
             },
             EncryptedMediaError::EncryptionFailed {
                 reason: "Test encryption failure".to_string(),

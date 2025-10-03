@@ -1,44 +1,179 @@
 //! Metadata extraction and processing for encrypted media
 //!
 //! This module handles extraction and processing of metadata from media files,
-//! with a focus on privacy and security. It includes EXIF processing, image
-//! metadata extraction, and blurhash generation.
+//! with a focus on privacy and security. It strips EXIF data from images
+//! by default and includes blurhash generation for previews.
 
-use std::collections::HashMap;
 use std::io::Cursor;
-
-use exif::{Reader as ExifReader, Tag as ExifTag, Value as ExifValue};
 
 use crate::encrypted_media::types::{EncryptedMediaError, MediaMetadata, MediaProcessingOptions};
 use crate::encrypted_media::validation::validate_image_dimensions;
 
-/// Extract and process metadata from media file
+/// Extract and process metadata from media file, optionally sanitizing the file
 ///
 /// The mime_type parameter should be the canonical (normalized) MIME type
 /// to ensure consistency in cryptographic operations.
+///
+/// Returns a tuple of (processed_data, metadata) where processed_data is either:
+/// - The original data if sanitize_exif is false
+/// - The sanitized data with EXIF stripped if sanitize_exif is true and it's an image
+/// - The original data if sanitization is not supported (e.g., animated GIF/WebP)
+///
+/// SECURITY NOTE: For images with sanitize_exif=true, this function sanitizes FIRST
+/// before extracting metadata. This ensures that any malicious metadata or exploits
+/// in the original image cannot affect the metadata extraction process.
+///
+/// NOTE: For animated formats (GIF/WebP), sanitization will be skipped to avoid
+/// flattening animations. The original file will be used instead, with a warning logged.
 pub fn extract_and_process_metadata(
     data: &[u8],
     mime_type: &str,
     options: &MediaProcessingOptions,
-) -> Result<MediaMetadata, EncryptedMediaError> {
+) -> Result<(Vec<u8>, MediaMetadata), EncryptedMediaError> {
     let mut metadata = MediaMetadata {
         mime_type: mime_type.to_string(),
         dimensions: None,
         blurhash: None,
         original_size: data.len() as u64,
-        cleaned_exif: HashMap::new(),
     };
+
+    let processed_data: Vec<u8>;
 
     // Process image metadata if it's an image
     if mime_type.starts_with("image/") {
-        metadata = process_image_metadata(data, metadata, options)?;
+        // SECURITY: Sanitize first if requested, then extract metadata from clean image
+        // This prevents malicious metadata from being processed during extraction
+        if options.sanitize_exif {
+            // Only attempt sanitization for known safe raster formats
+            // This prevents DoS attacks from:
+            // 1. SVG and other vector formats that can't be decoded by image crate
+            // 2. Decompression bombs with huge dimensions
+            // 3. Animated formats that would be flattened
+            if is_safe_raster_format(mime_type) {
+                // PREFLIGHT CHECK: Validate dimensions without full decode to prevent OOM
+                // This lightweight check protects against decompression bombs before
+                // we fully decode the image for sanitization
+                match preflight_dimension_check(data, options) {
+                    Ok(_) => {
+                        // Dimensions are safe, proceed with sanitization
+                        match strip_exif_and_return_image(data, mime_type) {
+                            Ok((cleaned_data, decoded_img)) => {
+                                metadata = extract_metadata_from_decoded_image(
+                                    &decoded_img,
+                                    metadata,
+                                    options,
+                                )?;
+                                processed_data = cleaned_data;
+                            }
+                            Err(e) => {
+                                // Sanitization failed (shouldn't happen for safe formats)
+                                tracing::warn!(
+                                    "Failed to sanitize {} despite preflight passing: {} - using original data",
+                                    mime_type,
+                                    e
+                                );
+                                metadata =
+                                    extract_metadata_from_encoded_image(data, metadata, options)?;
+                                processed_data = data.to_vec();
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        // Preflight check failed (image too large or invalid)
+                        // Return error to reject the image rather than processing it
+                        tracing::warn!(
+                            "Preflight dimension check failed for {}: {} - rejecting image",
+                            mime_type,
+                            e
+                        );
+                        return Err(e);
+                    }
+                }
+            } else {
+                // Not a safe raster format (e.g., SVG, unknown format, animated format)
+                // Pass through original data without sanitization
+                tracing::info!(
+                    "Skipping EXIF sanitization for {} - not a safe raster format, using original data",
+                    mime_type
+                );
+                metadata = extract_metadata_from_encoded_image(data, metadata, options)?;
+                processed_data = data.to_vec();
+            }
+        } else {
+            // If not sanitizing, process original data
+            metadata = extract_metadata_from_encoded_image(data, metadata, options)?;
+            processed_data = data.to_vec();
+        }
+    } else {
+        // For non-images, just use the original data
+        // TODO: add support for sanitizing other media types
+        processed_data = data.to_vec();
     }
 
-    Ok(metadata)
+    Ok((processed_data, metadata))
 }
 
-/// Process image-specific metadata
-pub fn process_image_metadata(
+/// Check if a MIME type is a known safe raster format that supports EXIF sanitization
+///
+/// This function returns true only for raster image formats that:
+/// 1. Can be safely decoded by the `image` crate
+/// 2. Can be re-encoded without loss of format features (e.g., not animated)
+/// 3. Are commonly used formats where EXIF stripping is valuable
+///
+/// Formats explicitly excluded:
+/// - image/gif: May be animated, would be flattened
+/// - image/webp: May be animated, would be flattened
+/// - image/svg+xml: Vector format, cannot be decoded as raster
+/// - Other vector or specialized formats
+fn is_safe_raster_format(mime_type: &str) -> bool {
+    matches!(
+        mime_type,
+        "image/jpeg" | "image/png" // Note: GIF and WebP are explicitly excluded because they may be animated
+                                   // and sanitization would flatten them to a single frame.
+                                   // Future work could detect if they're static and handle them.
+    )
+}
+
+/// Perform a lightweight preflight check on image dimensions without full decode
+///
+/// This function reads only the image header to get dimensions and validates them
+/// against size limits. This protects against decompression bombs by rejecting
+/// oversized images before we attempt to fully decode them for sanitization.
+///
+/// This is much faster and safer than decoding the entire image, as it only
+/// reads the image header (typically the first few KB of data).
+fn preflight_dimension_check(
+    data: &[u8],
+    options: &MediaProcessingOptions,
+) -> Result<(), EncryptedMediaError> {
+    use image::ImageReader;
+
+    // Read just the image header to get dimensions
+    let img_reader = ImageReader::new(Cursor::new(data))
+        .with_guessed_format()
+        .map_err(|e| EncryptedMediaError::MetadataExtractionFailed {
+            reason: format!("Failed to read image header during preflight: {}", e),
+        })?;
+
+    // Get dimensions without decoding the full image
+    // This is very fast and doesn't allocate memory for pixel data
+    let (width, height) = img_reader.into_dimensions().map_err(|e| {
+        EncryptedMediaError::MetadataExtractionFailed {
+            reason: format!("Failed to get image dimensions during preflight: {}", e),
+        }
+    })?;
+
+    // Validate dimensions to catch decompression bombs early
+    validate_image_dimensions(width, height, options)?;
+
+    Ok(())
+}
+
+/// Extract metadata from an encoded image (decodes the image data first)
+///
+/// This function is used when NOT sanitizing - it decodes the original image data
+/// and extracts dimensions and blurhash from it.
+pub fn extract_metadata_from_encoded_image(
     data: &[u8],
     mut metadata: MediaMetadata,
     options: &MediaProcessingOptions,
@@ -84,11 +219,6 @@ pub fn process_image_metadata(
         metadata.blurhash = generate_blurhash(&img);
     }
 
-    // Process EXIF data (doesn't require image decode)
-    if !options.sanitize_exif {
-        metadata.cleaned_exif = extract_safe_exif(data);
-    }
-
     Ok(metadata)
 }
 
@@ -103,468 +233,172 @@ pub fn generate_blurhash(img: &image::DynamicImage) -> Option<String> {
     encode(4, 3, rgb_img.width(), rgb_img.height(), rgb_img.as_raw()).ok()
 }
 
-/// Extract safe EXIF data (removing sensitive information)
+/// Extract metadata from an already-decoded image
 ///
-/// This method implements a privacy-first approach to EXIF data handling:
-/// 1. Strips all potentially sensitive metadata (GPS, device info, timestamps, etc.)
-/// 2. Only preserves technical metadata that's safe for sharing
-/// 3. Validates data integrity to detect potential exploits
-pub fn extract_safe_exif(data: &[u8]) -> HashMap<String, String> {
-    let mut safe_exif = HashMap::new();
+/// This function extracts dimensions and blurhash from a decoded DynamicImage,
+/// avoiding the need to decode the image again.
+fn extract_metadata_from_decoded_image(
+    img: &image::DynamicImage,
+    mut metadata: MediaMetadata,
+    options: &MediaProcessingOptions,
+) -> Result<MediaMetadata, EncryptedMediaError> {
+    let width = img.width();
+    let height = img.height();
 
-    // Try to parse EXIF data
-    let exif_reader = match ExifReader::new().read_from_container(&mut Cursor::new(data)) {
-        Ok(exif) => exif,
-        Err(_) => {
-            // No EXIF data or parsing failed - return empty map (safest approach)
-            return safe_exif;
-        }
-    };
+    // Validate dimensions
+    validate_image_dimensions(width, height, options)?;
 
-    // Define safe EXIF fields that don't compromise privacy
-    let safe_fields = get_safe_exif_fields();
-
-    // Extract only safe fields
-    for field in exif_reader.fields() {
-        // Check if this field is in our safe list
-        if let Some(safe_name) = safe_fields.get(&field.tag) {
-            // Additional validation for specific fields
-            if is_exif_value_safe(field.tag, &field.value) {
-                let value_str = format_exif_value(&field.value);
-                if !value_str.is_empty() && value_str.len() <= 100 {
-                    safe_exif.insert(safe_name.clone(), value_str);
-                }
-            }
-        }
+    // Store dimensions if requested
+    if options.preserve_dimensions {
+        metadata.dimensions = Some((width, height));
     }
 
-    // Perform basic security validation
-    if let Err(e) = validate_exif_security(&exif_reader) {
-        tracing::warn!("EXIF security validation failed: {}", e);
-        // Return empty map for security - don't process potentially malicious EXIF
-        return HashMap::new();
+    // Generate blurhash if requested
+    if options.generate_blurhash {
+        metadata.blurhash = generate_blurhash(img);
     }
 
-    safe_exif
+    Ok(metadata)
 }
 
-/// Get whitelist of safe EXIF fields that don't compromise privacy
-pub fn get_safe_exif_fields() -> HashMap<ExifTag, String> {
-    let mut safe_fields = HashMap::new();
-
-    // Technical camera settings (safe to preserve)
-    safe_fields.insert(ExifTag::FNumber, "f_number".to_string());
-    safe_fields.insert(ExifTag::ExposureTime, "exposure_time".to_string());
-    safe_fields.insert(ExifTag::ISOSpeed, "iso".to_string());
-    safe_fields.insert(ExifTag::FocalLength, "focal_length".to_string());
-    safe_fields.insert(ExifTag::Flash, "flash".to_string());
-    safe_fields.insert(ExifTag::WhiteBalance, "white_balance".to_string());
-    safe_fields.insert(ExifTag::ExposureMode, "exposure_mode".to_string());
-    safe_fields.insert(ExifTag::SceneCaptureType, "scene_type".to_string());
-
-    // Image technical properties (safe)
-    safe_fields.insert(ExifTag::ColorSpace, "color_space".to_string());
-    safe_fields.insert(ExifTag::Orientation, "orientation".to_string());
-    safe_fields.insert(ExifTag::ResolutionUnit, "resolution_unit".to_string());
-    safe_fields.insert(ExifTag::XResolution, "x_resolution".to_string());
-    safe_fields.insert(ExifTag::YResolution, "y_resolution".to_string());
-
-    // Note: We explicitly exclude:
-    // - GPS data (Tag::GPSLatitude, Tag::GPSLongitude, etc.)
-    // - Device identifiers (Tag::Make, Tag::Model, Tag::Software, Tag::SerialNumber)
-    // - Timestamps (Tag::DateTime, Tag::DateTimeOriginal, Tag::DateTimeDigitized)
-    // - User comments (Tag::UserComment, Tag::ImageDescription)
-    // - Thumbnail data
-    // - Maker notes (proprietary data that could contain anything)
-
-    safe_fields
-}
-
-/// Validate that an EXIF value is safe to preserve
-pub fn is_exif_value_safe(_tag: ExifTag, value: &ExifValue) -> bool {
-    match value {
-        // Reject any values that could contain embedded data or exploits
-        ExifValue::Undefined(data, _) => {
-            // Undefined data could contain anything - be very conservative
-            data.len() <= 32 && is_data_safe(data)
-        }
-        ExifValue::Ascii(strings) => {
-            // ASCII strings should be reasonable length and not contain suspicious patterns
-            strings.iter().all(|s| {
-                s.len() <= 50
-                    && s.iter()
-                        .all(|&b| b.is_ascii() && !char::from(b).is_control())
-                    && !contains_suspicious_patterns(&String::from_utf8_lossy(s))
-            })
-        }
-        // Numeric values are generally safe
-        ExifValue::Byte(_)
-        | ExifValue::Short(_)
-        | ExifValue::Long(_)
-        | ExifValue::SByte(_)
-        | ExifValue::SShort(_)
-        | ExifValue::SLong(_)
-        | ExifValue::Float(_)
-        | ExifValue::Double(_) => true,
-
-        // Rational values are safe
-        ExifValue::Rational(_) | ExifValue::SRational(_) => true,
-
-        // Be conservative with unknown types
-        _ => false,
-    }
-}
-
-/// Check if binary data appears safe (no suspicious patterns)
-pub fn is_data_safe(data: &[u8]) -> bool {
-    // Check for suspicious patterns that might indicate embedded exploits
-
-    // Reject data with too many null bytes (could be padding for exploits)
-    let null_count = data.iter().filter(|&&b| b == 0).count();
-    if null_count > data.len() / 2 {
-        return false;
-    }
-
-    // Reject data with executable signatures
-    if data.len() >= 2 {
-        match &data[0..2] {
-            [0x4D, 0x5A] => return false, // PE executable
-            [0x7F, 0x45] => return false, // ELF executable
-            [0xCA, 0xFE] => return false, // Mach-O executable
-            [0xFE, 0xED] => return false, // Mach-O executable
-            _ => {}
-        }
-    }
-
-    // Check for script-like patterns
-    if data.len() >= 4
-        && (data.starts_with(b"<scr")
-            || data.starts_with(b"java")
-            || data.starts_with(b"#!/")
-            || data.starts_with(b"<?ph"))
-    {
-        return false;
-    }
-
-    true
-}
-
-/// Check for suspicious patterns in ASCII strings
-pub fn contains_suspicious_patterns(s: &str) -> bool {
-    let suspicious_patterns = [
-        "javascript:",
-        "data:",
-        "vbscript:",
-        "file://",
-        "ftp://",
-        "<script",
-        "</script",
-        "<?php",
-        "#!/",
-        "cmd.exe",
-        "powershell",
-        "eval(",
-        "exec(",
-        "system(",
-        "shell_exec",
-        "passthru",
-    ];
-
-    let lower_s = s.to_lowercase();
-    suspicious_patterns
-        .iter()
-        .any(|pattern| lower_s.contains(pattern))
-}
-
-/// Format EXIF value as string for storage
-pub fn format_exif_value(value: &ExifValue) -> String {
-    match value {
-        ExifValue::Ascii(strings) => strings
-            .iter()
-            .map(|s| String::from_utf8_lossy(s).to_string())
-            .collect::<Vec<_>>()
-            .join("; "),
-        ExifValue::Byte(values) => values
-            .iter()
-            .map(|v| v.to_string())
-            .collect::<Vec<_>>()
-            .join(", "),
-        ExifValue::Short(values) => values
-            .iter()
-            .map(|v| v.to_string())
-            .collect::<Vec<_>>()
-            .join(", "),
-        ExifValue::Long(values) => values
-            .iter()
-            .map(|v| v.to_string())
-            .collect::<Vec<_>>()
-            .join(", "),
-        ExifValue::Rational(values) => values
-            .iter()
-            .map(|r| {
-                if r.denom == 0 {
-                    "undefined".to_string()
-                } else {
-                    format!("{}/{}", r.num, r.denom)
-                }
-            })
-            .collect::<Vec<_>>()
-            .join(", "),
-        ExifValue::SByte(values) => values
-            .iter()
-            .map(|v| v.to_string())
-            .collect::<Vec<_>>()
-            .join(", "),
-        ExifValue::SShort(values) => values
-            .iter()
-            .map(|v| v.to_string())
-            .collect::<Vec<_>>()
-            .join(", "),
-        ExifValue::SLong(values) => values
-            .iter()
-            .map(|v| v.to_string())
-            .collect::<Vec<_>>()
-            .join(", "),
-        ExifValue::SRational(values) => values
-            .iter()
-            .map(|r| {
-                if r.denom == 0 {
-                    "undefined".to_string()
-                } else {
-                    format!("{}/{}", r.num, r.denom)
-                }
-            })
-            .collect::<Vec<_>>()
-            .join(", "),
-        ExifValue::Float(values) => values
-            .iter()
-            .map(|v| format!("{:.3}", v))
-            .collect::<Vec<_>>()
-            .join(", "),
-        ExifValue::Double(values) => values
-            .iter()
-            .map(|v| format!("{:.3}", v))
-            .collect::<Vec<_>>()
-            .join(", "),
-        ExifValue::Undefined(data, _) => {
-            // For undefined data, only show length to avoid exposing content
-            format!("binary({} bytes)", data.len())
-        }
-        _ => "unknown".to_string(),
-    }
-}
-
-/// Perform basic security validation on EXIF data
+/// Strip ALL EXIF data from an image and return both the encoded data and decoded image
 ///
-/// Returns an error if potentially malicious patterns are detected
-pub fn validate_exif_security(exif: &exif::Exif) -> Result<(), EncryptedMediaError> {
-    // Check for suspicious field counts (potential DoS via memory exhaustion)
-    if exif.fields().len() > 1000 {
-        return Err(EncryptedMediaError::MetadataExtractionFailed {
-            reason: format!(
-                "EXIF data contains suspiciously high number of fields: {} (max: 1000)",
-                exif.fields().len()
-            ),
-        });
-    }
+/// This function re-encodes the image to remove all EXIF metadata for privacy.
+/// It returns both the cleaned encoded bytes and the decoded image object to avoid
+/// needing to decode again for metadata extraction.
+///
+/// IMPORTANT: This function should only be called for safe raster formats (JPEG, PNG).
+/// The caller is responsible for checking format compatibility via `is_safe_raster_format()`.
+///
+/// Returns: (cleaned_data, decoded_image)
+fn strip_exif_and_return_image(
+    data: &[u8],
+    mime_type: &str,
+) -> Result<(Vec<u8>, image::DynamicImage), EncryptedMediaError> {
+    use image::{ImageEncoder, ImageReader};
 
-    // Check for fields with suspicious data sizes
-    for field in exif.fields() {
-        let value_size = match &field.value {
-            ExifValue::Undefined(data, _) => data.len(),
-            ExifValue::Ascii(strings) => strings.iter().map(|s| s.len()).sum(),
-            _ => 0,
-        };
+    // Decode the image once
+    let img_reader = ImageReader::new(Cursor::new(data))
+        .with_guessed_format()
+        .map_err(|e| EncryptedMediaError::MetadataExtractionFailed {
+            reason: format!("Failed to read image for EXIF stripping: {}", e),
+        })?;
 
-        if value_size > 10000 {
+    let mut img =
+        img_reader
+            .decode()
+            .map_err(|e| EncryptedMediaError::MetadataExtractionFailed {
+                reason: format!("Failed to decode image for EXIF stripping: {}", e),
+            })?;
+
+    // Apply EXIF orientation transform before re-encoding
+    // This "bakes in" the correct orientation so the image displays correctly
+    // even without EXIF metadata
+    img = apply_exif_orientation(data, img)?;
+
+    // Re-encode the image without metadata
+    let mut output = Cursor::new(Vec::new());
+
+    match mime_type {
+        "image/jpeg" => {
+            use image::codecs::jpeg::JpegEncoder;
+            // Use high quality (95) to minimize quality loss during re-encoding
+            // This is important for preserving image fidelity while still stripping metadata
+            let mut encoder = JpegEncoder::new_with_quality(&mut output, 100);
+            encoder
+                .encode(
+                    img.as_bytes(),
+                    img.width(),
+                    img.height(),
+                    img.color().into(),
+                )
+                .map_err(|e| EncryptedMediaError::MetadataExtractionFailed {
+                    reason: format!("Failed to re-encode JPEG: {}", e),
+                })?;
+        }
+        "image/png" => {
+            use image::codecs::png::PngEncoder;
+            let encoder = PngEncoder::new(&mut output);
+            encoder
+                .write_image(
+                    img.as_bytes(),
+                    img.width(),
+                    img.height(),
+                    img.color().into(),
+                )
+                .map_err(|e| EncryptedMediaError::MetadataExtractionFailed {
+                    reason: format!("Failed to re-encode PNG: {}", e),
+                })?;
+        }
+        _ => {
+            // For unknown formats, return error
             return Err(EncryptedMediaError::MetadataExtractionFailed {
-                reason: format!(
-                    "EXIF field {} contains suspiciously large data: {} bytes (max: 10000)",
-                    field.tag, value_size
-                ),
+                reason: format!("Unsupported image format for EXIF stripping: {}", mime_type),
             });
         }
     }
 
-    Ok(())
+    Ok((output.into_inner(), img))
+}
+
+/// Apply EXIF orientation transform to an image
+///
+/// Reads the EXIF orientation tag from the original image data and applies
+/// the appropriate rotation and/or flip operations to the decoded image.
+/// This ensures images display correctly even after EXIF metadata is stripped.
+///
+/// EXIF Orientation values:
+/// 1 = Normal
+/// 2 = Flip horizontal
+/// 3 = Rotate 180°
+/// 4 = Flip vertical
+/// 5 = Flip horizontal + Rotate 270° CW
+/// 6 = Rotate 90° CW
+/// 7 = Flip horizontal + Rotate 90° CW
+/// 8 = Rotate 270° CW
+fn apply_exif_orientation(
+    data: &[u8],
+    img: image::DynamicImage,
+) -> Result<image::DynamicImage, EncryptedMediaError> {
+    use exif::{In, Reader, Tag};
+
+    // Try to read EXIF data - if it fails or doesn't exist, just return the original image
+    let exif_reader = match Reader::new().read_from_container(&mut Cursor::new(data)) {
+        Ok(exif) => exif,
+        Err(_) => return Ok(img), // No EXIF data or couldn't read it - return as-is
+    };
+
+    // Get the orientation tag
+    let orientation = match exif_reader.get_field(Tag::Orientation, In::PRIMARY) {
+        Some(field) => match field.value.get_uint(0) {
+            Some(val) => val,
+            None => return Ok(img), // Couldn't parse orientation - return as-is
+        },
+        None => return Ok(img), // No orientation tag - return as-is
+    };
+
+    // Apply the appropriate transform based on orientation value
+    let transformed = match orientation {
+        1 => img,                     // Normal - no transformation needed
+        2 => img.fliph(),             // Flip horizontal
+        3 => img.rotate180(),         // Rotate 180°
+        4 => img.flipv(),             // Flip vertical
+        5 => img.rotate270().fliph(), // Flip horizontal + Rotate 270° CW
+        6 => img.rotate90(),          // Rotate 90° CW
+        7 => img.rotate90().fliph(),  // Flip horizontal + Rotate 90° CW
+        8 => img.rotate270(),         // Rotate 270° CW (or 90° CCW)
+        _ => img,                     // Unknown orientation value - return as-is
+    };
+
+    Ok(transformed)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use exif::Rational;
 
     #[test]
-    fn test_safe_exif_fields() {
-        let safe_fields = get_safe_exif_fields();
-
-        // Should include technical camera settings
-        assert!(safe_fields.contains_key(&ExifTag::FNumber));
-        assert!(safe_fields.contains_key(&ExifTag::ExposureTime));
-        assert!(safe_fields.contains_key(&ExifTag::ISOSpeed));
-
-        // Should include safe image properties
-        assert!(safe_fields.contains_key(&ExifTag::Orientation));
-        assert!(safe_fields.contains_key(&ExifTag::ColorSpace));
-
-        // Should NOT include sensitive fields (we can't test for their absence directly
-        // since they're not in our safe list, but we can verify our list is reasonably sized)
-        assert!(safe_fields.len() < 20); // Should be a curated, small list
-    }
-
-    #[test]
-    fn test_is_data_safe() {
-        // Safe data
-        assert!(is_data_safe(&[1, 2, 3, 4, 5]));
-        assert!(is_data_safe(&[]));
-
-        // Unsafe data - too many nulls
-        assert!(!is_data_safe(&[0, 0, 0, 0, 0, 1]));
-
-        // Unsafe data - executable signatures
-        assert!(!is_data_safe(&[0x4D, 0x5A, 0x90, 0x00])); // PE
-        assert!(!is_data_safe(&[0x7F, 0x45, 0x4C, 0x46])); // ELF
-        assert!(!is_data_safe(&[0xCA, 0xFE, 0xBA, 0xBE])); // Mach-O
-
-        // Unsafe data - script patterns
-        assert!(!is_data_safe(b"<script>alert(1)</script>"));
-        assert!(!is_data_safe(b"#!/bin/bash"));
-        assert!(!is_data_safe(b"<?php echo 'hi'; ?>"));
-    }
-
-    #[test]
-    fn test_contains_suspicious_patterns() {
-        // Safe strings
-        assert!(!contains_suspicious_patterns("Canon EOS R5"));
-        assert!(!contains_suspicious_patterns("f/2.8"));
-        assert!(!contains_suspicious_patterns("1/125"));
-
-        // Suspicious strings
-        assert!(contains_suspicious_patterns("javascript:alert(1)"));
-        assert!(contains_suspicious_patterns("data:text/html,<script>"));
-        assert!(contains_suspicious_patterns("file:///etc/passwd"));
-        assert!(contains_suspicious_patterns("eval(document.cookie)"));
-        assert!(contains_suspicious_patterns("cmd.exe /c dir"));
-        assert!(contains_suspicious_patterns(
-            "<?php system($_GET['cmd']); ?>"
-        ));
-    }
-
-    #[test]
-    fn test_is_exif_value_safe() {
-        // Safe values
-        assert!(is_exif_value_safe(
-            ExifTag::FNumber,
-            &ExifValue::Rational(vec![Rational { num: 28, denom: 10 }])
-        ));
-        assert!(is_exif_value_safe(
-            ExifTag::ISOSpeed,
-            &ExifValue::Short(vec![800])
-        ));
-        assert!(is_exif_value_safe(
-            ExifTag::Flash,
-            &ExifValue::Short(vec![16])
-        ));
-
-        // Safe ASCII
-        assert!(is_exif_value_safe(
-            ExifTag::ColorSpace,
-            &ExifValue::Ascii(vec![b"sRGB".to_vec()])
-        ));
-
-        // Unsafe ASCII - too long
-        let long_string = "a".repeat(100);
-        assert!(!is_exif_value_safe(
-            ExifTag::ColorSpace,
-            &ExifValue::Ascii(vec![long_string.into_bytes()])
-        ));
-
-        // Unsafe ASCII - suspicious content
-        assert!(!is_exif_value_safe(
-            ExifTag::ColorSpace,
-            &ExifValue::Ascii(vec![b"javascript:alert(1)".to_vec()])
-        ));
-
-        // Unsafe undefined data - too large
-        let large_data = vec![0u8; 100];
-        assert!(!is_exif_value_safe(
-            ExifTag::ColorSpace,
-            &ExifValue::Undefined(large_data, 0)
-        ));
-
-        // Unsafe undefined data - suspicious content
-        assert!(!is_exif_value_safe(
-            ExifTag::ColorSpace,
-            &ExifValue::Undefined(vec![0x4D, 0x5A, 0x90, 0x00], 0)
-        ));
-    }
-
-    #[test]
-    fn test_format_exif_value() {
-        // Test different value types
-        assert_eq!(
-            format_exif_value(&ExifValue::Ascii(vec![b"sRGB".to_vec()])),
-            "sRGB"
-        );
-        assert_eq!(format_exif_value(&ExifValue::Short(vec![800])), "800");
-        assert_eq!(
-            format_exif_value(&ExifValue::Rational(vec![Rational { num: 28, denom: 10 }])),
-            "28/10"
-        );
-        assert_eq!(format_exif_value(&ExifValue::Float(vec![2.8])), "2.800");
-
-        // Test multiple values
-        assert_eq!(
-            format_exif_value(&ExifValue::Short(vec![800, 1600])),
-            "800, 1600"
-        );
-
-        // Test undefined data (should show length only)
-        assert_eq!(
-            format_exif_value(&ExifValue::Undefined(vec![1, 2, 3, 4], 0)),
-            "binary(4 bytes)"
-        );
-
-        // Test division by zero
-        assert_eq!(
-            format_exif_value(&ExifValue::Rational(vec![Rational { num: 1, denom: 0 }])),
-            "undefined"
-        );
-    }
-
-    #[test]
-    fn test_extract_safe_exif_empty_data() {
-        // Test with data that has no EXIF
-        let empty_data = vec![0u8; 100];
-        let result = extract_safe_exif(&empty_data);
-        assert!(result.is_empty());
-
-        // Test with empty data
-        let result = extract_safe_exif(&[]);
-        assert!(result.is_empty());
-    }
-
-    #[test]
-    fn test_exif_security_validation_behavior() {
-        // Test that extract_safe_exif returns empty map when security validation fails
-        // We can't easily create malicious EXIF data in tests, but we can verify the behavior
-        // by testing with empty/invalid data which should be handled safely
-
-        // Test with completely invalid EXIF data
-        let invalid_exif_data = vec![0xFF, 0xE1, 0x00, 0x16]; // Invalid EXIF header
-        let result = extract_safe_exif(&invalid_exif_data);
-        // Should return empty map for invalid data (safe fallback)
-        assert!(result.is_empty());
-
-        // Test with random binary data that might trigger security checks
-        let random_data = vec![0u8; 50000]; // Large random data
-        let result = extract_safe_exif(&random_data);
-        // Should return empty map for unparseable data (safe fallback)
-        assert!(result.is_empty());
-    }
-
-    #[test]
-    fn test_process_image_metadata_dimension_validation() {
+    fn test_extract_metadata_from_encoded_image_dimension_validation() {
         use crate::encrypted_media::types::MediaProcessingOptions;
 
         // Create a simple 1x1 PNG image for testing
@@ -592,7 +426,6 @@ mod tests {
             dimensions: None,
             blurhash: None,
             original_size: png_data.len() as u64,
-            cleaned_exif: HashMap::new(),
         };
 
         // Test with dimension preservation enabled, blurhash disabled
@@ -604,7 +437,7 @@ mod tests {
             max_file_size: None,
         };
 
-        let result = process_image_metadata(&png_data, metadata.clone(), &options);
+        let result = extract_metadata_from_encoded_image(&png_data, metadata.clone(), &options);
         assert!(result.is_ok());
         let processed = result.unwrap();
         assert_eq!(processed.dimensions, Some((1, 1)));
@@ -619,7 +452,7 @@ mod tests {
             max_file_size: None,
         };
 
-        let result = process_image_metadata(&png_data, metadata, &strict_options);
+        let result = extract_metadata_from_encoded_image(&png_data, metadata, &strict_options);
         assert!(result.is_err());
         if let Err(EncryptedMediaError::DimensionsTooLarge {
             width,
@@ -633,5 +466,179 @@ mod tests {
         } else {
             panic!("Expected DimensionsTooLarge error");
         }
+    }
+
+    #[test]
+    fn test_animated_format_fallback() {
+        use crate::encrypted_media::types::MediaProcessingOptions;
+
+        // Create a minimal valid GIF (not actually animated, but format is GIF)
+        let gif_data = vec![
+            0x47, 0x49, 0x46, 0x38, 0x39, 0x61, // GIF89a header
+            0x01, 0x00, 0x01, 0x00, // Width: 1, Height: 1
+            0x80, 0x00, 0x00, // Global color table
+            0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, // Black and white
+            0x2C, 0x00, 0x00, 0x00, 0x00, // Image descriptor
+            0x01, 0x00, 0x01, 0x00, 0x00, // Image dimensions
+            0x02, 0x02, 0x44, 0x01, 0x00, // Image data
+            0x3B, // Trailer
+        ];
+
+        let options = MediaProcessingOptions {
+            preserve_dimensions: true,
+            generate_blurhash: false,
+            sanitize_exif: true, // Request sanitization
+            max_dimension: Some(100),
+            max_file_size: None,
+        };
+
+        // Test that GIF with sanitize_exif=true falls back to original data
+        let result = extract_and_process_metadata(&gif_data, "image/gif", &options);
+        assert!(
+            result.is_ok(),
+            "GIF processing should succeed with fallback"
+        );
+
+        let (processed_data, metadata) = result.unwrap();
+        // Should return original data since sanitization isn't supported
+        assert_eq!(processed_data, gif_data, "Should return original GIF data");
+        assert_eq!(metadata.mime_type, "image/gif");
+        assert_eq!(metadata.original_size, gif_data.len() as u64);
+
+        // Test WebP fallback behavior
+        let result = extract_and_process_metadata(&gif_data, "image/webp", &options);
+        assert!(
+            result.is_ok(),
+            "WebP processing should succeed with fallback"
+        );
+
+        let (processed_data, _) = result.unwrap();
+        // Should return original data since sanitization isn't supported
+        assert_eq!(processed_data, gif_data, "Should return original WebP data");
+    }
+
+    #[test]
+    fn test_animated_format_without_sanitize() {
+        use crate::encrypted_media::types::MediaProcessingOptions;
+
+        // Create a minimal valid GIF
+        let gif_data = vec![
+            0x47, 0x49, 0x46, 0x38, 0x39, 0x61, // GIF89a header
+            0x01, 0x00, 0x01, 0x00, // Width: 1, Height: 1
+            0x80, 0x00, 0x00, // Global color table
+            0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, // Black and white
+            0x2C, 0x00, 0x00, 0x00, 0x00, // Image descriptor
+            0x01, 0x00, 0x01, 0x00, 0x00, // Image dimensions
+            0x02, 0x02, 0x44, 0x01, 0x00, // Image data
+            0x3B, // Trailer
+        ];
+
+        let options = MediaProcessingOptions {
+            preserve_dimensions: true,
+            generate_blurhash: false,
+            sanitize_exif: false, // Don't sanitize
+            max_dimension: Some(100),
+            max_file_size: None,
+        };
+
+        // Test that GIF without sanitization works normally
+        let result = extract_and_process_metadata(&gif_data, "image/gif", &options);
+        assert!(
+            result.is_ok(),
+            "GIF processing without sanitization should succeed"
+        );
+
+        let (processed_data, metadata) = result.unwrap();
+        assert_eq!(processed_data, gif_data, "Should return original GIF data");
+        assert_eq!(metadata.mime_type, "image/gif");
+    }
+
+    #[test]
+    fn test_safe_raster_format_detection() {
+        // Safe formats that support sanitization
+        assert!(is_safe_raster_format("image/jpeg"));
+        assert!(is_safe_raster_format("image/png"));
+
+        // Unsafe formats (animated or vector)
+        assert!(!is_safe_raster_format("image/gif"));
+        assert!(!is_safe_raster_format("image/webp"));
+        assert!(!is_safe_raster_format("image/svg+xml"));
+        assert!(!is_safe_raster_format("image/bmp"));
+        assert!(!is_safe_raster_format("image/tiff"));
+    }
+
+    #[test]
+    fn test_svg_passthrough_with_sanitize_requested() {
+        use crate::encrypted_media::types::MediaProcessingOptions;
+
+        // Minimal SVG data
+        let svg_data =
+            b"<svg xmlns=\"http://www.w3.org/2000/svg\"><rect width=\"10\" height=\"10\"/></svg>";
+
+        let options = MediaProcessingOptions {
+            preserve_dimensions: false,
+            generate_blurhash: false,
+            sanitize_exif: true, // Request sanitization (should be skipped for SVG)
+            max_dimension: Some(100),
+            max_file_size: None,
+        };
+
+        // SVG should pass through as-is since it's not a safe raster format
+        let result = extract_and_process_metadata(svg_data, "image/svg+xml", &options);
+
+        // Note: This may fail metadata extraction since SVG isn't a raster format
+        // The important thing is that it doesn't try to decode/sanitize
+        match result {
+            Ok((processed_data, _)) => {
+                // Should return original data without modification
+                assert_eq!(
+                    processed_data, svg_data,
+                    "SVG should pass through unchanged"
+                );
+            }
+            Err(_) => {
+                // It's OK if metadata extraction fails for SVG, as long as it doesn't panic
+                // or try to fully decode it
+            }
+        }
+    }
+
+    #[test]
+    fn test_preflight_rejects_oversized_image() {
+        use crate::encrypted_media::types::MediaProcessingOptions;
+
+        // Create a valid PNG header with huge dimensions
+        // This simulates a decompression bomb
+        let huge_png_header = vec![
+            0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, // PNG signature
+            0x00, 0x00, 0x00, 0x0D, // IHDR chunk length
+            0x49, 0x48, 0x44, 0x52, // IHDR
+            0x00, 0x01, 0x00, 0x00, // Width: 65536 (too large)
+            0x00, 0x01, 0x00, 0x00, // Height: 65536 (too large)
+            0x08, 0x02, 0x00, 0x00, 0x00, // Bit depth, color type, etc
+            0x00, 0x00, 0x00, 0x00, // Placeholder CRC
+        ];
+
+        let options = MediaProcessingOptions {
+            preserve_dimensions: true,
+            generate_blurhash: false,
+            sanitize_exif: true,
+            max_dimension: Some(16384), // Standard max dimension
+            max_file_size: None,
+        };
+
+        // Should reject during preflight check, not during decode
+        let result = preflight_dimension_check(&huge_png_header, &options);
+        assert!(
+            result.is_err(),
+            "Preflight should reject oversized image dimensions"
+        );
+
+        // Now test via full extract_and_process_metadata flow
+        let result = extract_and_process_metadata(&huge_png_header, "image/png", &options);
+        assert!(
+            result.is_err(),
+            "Should reject oversized PNG during preflight, before attempting decode"
+        );
     }
 }
