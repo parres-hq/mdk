@@ -58,11 +58,8 @@ where
 
         let tags = [
             Tag::custom(TagKind::MlsProtocolVersion, ["1.0"]),
-            Tag::custom(
-                TagKind::MlsCiphersuite,
-                [self.ciphersuite_value().to_string()],
-            ),
-            Tag::custom(TagKind::MlsExtensions, [self.extensions_value()]),
+            Tag::custom(TagKind::MlsCiphersuite, [self.ciphersuite_value()]),
+            Tag::custom(TagKind::MlsExtensions, self.extensions_value()),
             Tag::relays(relays),
         ];
 
@@ -217,6 +214,208 @@ mod tests {
                 .map(|r| r.to_string())
                 .collect::<Vec<_>>()
                 .join(",")
+        );
+    }
+
+    /// Test that ciphersuite tag format matches Marmot spec (MIP-00)
+    /// Spec requires: ["ciphersuite", "0x0001"]
+    #[test]
+    fn test_ciphersuite_tag_format() {
+        let mdk = create_test_mdk();
+        let test_pubkey =
+            PublicKey::from_hex("884704bd421671e01c13f854d2ce23ce2a5bfe9562f4f297ad2bc921ba30c3a6")
+                .unwrap();
+        let relays = vec![RelayUrl::parse("wss://relay.example.com").unwrap()];
+
+        let (_, tags) = mdk
+            .create_key_package_for_event(&test_pubkey, relays)
+            .expect("Failed to create key package");
+
+        // Find ciphersuite tag
+        let ciphersuite_tag = tags
+            .iter()
+            .find(|t| t.kind() == TagKind::MlsCiphersuite)
+            .expect("Ciphersuite tag not found");
+
+        // Verify format: should be hex with 0x prefix
+        let ciphersuite_value = ciphersuite_tag.content().unwrap();
+        assert!(
+            ciphersuite_value.starts_with("0x"),
+            "Ciphersuite value should start with '0x', got: {}",
+            ciphersuite_value
+        );
+
+        // For DEFAULT_CIPHERSUITE (MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519), value is 0x0001
+        assert_eq!(
+            ciphersuite_value, "0x0001",
+            "Expected ciphersuite '0x0001' per MIP-00 spec, got: {}",
+            ciphersuite_value
+        );
+    }
+
+    /// Test that extensions tag format matches Marmot spec (MIP-00)
+    /// Spec requires: ["extensions", "0x0001", "0x0002", "0x0003", ...]
+    /// Each extension ID should be a separate hex value with 0x prefix
+    #[test]
+    fn test_extensions_tag_format() {
+        let mdk = create_test_mdk();
+        let test_pubkey =
+            PublicKey::from_hex("884704bd421671e01c13f854d2ce23ce2a5bfe9562f4f297ad2bc921ba30c3a6")
+                .unwrap();
+        let relays = vec![RelayUrl::parse("wss://relay.example.com").unwrap()];
+
+        let (_, tags) = mdk
+            .create_key_package_for_event(&test_pubkey, relays)
+            .expect("Failed to create key package");
+
+        // Find extensions tag
+        let extensions_tag = tags
+            .iter()
+            .find(|t| t.kind() == TagKind::MlsExtensions)
+            .expect("Extensions tag not found");
+
+        // Get all values (first value is the tag name "mls_extensions", rest are extension IDs)
+        let tag_values: Vec<String> = extensions_tag
+            .as_slice()
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+
+        // Should have at least 5 elements: tag name + 4 extension IDs
+        assert!(
+            tag_values.len() >= 5,
+            "Expected at least 5 values (tag name + 4 extensions), got: {}",
+            tag_values.len()
+        );
+
+        // Skip first element (tag name) and verify all extension IDs are hex format
+        let extension_ids = &tag_values[1..];
+        for (i, ext_id) in extension_ids.iter().enumerate() {
+            assert!(
+                ext_id.starts_with("0x"),
+                "Extension ID {} should start with '0x', got: {}",
+                i,
+                ext_id
+            );
+            assert!(
+                ext_id.len() == 6, // "0x" + 4 hex digits
+                "Extension ID {} should be 6 chars (0xXXXX), got: {} with length {}",
+                i,
+                ext_id,
+                ext_id.len()
+            );
+        }
+
+        // Verify expected extension IDs are present
+        // 0x0003 = RequiredCapabilities
+        // 0x000a = LastResort
+        // 0x0002 = RatchetTree
+        // 0xf2ee = MarmotGroupData
+        assert!(
+            extension_ids.contains(&"0x0003".to_string()),
+            "Should contain RequiredCapabilities (0x0003)"
+        );
+        assert!(
+            extension_ids.contains(&"0x000a".to_string()),
+            "Should contain LastResort (0x000a)"
+        );
+        assert!(
+            extension_ids.contains(&"0x0002".to_string()),
+            "Should contain RatchetTree (0x0002)"
+        );
+        assert!(
+            extension_ids.contains(&"0xf2ee".to_string()),
+            "Should contain MarmotGroupData (0xf2ee)"
+        );
+    }
+
+    /// Test that protocol version tag matches Marmot spec (MIP-00)
+    /// Spec requires: ["mls_protocol_version", "1.0"]
+    #[test]
+    fn test_protocol_version_tag_format() {
+        let mdk = create_test_mdk();
+        let test_pubkey =
+            PublicKey::from_hex("884704bd421671e01c13f854d2ce23ce2a5bfe9562f4f297ad2bc921ba30c3a6")
+                .unwrap();
+        let relays = vec![RelayUrl::parse("wss://relay.example.com").unwrap()];
+
+        let (_, tags) = mdk
+            .create_key_package_for_event(&test_pubkey, relays)
+            .expect("Failed to create key package");
+
+        // Find protocol version tag
+        let version_tag = tags
+            .iter()
+            .find(|t| t.kind() == TagKind::MlsProtocolVersion)
+            .expect("Protocol version tag not found");
+
+        let version_value = version_tag.content().unwrap();
+        assert_eq!(
+            version_value, "1.0",
+            "Expected protocol version '1.0' per MIP-00 spec, got: {}",
+            version_value
+        );
+    }
+
+    /// Test complete tag structure matches Marmot spec (MIP-00)
+    /// This is an integration test ensuring all tags work together correctly
+    #[test]
+    fn test_complete_tag_structure_mip00_compliance() {
+        let mdk = create_test_mdk();
+        let test_pubkey =
+            PublicKey::from_hex("884704bd421671e01c13f854d2ce23ce2a5bfe9562f4f297ad2bc921ba30c3a6")
+                .unwrap();
+        let relays = vec![
+            RelayUrl::parse("wss://relay1.example.com").unwrap(),
+            RelayUrl::parse("wss://relay2.example.com").unwrap(),
+        ];
+
+        let (_, tags) = mdk
+            .create_key_package_for_event(&test_pubkey, relays.clone())
+            .expect("Failed to create key package");
+
+        // Verify we have exactly 4 required tags
+        assert_eq!(tags.len(), 4, "Should have exactly 4 tags");
+
+        // Verify tag order matches spec example
+        assert_eq!(
+            tags[0].kind(),
+            TagKind::MlsProtocolVersion,
+            "First tag should be mls_protocol_version"
+        );
+        assert_eq!(
+            tags[1].kind(),
+            TagKind::MlsCiphersuite,
+            "Second tag should be ciphersuite"
+        );
+        assert_eq!(
+            tags[2].kind(),
+            TagKind::MlsExtensions,
+            "Third tag should be extensions"
+        );
+        assert_eq!(
+            tags[3].kind(),
+            TagKind::Relays,
+            "Fourth tag should be relays"
+        );
+
+        // Verify relays tag format
+        let relays_tag = &tags[3];
+        let relays_values: Vec<String> = relays_tag
+            .as_slice()
+            .iter()
+            .skip(1) // Skip tag name "relays"
+            .map(|s| s.to_string())
+            .collect();
+
+        assert_eq!(relays_values.len(), 2, "Should have exactly 2 relay URLs");
+        assert!(
+            relays_values.contains(&"wss://relay1.example.com".to_string()),
+            "Should contain relay1"
+        );
+        assert!(
+            relays_values.contains(&"wss://relay2.example.com".to_string()),
+            "Should contain relay2"
         );
     }
 
