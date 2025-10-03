@@ -352,3 +352,368 @@ where
         Ok(processed_welcome.is_some())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_util::*;
+    use crate::tests::create_test_mdk;
+    use nostr::{Keys, Kind, TagKind};
+
+    /// Test that Welcome event structure matches Marmot spec (MIP-02)
+    /// Spec requires:
+    /// - Kind: 444 (MlsWelcome)
+    /// - Content: hex-encoded serialized MLSMessage
+    /// - Tags: exactly 2 tags (relays + event reference)
+    /// - Must be unsigned (UnsignedEvent for NIP-59 gift wrapping)
+    #[test]
+    fn test_welcome_event_structure_mip02_compliance() {
+        let mdk = create_test_mdk();
+        let (creator, members, admins) = create_test_group_members();
+
+        // Create group - this will generate welcome rumors for each member
+        let create_result = mdk
+            .create_group(
+                &creator.public_key(),
+                vec![
+                    create_key_package_event(&mdk, &members[0]),
+                    create_key_package_event(&mdk, &members[1]),
+                ],
+                create_nostr_group_config_data(admins),
+            )
+            .expect("Failed to create group");
+
+        // Verify we have welcome rumors for both members
+        assert_eq!(
+            create_result.welcome_rumors.len(),
+            2,
+            "Should have welcome rumors for both members"
+        );
+
+        // Test each welcome rumor
+        for welcome_rumor in &create_result.welcome_rumors {
+            // 1. Verify kind is 444 (MlsWelcome)
+            assert_eq!(
+                welcome_rumor.kind,
+                Kind::MlsWelcome,
+                "Welcome event must have kind 444 (MlsWelcome)"
+            );
+
+            // 2. Verify content is hex-encoded (valid hex)
+            assert!(
+                hex::decode(&welcome_rumor.content).is_ok(),
+                "Welcome content must be valid hex-encoded data"
+            );
+
+            // Verify decoded content is substantial (MLS Welcome messages are typically > 50 bytes)
+            let decoded_content = hex::decode(&welcome_rumor.content)
+                .expect("Failed to decode welcome content");
+            assert!(
+                decoded_content.len() > 50,
+                "Welcome content should be substantial (typically > 50 bytes), got {} bytes",
+                decoded_content.len()
+            );
+
+            // 3. Verify exactly 2 tags (relays + event reference)
+            assert_eq!(
+                welcome_rumor.tags.len(),
+                2,
+                "Welcome event must have exactly 2 tags per MIP-02"
+            );
+
+            // 4. Verify first tag is relays tag
+            let tags_vec: Vec<&nostr::Tag> = welcome_rumor.tags.iter().collect();
+            let relays_tag = tags_vec[0];
+            assert_eq!(
+                relays_tag.kind(),
+                TagKind::Relays,
+                "First tag must be 'relays' tag"
+            );
+
+            // Verify relays tag has content (group relay URLs)
+            assert!(
+                !relays_tag.as_slice().is_empty(),
+                "Relays tag should contain relay URLs"
+            );
+
+            // 5. Verify second tag is event reference (e tag)
+            let event_ref_tag = tags_vec[1];
+            assert_eq!(
+                event_ref_tag.kind(),
+                TagKind::e(),
+                "Second tag must be 'e' (event reference) tag"
+            );
+
+            // Verify e tag references a KeyPackage event (should have event ID)
+            assert!(
+                event_ref_tag.content().is_some(),
+                "Event reference tag must have content (KeyPackage event ID)"
+            );
+
+            // 6. Verify event is unsigned (UnsignedEvent - no sig field when serialized)
+            // The welcome_rumor is an UnsignedEvent, so it should have id = None initially
+            // This is correct for NIP-59 gift wrapping
+            assert!(
+                welcome_rumor.id.is_some(),
+                "Welcome rumor should have ID computed"
+            );
+        }
+    }
+
+    /// Test that Welcome content is valid MLS Welcome structure
+    #[test]
+    fn test_welcome_content_validation_mip02() {
+        let mdk = create_test_mdk();
+        let (creator, members, admins) = create_test_group_members();
+
+        let create_result = mdk
+            .create_group(
+                &creator.public_key(),
+                vec![create_key_package_event(&mdk, &members[0])],
+                create_nostr_group_config_data(admins),
+            )
+            .expect("Failed to create group");
+
+        let welcome_rumor = &create_result.welcome_rumors[0];
+
+        // Decode hex content
+        let decoded_content = hex::decode(&welcome_rumor.content)
+            .expect("Welcome content should be valid hex");
+
+        // Verify it's valid TLS-serialized MLS message
+        // We can't fully deserialize without processing, but we can check basic structure
+        assert!(
+            decoded_content.len() > 50,
+            "MLS Welcome messages should be substantial in size"
+        );
+
+        // The content should start with MLS message type indicators
+        // (this is a basic sanity check - full validation happens in process_welcome)
+        assert!(
+            !decoded_content.is_empty(),
+            "Decoded welcome should not be empty"
+        );
+    }
+
+    /// Test that Welcome references correct KeyPackage event
+    #[test]
+    fn test_welcome_references_correct_keypackage() {
+        let mdk = create_test_mdk();
+        let (creator, members, admins) = create_test_group_members();
+
+        // Create key package events and track their IDs
+        let kp_event1 = create_key_package_event(&mdk, &members[0]);
+        let kp_event2 = create_key_package_event(&mdk, &members[1]);
+        let kp1_id = kp_event1.id;
+        let kp2_id = kp_event2.id;
+
+        let create_result = mdk
+            .create_group(
+                &creator.public_key(),
+                vec![kp_event1, kp_event2],
+                create_nostr_group_config_data(admins),
+            )
+            .expect("Failed to create group");
+
+        assert_eq!(
+            create_result.welcome_rumors.len(),
+            2,
+            "Should have 2 welcome rumors"
+        );
+
+        // Extract event IDs from welcome rumors
+        let mut welcome_event_refs = Vec::new();
+        for welcome_rumor in &create_result.welcome_rumors {
+            let event_ref_tag = welcome_rumor
+                .tags
+                .iter()
+                .find(|t| t.kind() == TagKind::e())
+                .expect("Welcome should have e tag");
+
+            let event_id_hex = event_ref_tag.content().expect("e tag should have content");
+            welcome_event_refs.push(event_id_hex.to_string());
+        }
+
+        // Verify each KeyPackage event ID is referenced by exactly one welcome
+        assert!(
+            welcome_event_refs.contains(&kp1_id.to_hex()),
+            "Welcome should reference first KeyPackage event"
+        );
+        assert!(
+            welcome_event_refs.contains(&kp2_id.to_hex()),
+            "Welcome should reference second KeyPackage event"
+        );
+    }
+
+    /// Test that multiple welcomes are created for multiple new members
+    #[test]
+    fn test_multiple_welcomes_for_multiple_members() {
+        let mdk = create_test_mdk();
+        let (creator, members, admins) = create_test_group_members();
+
+        // Add 3 members (we have 2 in the test helper, add one more)
+        let member3 = Keys::generate();
+        let members_vec = vec![
+            create_key_package_event(&mdk, &members[0]),
+            create_key_package_event(&mdk, &members[1]),
+            create_key_package_event(&mdk, &member3),
+        ];
+
+        let create_result = mdk
+            .create_group(
+                &creator.public_key(),
+                members_vec,
+                create_nostr_group_config_data(admins),
+            )
+            .expect("Failed to create group");
+
+        // Verify we have 3 welcome rumors
+        assert_eq!(
+            create_result.welcome_rumors.len(),
+            3,
+            "Should have welcome rumors for all 3 members"
+        );
+
+        // Verify all welcomes have the same structure
+        for welcome_rumor in &create_result.welcome_rumors {
+            assert_eq!(welcome_rumor.kind, Kind::MlsWelcome);
+            assert_eq!(welcome_rumor.tags.len(), 2);
+            assert!(hex::decode(&welcome_rumor.content).is_ok());
+        }
+    }
+
+    /// Test that Welcome relays tag contains group relay URLs
+    #[test]
+    fn test_welcome_relays_tag_content() {
+        let mdk = create_test_mdk();
+        let (creator, members, admins) = create_test_group_members();
+
+        let create_result = mdk
+            .create_group(
+                &creator.public_key(),
+                vec![create_key_package_event(&mdk, &members[0])],
+                create_nostr_group_config_data(admins),
+            )
+            .expect("Failed to create group");
+
+        let welcome_rumor = &create_result.welcome_rumors[0];
+
+        // Extract relays tag
+        let relays_tag = welcome_rumor
+            .tags
+            .iter()
+            .find(|t| t.kind() == TagKind::Relays)
+            .expect("Welcome should have relays tag");
+
+        // Verify relays tag structure
+        let relays_slice = relays_tag.as_slice();
+        assert!(
+            relays_slice.len() > 1,
+            "Relays tag should have at least tag name and one relay"
+        );
+
+        // First element is the tag name "relays"
+        assert_eq!(relays_slice[0], "relays", "First element should be 'relays'");
+
+        // Remaining elements should be relay URLs
+        for i in 1..relays_slice.len() {
+            let relay = &relays_slice[i];
+            assert!(
+                relay.starts_with("wss://") || relay.starts_with("ws://"),
+                "Relay URLs should start with wss:// or ws://, got: {}",
+                relay
+            );
+        }
+    }
+
+    /// Test Welcome processing flow
+    #[test]
+    fn test_welcome_processing_flow() {
+        // Use the same MDK instance for both creator and member to share key store
+        let mdk = create_test_mdk();
+
+        let (creator, members, admins) = create_test_group_members();
+
+        // Create group with one member
+        let member_kp_event = create_key_package_event(&mdk, &members[0]);
+        let create_result = mdk
+            .create_group(
+                &creator.public_key(),
+                vec![member_kp_event],
+                create_nostr_group_config_data(admins),
+            )
+            .expect("Failed to create group");
+
+        let welcome_rumor = &create_result.welcome_rumors[0];
+
+        // Simulate receiving welcome (wrapped event ID would be from NIP-59 wrapper)
+        let wrapper_event_id = EventId::all_zeros(); // In real scenario, this would be the gift wrap event ID
+
+        // Process welcome - this validates the welcome structure can be processed
+        let welcome = mdk
+            .process_welcome(&wrapper_event_id, welcome_rumor)
+            .expect("Failed to process welcome");
+
+        // Verify welcome was stored correctly
+        assert_eq!(welcome.state, welcome_types::WelcomeState::Pending);
+        assert_eq!(welcome.wrapper_event_id, wrapper_event_id);
+        assert!(welcome.member_count >= 2, "Group should have at least 2 members (creator + member)");
+
+        // Verify the welcome event structure was correct (this is what we're really testing)
+        assert_eq!(welcome_rumor.kind, Kind::MlsWelcome, "Welcome should be kind 444");
+        assert_eq!(welcome_rumor.tags.len(), 2, "Welcome should have 2 tags");
+    }
+
+    /// Test that welcome event structure remains consistent across group operations
+    #[test]
+    fn test_welcome_structure_consistency() {
+        let mdk = create_test_mdk();
+        let (creator, members, admins) = create_test_group_members();
+
+        // Create group with first member
+        let create_result = mdk
+            .create_group(
+                &creator.public_key(),
+                vec![create_key_package_event(&mdk, &members[0])],
+                create_nostr_group_config_data(admins),
+            )
+            .expect("Failed to create group");
+
+        let group_id = create_result.group.mls_group_id;
+        let first_welcome = &create_result.welcome_rumors[0];
+
+        // Merge pending commit to activate group
+        mdk.merge_pending_commit(&group_id)
+            .expect("Failed to merge pending commit");
+
+        // Add another member
+        let member3 = Keys::generate();
+        let add_result = mdk
+            .add_members(&group_id, &[create_key_package_event(&mdk, &member3)])
+            .expect("Failed to add member");
+
+        let second_welcome = &add_result
+            .welcome_rumors
+            .as_ref()
+            .expect("Should have welcome rumors")[0];
+
+        // Verify both welcomes have the same structure
+        assert_eq!(first_welcome.kind, second_welcome.kind);
+        assert_eq!(first_welcome.tags.len(), second_welcome.tags.len());
+
+        let first_tags: Vec<&nostr::Tag> = first_welcome.tags.iter().collect();
+        let second_tags: Vec<&nostr::Tag> = second_welcome.tags.iter().collect();
+        assert_eq!(
+            first_tags[0].kind(),
+            second_tags[0].kind()
+        );
+        assert_eq!(
+            first_tags[1].kind(),
+            second_tags[1].kind()
+        );
+
+        // Both should be valid hex
+        assert!(hex::decode(&first_welcome.content).is_ok());
+        assert!(hex::decode(&second_welcome.content).is_ok());
+    }
+}

@@ -131,18 +131,17 @@ where
         ))
     }
 
-    /// Get the ciphersuite value
-    pub(crate) fn ciphersuite_value(&self) -> u16 {
-        self.ciphersuite.into()
+    /// Get the ciphersuite value formatted for Nostr tags (hex with 0x prefix)
+    pub(crate) fn ciphersuite_value(&self) -> String {
+        format!("0x{:04x}", u16::from(self.ciphersuite))
     }
 
-    /// Get the extensions value
-    pub(crate) fn extensions_value(&self) -> String {
+    /// Get the extensions value formatted for Nostr tags (array of hex values)
+    pub(crate) fn extensions_value(&self) -> Vec<String> {
         self.extensions
             .iter()
-            .map(|e| format!("{:?}", e))
-            .collect::<Vec<String>>()
-            .join(",")
+            .map(|e| format!("0x{:04x}", u16::from(*e)))
+            .collect()
     }
 
     /// Get the storage provider

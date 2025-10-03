@@ -16,6 +16,32 @@ use tls_codec::{
 use crate::constant::NOSTR_GROUP_DATA_EXTENSION_TYPE;
 use crate::error::Error;
 
+/// Legacy TLS-serializable representation of Nostr Group Data Extension (pre-version field).
+///
+/// This struct represents the format used before the version field was added to the spec.
+/// It's used for backward compatibility to migrate existing groups to the versioned format.
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    TlsSerialize,
+    TlsDeserialize,
+    TlsDeserializeBytes,
+    TlsSerializeBytes,
+    TlsSize,
+)]
+pub(crate) struct LegacyTlsNostrGroupDataExtension {
+    pub nostr_group_id: [u8; 32],
+    pub name: Vec<u8>,
+    pub description: Vec<u8>,
+    pub admin_pubkeys: Vec<Vec<u8>>,
+    pub relays: Vec<Vec<u8>>,
+    pub image_hash: Vec<u8>,
+    pub image_key: Vec<u8>,
+    pub image_nonce: Vec<u8>,
+}
+
 /// TLS-serializable representation of Nostr Group Data Extension.
 ///
 /// This struct is used exclusively for TLS codec serialization/deserialization
@@ -37,6 +63,7 @@ use crate::error::Error;
     TlsSize,
 )]
 pub(crate) struct TlsNostrGroupDataExtension {
+    pub version: u16,
     pub nostr_group_id: [u8; 32],
     pub name: Vec<u8>,
     pub description: Vec<u8>,
@@ -51,6 +78,8 @@ pub(crate) struct TlsNostrGroupDataExtension {
 /// description, ID, admin identities, image URL, and image encryption key.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NostrGroupDataExtension {
+    /// Extension format version (current: 1)
+    pub version: u16,
     /// Nostr Group ID
     pub nostr_group_id: [u8; 32],
     /// Group name
@@ -72,6 +101,9 @@ pub struct NostrGroupDataExtension {
 impl NostrGroupDataExtension {
     /// Nostr Group Data extension type
     pub const EXTENSION_TYPE: u16 = NOSTR_GROUP_DATA_EXTENSION_TYPE;
+
+    /// Current extension format version (MIP-01)
+    pub const CURRENT_VERSION: u16 = 1;
 
     /// Creates a new NostrGroupDataExtension with the given parameters.
     ///
@@ -108,6 +140,7 @@ impl NostrGroupDataExtension {
         rng.fill(&mut random_bytes);
 
         Self {
+            version: Self::CURRENT_VERSION,
             nostr_group_id: random_bytes,
             name: name.into(),
             description: description.into(),
@@ -119,7 +152,125 @@ impl NostrGroupDataExtension {
         }
     }
 
+    /// Migrate a legacy extension (without version field) to the current format
+    pub(crate) fn from_legacy_raw(legacy: LegacyTlsNostrGroupDataExtension) -> Result<Self, Error> {
+        tracing::info!(
+            target: "mdk_core::extension::types",
+            "Migrating legacy extension without version field to version 1"
+        );
+
+        let mut admins = BTreeSet::new();
+        for admin in legacy.admin_pubkeys {
+            let bytes = hex::decode(&admin)?;
+            let pk = PublicKey::from_slice(&bytes)?;
+            admins.insert(pk);
+        }
+
+        let mut relays = BTreeSet::new();
+        for relay in legacy.relays {
+            let url: &str = str::from_utf8(&relay)?;
+            let url = RelayUrl::parse(url)?;
+            relays.insert(url);
+        }
+
+        let image_hash = if legacy.image_hash.is_empty() {
+            None
+        } else {
+            Some(
+                legacy.image_hash
+                    .try_into()
+                    .map_err(|_| Error::InvalidImageHashLength)?,
+            )
+        };
+
+        let image_key = if legacy.image_key.is_empty() {
+            None
+        } else {
+            Some(
+                legacy.image_key
+                    .try_into()
+                    .map_err(|_| Error::InvalidImageKeyLength)?,
+            )
+        };
+
+        let image_nonce = if legacy.image_nonce.is_empty() {
+            None
+        } else {
+            Some(
+                legacy.image_nonce
+                    .try_into()
+                    .map_err(|_| Error::InvalidImageNonceLength)?,
+            )
+        };
+
+        Ok(Self {
+            version: Self::CURRENT_VERSION, // Migrate to version 1
+            nostr_group_id: legacy.nostr_group_id,
+            name: String::from_utf8(legacy.name)?,
+            description: String::from_utf8(legacy.description)?,
+            admins,
+            relays,
+            image_hash,
+            image_key,
+            image_nonce,
+        })
+    }
+
+    /// Deserialize extension bytes with automatic migration from legacy format.
+    ///
+    /// This private helper method attempts to deserialize raw bytes as a NostrGroupDataExtension,
+    /// first trying the current format (with version field), and falling back to the legacy format
+    /// (without version field) if needed.
+    ///
+    /// # Arguments
+    ///
+    /// * `bytes` - Raw TLS-serialized bytes of the extension
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(NostrGroupDataExtension)` - Successfully deserialized (and possibly migrated) extension
+    /// * `Err(Error)` - Failed to deserialize with both current and legacy formats
+    fn deserialize_with_migration(bytes: &[u8]) -> Result<Self, Error> {
+        // Try to deserialize with current format (with version field)
+        match TlsNostrGroupDataExtension::tls_deserialize_bytes(bytes) {
+            Ok((deserialized, _)) => Self::from_raw(deserialized),
+            Err(_) => {
+                // If that fails, try legacy format (without version field)
+                tracing::debug!(
+                    target: "mdk_core::extension::types",
+                    "Failed to deserialize with current format, attempting legacy format"
+                );
+                match LegacyTlsNostrGroupDataExtension::tls_deserialize_bytes(bytes) {
+                    Ok((legacy_deserialized, _)) => Self::from_legacy_raw(legacy_deserialized),
+                    Err(e) => {
+                        tracing::error!(
+                            target: "mdk_core::extension::types",
+                            "Failed to deserialize extension with both current and legacy formats: {:?}",
+                            e
+                        );
+                        Err(e.into())
+                    }
+                }
+            }
+        }
+    }
+
     pub(crate) fn from_raw(raw: TlsNostrGroupDataExtension) -> Result<Self, Error> {
+        // Validate version - currently we only support version 1
+        // Future versions should be handled with forward compatibility
+        if raw.version == 0 {
+            return Err(Error::InvalidExtensionVersion(raw.version));
+        }
+
+        if raw.version > Self::CURRENT_VERSION {
+            tracing::warn!(
+                target: "mdk_core::extension::types",
+                "Received extension with unknown future version {}, attempting forward compatibility",
+                raw.version
+            );
+            // Continue processing with forward compatibility - unknown fields will be ignored
+        }
+
         let mut admins = BTreeSet::new();
         for admin in raw.admin_pubkeys {
             let bytes = hex::decode(&admin)?;
@@ -165,6 +316,7 @@ impl NostrGroupDataExtension {
         };
 
         Ok(Self {
+            version: raw.version,
             nostr_group_id: raw.nostr_group_id,
             name: String::from_utf8(raw.name)?,
             description: String::from_utf8(raw.description)?,
@@ -186,6 +338,12 @@ impl NostrGroupDataExtension {
     ///
     /// * `Ok(NostrGroupDataExtension)` - Successfully extracted and deserialized extension
     /// * `Err(Error)` - Failed to find or deserialize the extension
+    ///
+    /// # Migration Support
+    ///
+    /// This method supports backward compatibility with legacy extensions (pre-version field).
+    /// If deserialization fails with the current format, it attempts to deserialize using
+    /// the legacy format and migrates the extension to version 1.
     pub fn from_group_context(group_context: &GroupContext) -> Result<Self, Error> {
         let group_data_extension = match group_context.extensions().iter().find(|ext| {
             ext.extension_type() == ExtensionType::Unknown(NOSTR_GROUP_DATA_EXTENSION_TYPE)
@@ -195,10 +353,7 @@ impl NostrGroupDataExtension {
             None => return Err(Error::NostrGroupDataExtensionNotFound),
         };
 
-        let (deserialized, _) =
-            TlsNostrGroupDataExtension::tls_deserialize_bytes(&group_data_extension.0)?;
-
-        Self::from_raw(deserialized)
+        Self::deserialize_with_migration(&group_data_extension.0)
     }
 
     /// Attempts to extract and deserialize a NostrGroupDataExtension from an MlsGroup.
@@ -206,6 +361,12 @@ impl NostrGroupDataExtension {
     /// # Arguments
     ///
     /// * `group` - Reference to the MlsGroup containing the extension
+    ///
+    /// # Migration Support
+    ///
+    /// This method supports backward compatibility with legacy extensions (pre-version field).
+    /// If deserialization fails with the current format, it attempts to deserialize using
+    /// the legacy format and migrates the extension to version 1.
     pub fn from_group(group: &MlsGroup) -> Result<Self, Error> {
         let group_data_extension = match group.extensions().iter().find(|ext| {
             ext.extension_type() == ExtensionType::Unknown(NOSTR_GROUP_DATA_EXTENSION_TYPE)
@@ -215,10 +376,7 @@ impl NostrGroupDataExtension {
             None => return Err(Error::NostrGroupDataExtensionNotFound),
         };
 
-        let (deserialized, _) =
-            TlsNostrGroupDataExtension::tls_deserialize_bytes(&group_data_extension.0)?;
-
-        Self::from_raw(deserialized)
+        Self::deserialize_with_migration(&group_data_extension.0)
     }
 
     /// Returns the group ID as a hex-encoded string.
@@ -364,6 +522,7 @@ impl NostrGroupDataExtension {
 
     pub(crate) fn as_raw(&self) -> TlsNostrGroupDataExtension {
         TlsNostrGroupDataExtension {
+            version: self.version,
             nostr_group_id: self.nostr_group_id,
             name: self.name.as_bytes().to_vec(),
             description: self.description.as_bytes().to_vec(),
@@ -626,5 +785,273 @@ mod tests {
         assert_eq!(roundtrip_without.image_hash, None);
         assert_eq!(roundtrip_without.image_key, None);
         assert_eq!(roundtrip_without.image_nonce, None);
+    }
+
+    /// Test that version field is properly serialized at the beginning of the structure (MIP-01)
+    #[test]
+    fn test_version_field_serialization() {
+        use tls_codec::Serialize as TlsSerialize;
+
+        let extension = NostrGroupDataExtension::new(
+            "Test Group",
+            "Test Description",
+            [PublicKey::parse(ADMIN_1).unwrap()],
+            [RelayUrl::parse(RELAY_1).unwrap()],
+            None,
+            None,
+            None,
+        );
+
+        // Verify version is set to current version
+        assert_eq!(
+            extension.version,
+            NostrGroupDataExtension::CURRENT_VERSION,
+            "Version should be set to CURRENT_VERSION (1)"
+        );
+
+        // Serialize and verify version field is at the beginning
+        let raw = extension.as_raw();
+        let serialized = raw.tls_serialize_detached().unwrap();
+
+        // The first 2 bytes should be the version field (u16 in big-endian)
+        assert!(
+            serialized.len() >= 2,
+            "Serialized data should be at least 2 bytes"
+        );
+        let version_bytes = &serialized[0..2];
+        let version_from_bytes = u16::from_be_bytes([version_bytes[0], version_bytes[1]]);
+
+        assert_eq!(
+            version_from_bytes,
+            NostrGroupDataExtension::CURRENT_VERSION,
+            "First 2 bytes of serialized data should contain version field"
+        );
+    }
+
+    /// Test version validation and forward compatibility (MIP-01)
+    #[test]
+    fn test_version_validation() {
+        let pk1 = PublicKey::parse(ADMIN_1).unwrap();
+        let relay1 = RelayUrl::parse(RELAY_1).unwrap();
+
+        // Test version 0 is rejected
+        let raw_v0 = TlsNostrGroupDataExtension {
+            version: 0,
+            nostr_group_id: [0u8; 32],
+            name: b"Test".to_vec(),
+            description: b"Desc".to_vec(),
+            admin_pubkeys: vec![pk1.to_hex().into_bytes()],
+            relays: vec![relay1.to_string().into_bytes()],
+            image_hash: Vec::new(),
+            image_key: Vec::new(),
+            image_nonce: Vec::new(),
+        };
+
+        let result = NostrGroupDataExtension::from_raw(raw_v0);
+        assert!(
+            matches!(result, Err(Error::InvalidExtensionVersion(0))),
+            "Version 0 should be rejected"
+        );
+
+        // Test version 1 is accepted
+        let raw_v1 = TlsNostrGroupDataExtension {
+            version: 1,
+            nostr_group_id: [0u8; 32],
+            name: b"Test".to_vec(),
+            description: b"Desc".to_vec(),
+            admin_pubkeys: vec![pk1.to_hex().into_bytes()],
+            relays: vec![relay1.to_string().into_bytes()],
+            image_hash: Vec::new(),
+            image_key: Vec::new(),
+            image_nonce: Vec::new(),
+        };
+
+        let result = NostrGroupDataExtension::from_raw(raw_v1);
+        assert!(result.is_ok(), "Version 1 should be accepted");
+        assert_eq!(result.unwrap().version, 1);
+
+        // Test future version is accepted with warning (forward compatibility)
+        let raw_v99 = TlsNostrGroupDataExtension {
+            version: 99,
+            nostr_group_id: [0u8; 32],
+            name: b"Test".to_vec(),
+            description: b"Desc".to_vec(),
+            admin_pubkeys: vec![pk1.to_hex().into_bytes()],
+            relays: vec![relay1.to_string().into_bytes()],
+            image_hash: Vec::new(),
+            image_key: Vec::new(),
+            image_nonce: Vec::new(),
+        };
+
+        let result = NostrGroupDataExtension::from_raw(raw_v99);
+        assert!(
+            result.is_ok(),
+            "Future version should be accepted for forward compatibility"
+        );
+        assert_eq!(
+            result.unwrap().version,
+            99,
+            "Future version number should be preserved"
+        );
+    }
+
+    /// Test that version field is preserved through serialization round-trip
+    #[test]
+    fn test_version_field_roundtrip() {
+        let extension = create_test_extension();
+
+        // Verify initial version
+        assert_eq!(extension.version, NostrGroupDataExtension::CURRENT_VERSION);
+
+        // Serialize and deserialize
+        let raw = extension.as_raw();
+        let reconstructed = NostrGroupDataExtension::from_raw(raw).unwrap();
+
+        // Verify version is preserved
+        assert_eq!(
+            reconstructed.version, extension.version,
+            "Version should be preserved through serialization round-trip"
+        );
+    }
+
+    /// Test migration from legacy extension format (without version field) to version 1
+    #[test]
+    fn test_legacy_extension_migration() {
+        use tls_codec::Serialize as TlsSerialize;
+
+        // Create a legacy extension (without version field)
+        let admin1 = PublicKey::parse(ADMIN_1).unwrap();
+        let legacy_extension = LegacyTlsNostrGroupDataExtension {
+            nostr_group_id: [42u8; 32],
+            name: "Legacy Group".as_bytes().to_vec(),
+            description: "Created before version field was added".as_bytes().to_vec(),
+            admin_pubkeys: vec![hex::encode(admin1.to_bytes()).as_bytes().to_vec()],
+            relays: vec![RELAY_1.as_bytes().to_vec()],
+            image_hash: vec![],
+            image_key: vec![],
+            image_nonce: vec![],
+        };
+
+        // Serialize it as a legacy extension
+        let legacy_serialized = legacy_extension.tls_serialize_detached().unwrap();
+
+        // Verify it doesn't start with a version field (first bytes should be part of nostr_group_id)
+        assert_eq!(
+            legacy_serialized[0], 42,
+            "Legacy format should start with nostr_group_id"
+        );
+
+        // Now migrate by deserializing
+        let (deserialized_legacy, _) =
+            LegacyTlsNostrGroupDataExtension::tls_deserialize_bytes(&legacy_serialized).unwrap();
+        let migrated_extension =
+            NostrGroupDataExtension::from_legacy_raw(deserialized_legacy).unwrap();
+
+        // Verify migration preserved all data and added version
+        assert_eq!(
+            migrated_extension.version,
+            1,
+            "Migrated extension should have version 1"
+        );
+        assert_eq!(
+            migrated_extension.nostr_group_id, [42u8; 32],
+            "Group ID should be preserved"
+        );
+        assert_eq!(
+            migrated_extension.name,
+            "Legacy Group",
+            "Name should be preserved"
+        );
+        assert_eq!(
+            migrated_extension.description,
+            "Created before version field was added",
+            "Description should be preserved"
+        );
+        assert_eq!(
+            migrated_extension.admins.len(),
+            1,
+            "Admin count should be preserved"
+        );
+        assert_eq!(
+            migrated_extension.relays.len(),
+            1,
+            "Relay count should be preserved"
+        );
+
+        // Verify that the migrated extension can be serialized with the version field
+        let migrated_raw = migrated_extension.as_raw();
+        let migrated_serialized = migrated_raw.tls_serialize_detached().unwrap();
+
+        // Should now start with version field
+        assert_eq!(
+            migrated_serialized[0], 0x00,
+            "Migrated format should start with version MSB"
+        );
+        assert_eq!(
+            migrated_serialized[1], 0x01,
+            "Migrated format should start with version LSB"
+        );
+    }
+
+    /// Test that deserialization gracefully handles both legacy and current formats
+    #[test]
+    fn test_mixed_format_deserialization() {
+        use tls_codec::Serialize as TlsSerialize;
+
+        // Create a legacy extension
+        let admin1 = PublicKey::parse(ADMIN_1).unwrap();
+        let legacy_extension = LegacyTlsNostrGroupDataExtension {
+            nostr_group_id: [99u8; 32],
+            name: "Mixed Format Test".as_bytes().to_vec(),
+            description: "Testing backward compatibility".as_bytes().to_vec(),
+            admin_pubkeys: vec![hex::encode(admin1.to_bytes()).as_bytes().to_vec()],
+            relays: vec![RELAY_1.as_bytes().to_vec()],
+            image_hash: vec![],
+            image_key: vec![],
+            image_nonce: vec![],
+        };
+        let legacy_bytes = legacy_extension.tls_serialize_detached().unwrap();
+
+        // Create a current (versioned) extension
+        let current_extension = NostrGroupDataExtension::new(
+            "Mixed Format Test",
+            "Testing backward compatibility",
+            [PublicKey::parse(ADMIN_1).unwrap()],
+            [RelayUrl::parse(RELAY_1).unwrap()],
+            None,
+            None,
+            None,
+        );
+        let current_bytes = current_extension.as_raw().tls_serialize_detached().unwrap();
+
+        // Both should be deserializable via the migration-aware methods
+        // (We can't test from_group_context directly here without setting up a full MLS group,
+        // but we can test the underlying logic)
+
+        // Test legacy deserialization
+        let (legacy_deser, _) =
+            LegacyTlsNostrGroupDataExtension::tls_deserialize_bytes(&legacy_bytes).unwrap();
+        let migrated = NostrGroupDataExtension::from_legacy_raw(legacy_deser).unwrap();
+        assert_eq!(migrated.version, 1);
+        assert_eq!(migrated.name, "Mixed Format Test");
+
+        // Test current deserialization
+        let (current_deser, _) =
+            TlsNostrGroupDataExtension::tls_deserialize_bytes(&current_bytes).unwrap();
+        let current_parsed = NostrGroupDataExtension::from_raw(current_deser).unwrap();
+        assert_eq!(current_parsed.version, 1);
+        assert_eq!(current_parsed.name, "Mixed Format Test");
+
+        // Verify that trying to deserialize legacy bytes with the current format fails
+        // (this is expected and why we need the fallback logic)
+        let result = TlsNostrGroupDataExtension::tls_deserialize_bytes(&legacy_bytes);
+        assert!(
+            result.is_err() || {
+                // If it doesn't error, it should have misread the data
+                let (deser, _) = result.unwrap();
+                deser.version != 1 || deser.nostr_group_id != [99u8; 32]
+            },
+            "Legacy format should not deserialize correctly with current format"
+        );
     }
 }

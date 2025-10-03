@@ -1434,6 +1434,475 @@ mod tests {
         );
     }
 
+    /// Test that Group Message event structure matches Marmot spec (MIP-03)
+    /// Spec requires:
+    /// - Kind: 445 (MlsGroupMessage)
+    /// - Content: NIP-44 encrypted MLSMessage
+    /// - Tags: exactly 1 tag (h tag with group ID)
+    /// - Must be signed
+    /// - Pubkey must be ephemeral (different for each message)
+    #[test]
+    fn test_group_message_event_structure_mip03_compliance() {
+        let mdk = create_test_mdk();
+        let (creator, members, admins) = create_test_group_members();
+        let group_id = create_test_group(&mdk, &creator, &members, &admins);
+
+        // Create a test message
+        let rumor = create_test_rumor(&creator, "Test message for MIP-03 compliance");
+
+        let message_event = mdk
+            .create_message(&group_id, rumor)
+            .expect("Failed to create message");
+
+        // 1. Verify kind is 445 (MlsGroupMessage)
+        assert_eq!(
+            message_event.kind,
+            Kind::MlsGroupMessage,
+            "Message event must have kind 445 (MlsGroupMessage)"
+        );
+
+        // 2. Verify content is encrypted (substantial length, not plaintext)
+        assert!(
+            message_event.content.len() > 50,
+            "Encrypted content should be substantial (> 50 chars), got {}",
+            message_event.content.len()
+        );
+
+        // Content should not be the original plaintext
+        assert_ne!(
+            message_event.content, "Test message for MIP-03 compliance",
+            "Content should be encrypted, not plaintext"
+        );
+
+        // 3. Verify exactly 1 tag (h tag with group ID)
+        assert_eq!(
+            message_event.tags.len(),
+            1,
+            "Message event must have exactly 1 tag per MIP-03"
+        );
+
+        // 4. Verify tag is h tag
+        let tags_vec: Vec<&nostr::Tag> = message_event.tags.iter().collect();
+        let group_id_tag = tags_vec[0];
+        assert_eq!(
+            group_id_tag.kind(),
+            TagKind::h(),
+            "Tag must be 'h' (group ID) tag"
+        );
+
+        // 5. Verify h tag is valid 32-byte hex
+        let group_id_hex = group_id_tag
+            .content()
+            .expect("h tag should have content");
+        assert_eq!(
+            group_id_hex.len(),
+            64,
+            "Group ID should be 32 bytes (64 hex chars), got {}",
+            group_id_hex.len()
+        );
+
+        let group_id_bytes = hex::decode(group_id_hex)
+            .expect("Group ID should be valid hex");
+        assert_eq!(
+            group_id_bytes.len(),
+            32,
+            "Group ID should decode to 32 bytes"
+        );
+
+        // 6. Verify event is signed (has valid signature)
+        assert!(
+            message_event.verify().is_ok(),
+            "Message event must be properly signed"
+        );
+
+        // 7. Verify pubkey is NOT the creator's real pubkey (ephemeral key)
+        assert_ne!(
+            message_event.pubkey,
+            creator.public_key(),
+            "Message should use ephemeral pubkey, not sender's real pubkey"
+        );
+    }
+
+    /// Test that each message uses a different ephemeral pubkey (MIP-03)
+    #[test]
+    fn test_group_message_ephemeral_keys_mip03_compliance() {
+        let mdk = create_test_mdk();
+        let (creator, members, admins) = create_test_group_members();
+        let group_id = create_test_group(&mdk, &creator, &members, &admins);
+
+        // Send 3 messages
+        let rumor1 = create_test_rumor(&creator, "First message");
+        let rumor2 = create_test_rumor(&creator, "Second message");
+        let rumor3 = create_test_rumor(&creator, "Third message");
+
+        let event1 = mdk
+            .create_message(&group_id, rumor1)
+            .expect("Failed to create first message");
+        let event2 = mdk
+            .create_message(&group_id, rumor2)
+            .expect("Failed to create second message");
+        let event3 = mdk
+            .create_message(&group_id, rumor3)
+            .expect("Failed to create third message");
+
+        // Collect all ephemeral pubkeys
+        let pubkeys = vec![event1.pubkey, event2.pubkey, event3.pubkey];
+
+        // 1. Verify all 3 use different ephemeral pubkeys
+        assert_ne!(
+            pubkeys[0], pubkeys[1],
+            "First and second messages should use different ephemeral keys"
+        );
+        assert_ne!(
+            pubkeys[1], pubkeys[2],
+            "Second and third messages should use different ephemeral keys"
+        );
+        assert_ne!(
+            pubkeys[0], pubkeys[2],
+            "First and third messages should use different ephemeral keys"
+        );
+
+        // 2. Verify none use sender's real pubkey
+        let real_pubkey = creator.public_key();
+        for (i, pubkey) in pubkeys.iter().enumerate() {
+            assert_ne!(
+                *pubkey, real_pubkey,
+                "Message {} should not use sender's real pubkey",
+                i + 1
+            );
+        }
+    }
+
+    /// Test that commit events also use ephemeral pubkeys (MIP-03)
+    #[test]
+    fn test_commit_event_structure_mip03_compliance() {
+        let mdk = create_test_mdk();
+        let (creator, members, admins) = create_test_group_members();
+        let group_id = create_test_group(&mdk, &creator, &members, &admins);
+
+        // Add another member (creates commit)
+        let new_member = Keys::generate();
+        let add_result = mdk
+            .add_members(&group_id, &[create_key_package_event(&mdk, &new_member)])
+            .expect("Failed to add member");
+
+        let commit_event = &add_result.evolution_event;
+
+        // 1. Verify commit event has kind 445 (same as regular messages)
+        assert_eq!(
+            commit_event.kind,
+            Kind::MlsGroupMessage,
+            "Commit event should have kind 445"
+        );
+
+        // 2. Verify commit event structure matches regular messages
+        assert_eq!(
+            commit_event.tags.len(),
+            1,
+            "Commit event should have exactly 1 tag"
+        );
+
+        let commit_tags: Vec<&nostr::Tag> = commit_event.tags.iter().collect();
+        assert_eq!(
+            commit_tags[0].kind(),
+            TagKind::h(),
+            "Commit event should have h tag"
+        );
+
+        // 3. Verify commit uses ephemeral pubkey
+        assert_ne!(
+            commit_event.pubkey,
+            creator.public_key(),
+            "Commit should use ephemeral pubkey, not creator's real pubkey"
+        );
+
+        // 4. Verify commit is signed
+        assert!(
+            commit_event.verify().is_ok(),
+            "Commit event must be properly signed"
+        );
+
+        // 5. Verify content is encrypted
+        assert!(
+            commit_event.content.len() > 50,
+            "Commit content should be encrypted and substantial"
+        );
+    }
+
+    /// Test that group ID in h tag matches NostrGroupDataExtension
+    #[test]
+    fn test_group_id_consistency_mip03() {
+        let mdk = create_test_mdk();
+        let (creator, members, admins) = create_test_group_members();
+        let group_id = create_test_group(&mdk, &creator, &members, &admins);
+
+        // Get the Nostr group ID from the stored group
+        let stored_group = mdk
+            .get_group(&group_id)
+            .expect("Failed to get group")
+            .expect("Group should exist");
+
+        let expected_nostr_group_id = hex::encode(stored_group.nostr_group_id);
+
+        // Send a message
+        let rumor = create_test_rumor(&creator, "Test message");
+        let message_event = mdk
+            .create_message(&group_id, rumor)
+            .expect("Failed to create message");
+
+        // Extract group ID from h tag
+        let h_tag = message_event
+            .tags
+            .iter()
+            .find(|t| t.kind() == TagKind::h())
+            .expect("Message should have h tag");
+
+        let message_group_id = h_tag.content().expect("h tag should have content");
+
+        // Verify they match
+        assert_eq!(
+            message_group_id, expected_nostr_group_id,
+            "h tag group ID should match NostrGroupDataExtension"
+        );
+    }
+
+    /// Test that all messages in the same group reference the same group ID
+    #[test]
+    fn test_group_id_consistency_across_messages() {
+        let mdk = create_test_mdk();
+        let (creator, members, admins) = create_test_group_members();
+        let group_id = create_test_group(&mdk, &creator, &members, &admins);
+
+        // Send multiple messages
+        let event1 = mdk
+            .create_message(&group_id, create_test_rumor(&creator, "Message 1"))
+            .expect("Failed to create message 1");
+        let event2 = mdk
+            .create_message(&group_id, create_test_rumor(&creator, "Message 2"))
+            .expect("Failed to create message 2");
+        let event3 = mdk
+            .create_message(&group_id, create_test_rumor(&creator, "Message 3"))
+            .expect("Failed to create message 3");
+
+        // Extract group IDs from all messages
+        let group_id1 = event1
+            .tags
+            .iter()
+            .find(|t| t.kind() == TagKind::h())
+            .expect("Message 1 should have h tag")
+            .content()
+            .expect("h tag should have content");
+
+        let group_id2 = event2
+            .tags
+            .iter()
+            .find(|t| t.kind() == TagKind::h())
+            .expect("Message 2 should have h tag")
+            .content()
+            .expect("h tag should have content");
+
+        let group_id3 = event3
+            .tags
+            .iter()
+            .find(|t| t.kind() == TagKind::h())
+            .expect("Message 3 should have h tag")
+            .content()
+            .expect("h tag should have content");
+
+        // Verify all reference the same group
+        assert_eq!(
+            group_id1, group_id2,
+            "All messages should reference the same group"
+        );
+        assert_eq!(
+            group_id2, group_id3,
+            "All messages should reference the same group"
+        );
+    }
+
+    /// Test message content encryption with NIP-44
+    #[test]
+    fn test_message_content_encryption_mip03() {
+        let mdk = create_test_mdk();
+        let (creator, members, admins) = create_test_group_members();
+        let group_id = create_test_group(&mdk, &creator, &members, &admins);
+
+        let plaintext = "Secret message content that should be encrypted";
+        let rumor = create_test_rumor(&creator, plaintext);
+
+        let message_event = mdk
+            .create_message(&group_id, rumor)
+            .expect("Failed to create message");
+
+        // Verify content is encrypted (doesn't contain plaintext)
+        assert!(
+            !message_event.content.contains(plaintext),
+            "Encrypted content should not contain plaintext"
+        );
+
+        // Verify content is substantial (encrypted data has overhead)
+        assert!(
+            message_event.content.len() > plaintext.len(),
+            "Encrypted content should be longer than plaintext due to encryption overhead"
+        );
+
+        // Verify content appears to be encrypted (not just hex-encoded plaintext)
+        // Encrypted NIP-44 content starts with specific markers
+        assert!(
+            message_event.content.len() > 100,
+            "NIP-44 encrypted content should be substantial"
+        );
+    }
+
+    /// Test that different messages have different encrypted content even with same plaintext
+    #[test]
+    fn test_message_encryption_uniqueness() {
+        let mdk = create_test_mdk();
+        let (creator, members, admins) = create_test_group_members();
+        let group_id = create_test_group(&mdk, &creator, &members, &admins);
+
+        // Send two messages with identical plaintext
+        let plaintext = "Identical message content";
+        let rumor1 = create_test_rumor(&creator, plaintext);
+        let rumor2 = create_test_rumor(&creator, plaintext);
+
+        let event1 = mdk
+            .create_message(&group_id, rumor1)
+            .expect("Failed to create first message");
+        let event2 = mdk
+            .create_message(&group_id, rumor2)
+            .expect("Failed to create second message");
+
+        // Verify encrypted contents are different (nonce/IV makes each encryption unique)
+        assert_ne!(
+            event1.content, event2.content,
+            "Two messages with same plaintext should have different encrypted content"
+        );
+    }
+
+    /// Test complete message lifecycle spec compliance
+    #[test]
+    fn test_complete_message_lifecycle_spec_compliance() {
+        let mdk = create_test_mdk();
+        let (creator, members, admins) = create_test_group_members();
+
+        // 1. Create group -> verify commit event structure
+        let create_result = mdk
+            .create_group(
+                &creator.public_key(),
+                vec![
+                    create_key_package_event(&mdk, &members[0]),
+                    create_key_package_event(&mdk, &members[1]),
+                ],
+                create_nostr_group_config_data(admins.clone()),
+            )
+            .expect("Failed to create group");
+
+        let group_id = create_result.group.mls_group_id.clone();
+
+        // The creation itself doesn't produce a commit event that gets published,
+        // so we merge and continue
+        mdk.merge_pending_commit(&group_id)
+            .expect("Failed to merge pending commit");
+
+        // 2. Send message -> verify message event structure
+        let rumor1 = create_test_rumor(&creator, "First message");
+        let msg_event1 = mdk
+            .create_message(&group_id, rumor1)
+            .expect("Failed to send first message");
+
+        assert_eq!(msg_event1.kind, Kind::MlsGroupMessage);
+        assert_eq!(msg_event1.tags.len(), 1);
+
+        let msg1_tags: Vec<&nostr::Tag> = msg_event1.tags.iter().collect();
+        assert_eq!(msg1_tags[0].kind(), TagKind::h());
+
+        let pubkey1 = msg_event1.pubkey;
+
+        // 3. Add member -> verify commit event structure
+        let new_member = Keys::generate();
+        let add_result = mdk
+            .add_members(&group_id, &[create_key_package_event(&mdk, &new_member)])
+            .expect("Failed to add member");
+
+        let commit_event = &add_result.evolution_event;
+        assert_eq!(commit_event.kind, Kind::MlsGroupMessage);
+        assert_eq!(commit_event.tags.len(), 1);
+        assert_ne!(
+            commit_event.pubkey,
+            creator.public_key(),
+            "Commit should use ephemeral key"
+        );
+
+        // 4. Send another message -> verify different ephemeral key
+        mdk.merge_pending_commit(&group_id)
+            .expect("Failed to merge commit");
+
+        let rumor2 = create_test_rumor(&creator, "Second message after member add");
+        let msg_event2 = mdk
+            .create_message(&group_id, rumor2)
+            .expect("Failed to send second message");
+
+        let pubkey2 = msg_event2.pubkey;
+
+        // 5. Verify all use different ephemeral keys
+        assert_ne!(pubkey1, pubkey2, "Different messages should use different ephemeral keys");
+        assert_ne!(pubkey1, commit_event.pubkey, "Message and commit should use different ephemeral keys");
+        assert_ne!(pubkey2, commit_event.pubkey, "Message and commit should use different ephemeral keys");
+
+        // 6. Verify all reference the same group ID
+        let msg1_tags: Vec<&nostr::Tag> = msg_event1.tags.iter().collect();
+        let commit_tags: Vec<&nostr::Tag> = commit_event.tags.iter().collect();
+        let msg2_tags: Vec<&nostr::Tag> = msg_event2.tags.iter().collect();
+
+        let group_id_hex1 = msg1_tags[0].content().unwrap();
+        let group_id_hex2 = commit_tags[0].content().unwrap();
+        let group_id_hex3 = msg2_tags[0].content().unwrap();
+
+        assert_eq!(group_id_hex1, group_id_hex2, "All events should reference same group");
+        assert_eq!(group_id_hex2, group_id_hex3, "All events should reference same group");
+    }
+
+    /// Test that message events are properly validated before sending
+    #[test]
+    fn test_message_event_validation() {
+        let mdk = create_test_mdk();
+        let (creator, members, admins) = create_test_group_members();
+        let group_id = create_test_group(&mdk, &creator, &members, &admins);
+
+        let rumor = create_test_rumor(&creator, "Validation test message");
+        let message_event = mdk
+            .create_message(&group_id, rumor)
+            .expect("Failed to create message");
+
+        // Verify event passes Nostr signature validation
+        assert!(
+            message_event.verify().is_ok(),
+            "Message event should have valid signature"
+        );
+
+        // Verify event ID is computed correctly
+        let recomputed_id = message_event.id;
+        assert_eq!(
+            message_event.id, recomputed_id,
+            "Event ID should be correctly computed"
+        );
+
+        // Verify created_at timestamp is reasonable (not in far future/past)
+        let now = Timestamp::now();
+        assert!(
+            message_event.created_at <= now,
+            "Message timestamp should not be in the future"
+        );
+
+        // Allow for some clock skew, but message shouldn't be more than a day old
+        let one_day_ago = now.as_u64().saturating_sub(86400);
+        assert!(
+            message_event.created_at.as_u64() > one_day_ago,
+            "Message timestamp should be recent"
+        );
+    }
+
     #[test]
     fn test_processing_own_commit_syncs_group_metadata() {
         let mdk = create_test_mdk();

@@ -31,7 +31,26 @@
 
 ### Added
 
+- **Extension Versioning (MIP-01)**: Added version field to `NostrGroupDataExtension`
+  - New `version` field (current version: 1) for forward/backward compatibility
+  - Constant `NostrGroupDataExtension::CURRENT_VERSION` for version management
+  - Automatic migration from legacy format (without version field) to version 1
+  - Forward compatibility support for future versions with warnings
+  - New `LegacyTlsNostrGroupDataExtension` struct for backward compatibility
+  - Comprehensive version field tests including roundtrip, validation, and migration scenarios
+- **Comprehensive Event Structure Testing**: Added 17 new compliance tests for MIP-00, MIP-02, and MIP-03
+  - 7 tests for Welcome events (MIP-02): structure validation, content validation, KeyPackage references, relay tags, processing flow, and consistency tests
+  - 10 tests for Group Message events (MIP-03): structure validation, ephemeral key rotation, commit events, group ID consistency, NIP-44 encryption validation, and complete lifecycle integration tests
+  - Tests validate critical security properties (ephemeral keys per message), interoperability (event structure compliance), and prevent regressions
+- New error variant `ExtensionFormatError` for extension formatting issues
+- New error variant `InvalidExtensionVersion` for unsupported extension versions
+
 ### Fixed
+
+- **MIP-00 Compliance**: Fixed key package tag format to match specification
+  - `ciphersuite` tag now uses single hex value format: `["ciphersuite", "0x0001"]` instead of string format
+  - `mls_extensions` tag now uses multiple hex values: `["mls_extensions", "0x0003", "0x000a", "0x0002", "0xf2ee"]` instead of single comma-separated string
+  - Ensures interoperability with other Marmot protocol implementations
 
 ### Removed
 

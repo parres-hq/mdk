@@ -178,6 +178,9 @@ pub enum Error {
     /// Invalid image nonce length
     #[error("invalid image nonce length")]
     InvalidImageNonceLength,
+    /// Invalid extension version
+    #[error("invalid extension version: {0}")]
+    InvalidExtensionVersion(u16),
 }
 
 impl From<FromUtf8Error> for Error {
