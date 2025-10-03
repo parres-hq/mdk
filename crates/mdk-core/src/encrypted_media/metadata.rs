@@ -17,6 +17,10 @@ use crate::encrypted_media::validation::validate_image_dimensions;
 /// Returns a tuple of (processed_data, metadata) where processed_data is either:
 /// - The original data if sanitize_exif is false
 /// - The sanitized data with EXIF stripped if sanitize_exif is true and it's an image
+///
+/// SECURITY NOTE: For images with sanitize_exif=true, this function sanitizes FIRST
+/// before extracting metadata. This ensures that any malicious metadata or exploits
+/// in the original image cannot affect the metadata extraction process.
 pub fn extract_and_process_metadata(
     data: &[u8],
     mime_type: &str,
@@ -33,13 +37,15 @@ pub fn extract_and_process_metadata(
 
     // Process image metadata if it's an image
     if mime_type.starts_with("image/") {
-        metadata = process_image_metadata(data, metadata, options)?;
-
-        // Strip EXIF from the image if sanitize_exif is true
+        // SECURITY: Sanitize first if requested, then extract metadata from clean image
+        // This prevents malicious metadata from being processed during extraction
         if options.sanitize_exif {
-            processed_data = strip_exif_from_image(data, mime_type)?;
+            let (cleaned_data, decoded_img) = strip_exif_and_return_image(data, mime_type)?;
+            metadata = extract_metadata_from_decoded_image(&decoded_img, metadata, options)?;
+            processed_data = cleaned_data;
         } else {
-            // Keep original data with all EXIF intact
+            // If not sanitizing, process original data
+            metadata = extract_metadata_from_encoded_image(data, metadata, options)?;
             processed_data = data.to_vec();
         }
     } else {
@@ -51,8 +57,11 @@ pub fn extract_and_process_metadata(
     Ok((processed_data, metadata))
 }
 
-/// Process image-specific metadata
-pub fn process_image_metadata(
+/// Extract metadata from an encoded image (decodes the image data first)
+///
+/// This function is used when NOT sanitizing - it decodes the original image data
+/// and extracts dimensions and blurhash from it.
+pub fn extract_metadata_from_encoded_image(
     data: &[u8],
     mut metadata: MediaMetadata,
     options: &MediaProcessingOptions,
@@ -112,14 +121,48 @@ pub fn generate_blurhash(img: &image::DynamicImage) -> Option<String> {
     encode(4, 3, rgb_img.width(), rgb_img.height(), rgb_img.as_raw()).ok()
 }
 
-/// Strip ALL EXIF data from an image
+/// Extract metadata from an already-decoded image
+///
+/// This function extracts dimensions and blurhash from a decoded DynamicImage,
+/// avoiding the need to decode the image again.
+fn extract_metadata_from_decoded_image(
+    img: &image::DynamicImage,
+    mut metadata: MediaMetadata,
+    options: &MediaProcessingOptions,
+) -> Result<MediaMetadata, EncryptedMediaError> {
+    let width = img.width();
+    let height = img.height();
+
+    // Validate dimensions
+    validate_image_dimensions(width, height, options)?;
+
+    // Store dimensions if requested
+    if options.preserve_dimensions {
+        metadata.dimensions = Some((width, height));
+    }
+
+    // Generate blurhash if requested
+    if options.generate_blurhash {
+        metadata.blurhash = generate_blurhash(img);
+    }
+
+    Ok(metadata)
+}
+
+/// Strip ALL EXIF data from an image and return both the encoded data and decoded image
 ///
 /// This function re-encodes the image to remove all EXIF metadata for privacy.
-/// It decodes the image to raw pixels and re-encodes it in the same format.
-pub fn strip_exif_from_image(data: &[u8], mime_type: &str) -> Result<Vec<u8>, EncryptedMediaError> {
+/// It returns both the cleaned encoded bytes and the decoded image object to avoid
+/// needing to decode again for metadata extraction.
+///
+/// Returns: (cleaned_data, decoded_image)
+fn strip_exif_and_return_image(
+    data: &[u8],
+    mime_type: &str,
+) -> Result<(Vec<u8>, image::DynamicImage), EncryptedMediaError> {
     use image::{ImageEncoder, ImageReader};
 
-    // Decode the image
+    // Decode the image once
     let img_reader = ImageReader::new(Cursor::new(data))
         .with_guessed_format()
         .map_err(|e| EncryptedMediaError::MetadataExtractionFailed {
@@ -200,7 +243,7 @@ pub fn strip_exif_from_image(data: &[u8], mime_type: &str) -> Result<Vec<u8>, En
         }
     }
 
-    Ok(output.into_inner())
+    Ok((output.into_inner(), img))
 }
 
 #[cfg(test)]
@@ -208,7 +251,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_process_image_metadata_dimension_validation() {
+    fn test_extract_metadata_from_encoded_image_dimension_validation() {
         use crate::encrypted_media::types::MediaProcessingOptions;
 
         // Create a simple 1x1 PNG image for testing
@@ -247,7 +290,7 @@ mod tests {
             max_file_size: None,
         };
 
-        let result = process_image_metadata(&png_data, metadata.clone(), &options);
+        let result = extract_metadata_from_encoded_image(&png_data, metadata.clone(), &options);
         assert!(result.is_ok());
         let processed = result.unwrap();
         assert_eq!(processed.dimensions, Some((1, 1)));
@@ -262,7 +305,7 @@ mod tests {
             max_file_size: None,
         };
 
-        let result = process_image_metadata(&png_data, metadata, &strict_options);
+        let result = extract_metadata_from_encoded_image(&png_data, metadata, &strict_options);
         assert!(result.is_err());
         if let Err(EncryptedMediaError::DimensionsTooLarge {
             width,
