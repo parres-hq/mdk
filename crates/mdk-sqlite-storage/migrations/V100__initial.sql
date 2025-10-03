@@ -1,4 +1,4 @@
--- Initial database schema for mdk-sqlite-storage
+-- Initial database schema for nostr-mls-sqlite-storage
 
 -- Groups table
 CREATE TABLE IF NOT EXISTS groups (
