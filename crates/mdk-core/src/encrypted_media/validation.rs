@@ -5,7 +5,8 @@
 //! and protocol requirements.
 
 use crate::encrypted_media::types::{
-    EncryptedMediaError, MAX_FILE_SIZE, MAX_FILENAME_LENGTH, MediaProcessingOptions,
+    EncryptedMediaError, MAX_FILE_SIZE, MAX_FILENAME_LENGTH, MAX_IMAGE_MEMORY_MB, MAX_IMAGE_PIXELS,
+    MediaProcessingOptions,
 };
 
 /// Validate input parameters for media encryption
@@ -88,11 +89,16 @@ pub fn validate_filename(filename: &str) -> Result<(), EncryptedMediaError> {
 }
 
 /// Validate image dimensions against limits
+///
+/// This function checks both dimension limits and memory requirements to prevent
+/// decompression bombs. Even if individual dimensions are within limits, the total
+/// pixel count and estimated memory usage must also be reasonable.
 pub fn validate_image_dimensions(
     width: u32,
     height: u32,
     options: &MediaProcessingOptions,
 ) -> Result<(), EncryptedMediaError> {
+    // Check individual dimension limits
     if let Some(max_dim) = options.max_dimension
         && (width > max_dim || height > max_dim)
     {
@@ -102,6 +108,28 @@ pub fn validate_image_dimensions(
             max_dimension: max_dim,
         });
     }
+
+    // Check total pixel count to prevent decompression bombs
+    let total_pixels = width as u64 * height as u64;
+    if total_pixels > MAX_IMAGE_PIXELS {
+        // Calculate what the memory usage would be
+        let estimated_mb = (total_pixels * 4) / (1024 * 1024); // 4 bytes per pixel (RGBA)
+        return Err(EncryptedMediaError::ImageMemoryTooLarge {
+            estimated_mb,
+            max_mb: MAX_IMAGE_MEMORY_MB,
+        });
+    }
+
+    // Double-check memory estimate as a hard limit
+    // This catches cases where pixel format might use more than 4 bytes per pixel
+    let estimated_mb = (total_pixels * 4) / (1024 * 1024);
+    if estimated_mb > MAX_IMAGE_MEMORY_MB {
+        return Err(EncryptedMediaError::ImageMemoryTooLarge {
+            estimated_mb,
+            max_mb: MAX_IMAGE_MEMORY_MB,
+        });
+    }
+
     Ok(())
 }
 
@@ -278,12 +306,20 @@ mod tests {
             Err(EncryptedMediaError::DimensionsTooLarge { .. })
         ));
 
-        // Test with no dimension limit
+        // Test with no dimension limit but still check memory
         let no_limit_options = MediaProcessingOptions {
             max_dimension: None,
             ..Default::default()
         };
-        assert!(validate_image_dimensions(50000, 40000, &no_limit_options).is_ok());
+        // 50000 x 40000 = 2 billion pixels, should fail memory check
+        let result = validate_image_dimensions(50000, 40000, &no_limit_options);
+        assert!(matches!(
+            result,
+            Err(EncryptedMediaError::ImageMemoryTooLarge { .. })
+        ));
+
+        // Test reasonable high-res image (12000 x 4000 = 48M pixels, just under 50M limit)
+        assert!(validate_image_dimensions(12000, 4000, &no_limit_options).is_ok());
 
         // Test with custom dimension limit
         let custom_options = MediaProcessingOptions {
@@ -295,6 +331,48 @@ mod tests {
             result,
             Err(EncryptedMediaError::DimensionsTooLarge { .. })
         ));
+    }
+
+    #[test]
+    fn test_validate_image_dimensions_decompression_bomb_protection() {
+        let options = MediaProcessingOptions {
+            max_dimension: None, // No individual dimension limit
+            ..Default::default()
+        };
+
+        // Test exactly at pixel limit (should pass)
+        // sqrt(50M) ≈ 7071, so 7071 x 7071 ≈ 50M pixels
+        assert!(validate_image_dimensions(7071, 7071, &options).is_ok());
+
+        // Test just over pixel limit (should fail)
+        let result = validate_image_dimensions(7100, 7100, &options);
+        assert!(matches!(
+            result,
+            Err(EncryptedMediaError::ImageMemoryTooLarge { .. })
+        ));
+
+        // Test extreme decompression bomb attempt
+        // 16384 x 16384 = 268M pixels, would be ~1GB RAM
+        let result = validate_image_dimensions(16384, 16384, &options);
+        assert!(matches!(
+            result,
+            Err(EncryptedMediaError::ImageMemoryTooLarge { .. })
+        ));
+        if let Err(EncryptedMediaError::ImageMemoryTooLarge {
+            estimated_mb,
+            max_mb,
+        }) = result
+        {
+            assert!(estimated_mb > 1000); // Should be over 1GB
+            assert_eq!(max_mb, MAX_IMAGE_MEMORY_MB);
+        }
+
+        // Test wide panorama (within limits)
+        // 10000 x 4000 = 40M pixels, ~160MB
+        assert!(validate_image_dimensions(10000, 4000, &options).is_ok());
+
+        // Test tall image (within limits)
+        assert!(validate_image_dimensions(4000, 10000, &options).is_ok());
     }
 
     #[test]
