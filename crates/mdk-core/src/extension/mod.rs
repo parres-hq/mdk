@@ -15,4 +15,5 @@ pub use types::NostrGroupDataExtension;
 pub use group_image::{
     GroupImageEncryptionInfo, GroupImageError, GroupImageUpload, decrypt_group_image,
     derive_upload_keypair, prepare_group_image_for_upload,
+    prepare_group_image_for_upload_with_options,
 };

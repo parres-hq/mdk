@@ -14,7 +14,7 @@ use crate::encrypted_media::metadata::extract_and_process_metadata;
 use crate::encrypted_media::types::{
     EncryptedMediaError, EncryptedMediaUpload, MediaProcessingOptions, MediaReference,
 };
-use crate::image_processing::validation;
+use crate::media_processing::validation;
 use crate::{GroupId, MDK};
 use mdk_storage_traits::MdkStorageProvider;
 
@@ -70,9 +70,7 @@ where
         filename: &str,
         options: &MediaProcessingOptions,
     ) -> Result<EncryptedMediaUpload, EncryptedMediaError> {
-        // Validate inputs
-        let validation_options = options.to_image_validation_options();
-        validation::validate_file_size(data, &validation_options)?;
+        validation::validate_file_size(data, options)?;
         let canonical_mime_type = validation::validate_mime_type(mime_type)?;
         validation::validate_filename(filename)?;
 
@@ -505,10 +503,10 @@ mod tests {
         // Use options that skip metadata extraction for images to avoid format errors
         let options = MediaProcessingOptions {
             sanitize_exif: true,
-            preserve_dimensions: false,
             generate_blurhash: false,
             max_dimension: None,
             max_file_size: None,
+            max_filename_length: None,
         };
 
         // Test with various non-image MIME types - all should pass validation

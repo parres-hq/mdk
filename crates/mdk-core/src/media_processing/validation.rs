@@ -8,19 +8,22 @@ use std::io::Cursor;
 
 use image::ImageReader;
 
-use crate::image_processing::types::{
-    ImageProcessingError, ImageValidationOptions, MAX_FILE_SIZE, MAX_FILENAME_LENGTH,
-    MAX_IMAGE_MEMORY_MB, MAX_IMAGE_PIXELS,
+use crate::media_processing::types::{
+    MAX_FILE_SIZE, MAX_IMAGE_MEMORY_MB, MAX_IMAGE_PIXELS, MediaProcessingError,
+    MediaProcessingOptions,
 };
+
+#[cfg(feature = "mip04")]
+use crate::media_processing::types::MAX_FILENAME_LENGTH;
 
 /// Validate file size against limits
 pub(crate) fn validate_file_size(
     data: &[u8],
-    options: &ImageValidationOptions,
-) -> Result<(), ImageProcessingError> {
+    options: &MediaProcessingOptions,
+) -> Result<(), MediaProcessingError> {
     let max_size = options.max_file_size.unwrap_or(MAX_FILE_SIZE);
     if data.len() > max_size {
-        return Err(ImageProcessingError::FileTooLarge {
+        return Err(MediaProcessingError::FileTooLarge {
             size: data.len(),
             max_size,
         });
@@ -39,13 +42,13 @@ pub(crate) fn validate_file_size(
 ///
 /// Note: This accepts any valid MIME type format - there is no whitelist of
 /// supported types, allowing maximum flexibility for different media types.
-pub(crate) fn validate_mime_type(mime_type: &str) -> Result<String, ImageProcessingError> {
+pub(crate) fn validate_mime_type(mime_type: &str) -> Result<String, MediaProcessingError> {
     // Normalize the MIME type: trim whitespace and convert to lowercase
     let normalized = mime_type.trim().to_ascii_lowercase();
 
     // Validate MIME type format using normalized version
     if !normalized.contains('/') || normalized.len() > 100 {
-        return Err(ImageProcessingError::InvalidMimeType {
+        return Err(MediaProcessingError::InvalidMimeType {
             mime_type: mime_type.to_string(),
         });
     }
@@ -66,16 +69,16 @@ pub(crate) fn validate_mime_type(mime_type: &str) -> Result<String, ImageProcess
 ///
 /// # Errors
 /// * `InvalidMimeType` - If the image format cannot be detected
-fn detect_mime_type_from_data(data: &[u8]) -> Result<String, ImageProcessingError> {
+fn detect_mime_type_from_data(data: &[u8]) -> Result<String, MediaProcessingError> {
     let img_reader = ImageReader::new(Cursor::new(data))
         .with_guessed_format()
-        .map_err(|e| ImageProcessingError::InvalidMimeType {
+        .map_err(|e| MediaProcessingError::InvalidMimeType {
             mime_type: format!("Could not detect image format: {}", e),
         })?;
 
     let format = img_reader
         .format()
-        .ok_or_else(|| ImageProcessingError::InvalidMimeType {
+        .ok_or_else(|| MediaProcessingError::InvalidMimeType {
             mime_type: "Could not determine image format".to_string(),
         })?;
 
@@ -97,7 +100,7 @@ fn detect_mime_type_from_data(data: &[u8]) -> Result<String, ImageProcessingErro
         image::ImageFormat::Avif => "image/avif",
         image::ImageFormat::Qoi => "image/qoi",
         _ => {
-            return Err(ImageProcessingError::InvalidMimeType {
+            return Err(MediaProcessingError::InvalidMimeType {
                 mime_type: format!("Unsupported image format: {:?}", format),
             });
         }
@@ -130,7 +133,7 @@ fn detect_mime_type_from_data(data: &[u8]) -> Result<String, ImageProcessingErro
 pub(crate) fn validate_mime_type_matches_data(
     data: &[u8],
     claimed_mime_type: &str,
-) -> Result<String, ImageProcessingError> {
+) -> Result<String, MediaProcessingError> {
     // First, validate and canonicalize the claimed MIME type
     let canonical_claimed = validate_mime_type(claimed_mime_type)?;
 
@@ -139,7 +142,7 @@ pub(crate) fn validate_mime_type_matches_data(
 
     // Compare the claimed type with the detected type
     if canonical_claimed != detected_mime_type {
-        return Err(ImageProcessingError::MimeTypeMismatch {
+        return Err(MediaProcessingError::MimeTypeMismatch {
             claimed: canonical_claimed,
             detected: detected_mime_type,
         });
@@ -149,16 +152,16 @@ pub(crate) fn validate_mime_type_matches_data(
 }
 
 /// Validate filename length and content
-#[allow(unused)]
-pub(crate) fn validate_filename(filename: &str) -> Result<(), ImageProcessingError> {
+#[cfg(feature = "mip04")]
+pub(crate) fn validate_filename(filename: &str) -> Result<(), MediaProcessingError> {
     // Validate filename is not empty
     if filename.is_empty() {
-        return Err(ImageProcessingError::EmptyFilename);
+        return Err(MediaProcessingError::EmptyFilename);
     }
 
     // Validate filename length
     if filename.len() > MAX_FILENAME_LENGTH {
-        return Err(ImageProcessingError::FilenameTooLong {
+        return Err(MediaProcessingError::FilenameTooLong {
             length: filename.len(),
             max_length: MAX_FILENAME_LENGTH,
         });
@@ -167,7 +170,7 @@ pub(crate) fn validate_filename(filename: &str) -> Result<(), ImageProcessingErr
     // Disallow path separators and control characters
     if filename.contains('/') || filename.contains('\\') || filename.chars().any(|c| c.is_control())
     {
-        return Err(ImageProcessingError::InvalidFilename);
+        return Err(MediaProcessingError::InvalidFilename);
     }
 
     Ok(())
@@ -181,13 +184,13 @@ pub(crate) fn validate_filename(filename: &str) -> Result<(), ImageProcessingErr
 pub(crate) fn validate_image_dimensions(
     width: u32,
     height: u32,
-    options: &ImageValidationOptions,
-) -> Result<(), ImageProcessingError> {
+    options: &MediaProcessingOptions,
+) -> Result<(), MediaProcessingError> {
     // Check individual dimension limits
     if let Some(max_dim) = options.max_dimension
         && (width > max_dim || height > max_dim)
     {
-        return Err(ImageProcessingError::DimensionsTooLarge {
+        return Err(MediaProcessingError::ImageDimensionsTooLarge {
             width,
             height,
             max_dimension: max_dim,
@@ -199,7 +202,7 @@ pub(crate) fn validate_image_dimensions(
 
     // Check pixel count limit first
     if total_pixels > MAX_IMAGE_PIXELS {
-        return Err(ImageProcessingError::TooManyPixels {
+        return Err(MediaProcessingError::ImageTooManyPixels {
             total_pixels,
             max_pixels: MAX_IMAGE_PIXELS,
         });
@@ -212,7 +215,7 @@ pub(crate) fn validate_image_dimensions(
 
     // Check memory limit
     if estimated_mb > MAX_IMAGE_MEMORY_MB {
-        return Err(ImageProcessingError::ImageMemoryTooLarge {
+        return Err(MediaProcessingError::ImageMemoryTooLarge {
             estimated_mb,
             max_mb: MAX_IMAGE_MEMORY_MB,
         });
@@ -227,7 +230,7 @@ mod tests {
 
     #[test]
     fn test_validate_file_size() {
-        let options = ImageValidationOptions::default();
+        let options = MediaProcessingOptions::validation_only();
 
         // Test valid size
         let valid_data = vec![0u8; 1000];
@@ -238,18 +241,20 @@ mod tests {
         let result = validate_file_size(&large_data, &options);
         assert!(matches!(
             result,
-            Err(ImageProcessingError::FileTooLarge { .. })
+            Err(MediaProcessingError::FileTooLarge { .. })
         ));
 
         // Test custom size limit
-        let custom_options = ImageValidationOptions {
+        let custom_options = MediaProcessingOptions {
+            sanitize_exif: false,
+            generate_blurhash: false,
             max_file_size: Some(500),
             ..Default::default()
         };
         let result = validate_file_size(&valid_data, &custom_options);
         assert!(matches!(
             result,
-            Err(ImageProcessingError::FileTooLarge { .. })
+            Err(MediaProcessingError::FileTooLarge { .. })
         ));
     }
 
@@ -275,7 +280,7 @@ mod tests {
         let result = validate_mime_type("invalid");
         assert!(matches!(
             result,
-            Err(ImageProcessingError::InvalidMimeType { .. })
+            Err(MediaProcessingError::InvalidMimeType { .. })
         ));
 
         // Test too long
@@ -283,11 +288,12 @@ mod tests {
         let result = validate_mime_type(&long_mime);
         assert!(matches!(
             result,
-            Err(ImageProcessingError::InvalidMimeType { .. })
+            Err(MediaProcessingError::InvalidMimeType { .. })
         ));
     }
 
     #[test]
+    #[cfg(feature = "mip04")]
     fn test_validate_filename() {
         // Test valid filename
         assert!(validate_filename("test.jpg").is_ok());
@@ -295,14 +301,14 @@ mod tests {
 
         // Test empty filename
         let result = validate_filename("");
-        assert!(matches!(result, Err(ImageProcessingError::EmptyFilename)));
+        assert!(matches!(result, Err(MediaProcessingError::EmptyFilename)));
 
         // Test too long filename
         let long_filename = "a".repeat(MAX_FILENAME_LENGTH + 1);
         let result = validate_filename(&long_filename);
         assert!(matches!(
             result,
-            Err(ImageProcessingError::FilenameTooLong { .. })
+            Err(MediaProcessingError::FilenameTooLong { .. })
         ));
 
         // Test maximum length filename (should be valid)
@@ -312,17 +318,17 @@ mod tests {
         // Test invalid characters
         assert!(matches!(
             validate_filename("path/to/file.jpg"),
-            Err(ImageProcessingError::InvalidFilename)
+            Err(MediaProcessingError::InvalidFilename)
         ));
         assert!(matches!(
             validate_filename("path\\to\\file.jpg"),
-            Err(ImageProcessingError::InvalidFilename)
+            Err(MediaProcessingError::InvalidFilename)
         ));
     }
 
     #[test]
     fn test_validate_image_dimensions() {
-        let options = ImageValidationOptions::default();
+        let options = MediaProcessingOptions::validation_only();
 
         // Test valid dimensions
         assert!(validate_image_dimensions(1920, 1080, &options).is_ok());
@@ -332,11 +338,13 @@ mod tests {
         let result = validate_image_dimensions(20000, 15000, &options);
         assert!(matches!(
             result,
-            Err(ImageProcessingError::DimensionsTooLarge { .. })
+            Err(MediaProcessingError::ImageDimensionsTooLarge { .. })
         ));
 
         // Test with no dimension limit but still check memory
-        let no_limit_options = ImageValidationOptions {
+        let no_limit_options = MediaProcessingOptions {
+            sanitize_exif: false,
+            generate_blurhash: false,
             max_dimension: None,
             ..Default::default()
         };
@@ -344,27 +352,31 @@ mod tests {
         let result = validate_image_dimensions(50000, 40000, &no_limit_options);
         assert!(matches!(
             result,
-            Err(ImageProcessingError::TooManyPixels { .. })
+            Err(MediaProcessingError::ImageTooManyPixels { .. })
         ));
 
         // Test reasonable high-res image (12000 x 4000 = 48M pixels, just under 50M limit)
         assert!(validate_image_dimensions(12000, 4000, &no_limit_options).is_ok());
 
         // Test with custom dimension limit
-        let custom_options = ImageValidationOptions {
+        let custom_options = MediaProcessingOptions {
+            sanitize_exif: false,
+            generate_blurhash: false,
             max_dimension: Some(1024),
             ..Default::default()
         };
         let result = validate_image_dimensions(2048, 1536, &custom_options);
         assert!(matches!(
             result,
-            Err(ImageProcessingError::DimensionsTooLarge { .. })
+            Err(MediaProcessingError::ImageDimensionsTooLarge { .. })
         ));
     }
 
     #[test]
     fn test_validate_image_dimensions_decompression_bomb_protection() {
-        let options = ImageValidationOptions {
+        let options = MediaProcessingOptions {
+            sanitize_exif: false,
+            generate_blurhash: false,
             max_dimension: None, // No individual dimension limit
             ..Default::default()
         };
@@ -377,7 +389,7 @@ mod tests {
         let result = validate_image_dimensions(7100, 7100, &options);
         assert!(matches!(
             result,
-            Err(ImageProcessingError::TooManyPixels { .. })
+            Err(MediaProcessingError::ImageTooManyPixels { .. })
         ));
 
         // Test extreme decompression bomb attempt
@@ -385,7 +397,7 @@ mod tests {
         let result = validate_image_dimensions(16384, 16384, &options);
         assert!(matches!(
             result,
-            Err(ImageProcessingError::TooManyPixels { .. })
+            Err(MediaProcessingError::ImageTooManyPixels { .. })
         ));
 
         // Test wide panorama (within limits)
@@ -430,7 +442,7 @@ mod tests {
         assert!(result.is_err());
         assert!(matches!(
             result,
-            Err(ImageProcessingError::MimeTypeMismatch { .. })
+            Err(MediaProcessingError::MimeTypeMismatch { .. })
         ));
 
         // Test mismatched MIME type (claiming WebP but file is PNG)
@@ -438,7 +450,7 @@ mod tests {
         assert!(result.is_err());
         assert!(matches!(
             result,
-            Err(ImageProcessingError::MimeTypeMismatch { .. })
+            Err(MediaProcessingError::MimeTypeMismatch { .. })
         ));
 
         // Create a JPEG image
@@ -459,7 +471,7 @@ mod tests {
         assert!(result.is_err());
         assert!(matches!(
             result,
-            Err(ImageProcessingError::MimeTypeMismatch { .. })
+            Err(MediaProcessingError::MimeTypeMismatch { .. })
         ));
     }
 

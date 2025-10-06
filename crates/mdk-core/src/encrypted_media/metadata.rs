@@ -27,7 +27,7 @@ pub fn extract_and_process_metadata(
     mime_type: &str,
     options: &MediaProcessingOptions,
 ) -> Result<(Vec<u8>, MediaMetadata), EncryptedMediaError> {
-    use crate::image_processing::{
+    use crate::media_processing::metadata::{
         is_safe_raster_format, preflight_dimension_check, strip_exif_and_return_image,
     };
 
@@ -54,22 +54,19 @@ pub fn extract_and_process_metadata(
                 // PREFLIGHT CHECK: Validate dimensions without full decode to prevent OOM
                 // This lightweight check protects against decompression bombs before
                 // we fully decode the image for sanitization
-                let validation_options = options.to_image_validation_options();
-                match preflight_dimension_check(data, &validation_options) {
+                match preflight_dimension_check(data, options) {
                     Ok(_) => {
                         // Dimensions are safe, proceed with sanitization
                         match strip_exif_and_return_image(data, mime_type) {
                             Ok((cleaned_data, decoded_img)) => {
                                 // Extract metadata from decoded image
-                                let image_metadata = crate::image_processing::metadata::extract_metadata_from_decoded_image(
+                                let image_metadata = crate::media_processing::metadata::extract_metadata_from_decoded_image(
                                     &decoded_img,
-                                    &validation_options,
+                                    options,
                                     options.generate_blurhash,
                                 )?;
 
-                                if options.preserve_dimensions {
-                                    metadata.dimensions = image_metadata.dimensions;
-                                }
+                                metadata.dimensions = image_metadata.dimensions;
                                 metadata.blurhash = image_metadata.blurhash;
                                 processed_data = cleaned_data;
                             }
@@ -81,15 +78,13 @@ pub fn extract_and_process_metadata(
                                     e
                                 );
                                 // Extract metadata from encoded image
-                                let image_metadata = crate::image_processing::metadata::extract_metadata_from_encoded_image(
+                                let image_metadata = crate::media_processing::metadata::extract_metadata_from_encoded_image(
                                     data,
-                                    &validation_options,
+                                    options,
                                     options.generate_blurhash,
                                 )?;
 
-                                if options.preserve_dimensions {
-                                    metadata.dimensions = image_metadata.dimensions;
-                                }
+                                metadata.dimensions = image_metadata.dimensions;
                                 metadata.blurhash = image_metadata.blurhash;
                                 processed_data = data.to_vec();
                             }
@@ -114,33 +109,27 @@ pub fn extract_and_process_metadata(
                     mime_type
                 );
                 // Extract metadata from encoded image
-                let validation_options = options.to_image_validation_options();
                 let image_metadata =
-                    crate::image_processing::metadata::extract_metadata_from_encoded_image(
+                    crate::media_processing::metadata::extract_metadata_from_encoded_image(
                         data,
-                        &validation_options,
+                        options,
                         options.generate_blurhash,
                     )?;
 
-                if options.preserve_dimensions {
-                    metadata.dimensions = image_metadata.dimensions;
-                }
+                metadata.dimensions = image_metadata.dimensions;
                 metadata.blurhash = image_metadata.blurhash;
                 processed_data = data.to_vec();
             }
         } else {
             // If not sanitizing, process original data
-            let validation_options = options.to_image_validation_options();
             let image_metadata =
-                crate::image_processing::metadata::extract_metadata_from_encoded_image(
+                crate::media_processing::metadata::extract_metadata_from_encoded_image(
                     data,
-                    &validation_options,
+                    options,
                     options.generate_blurhash,
                 )?;
 
-            if options.preserve_dimensions {
-                metadata.dimensions = image_metadata.dimensions;
-            }
+            metadata.dimensions = image_metadata.dimensions;
             metadata.blurhash = image_metadata.blurhash;
             processed_data = data.to_vec();
         }
@@ -156,7 +145,7 @@ pub fn extract_and_process_metadata(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::image_processing::{is_safe_raster_format, preflight_dimension_check};
+    use crate::media_processing::metadata::{is_safe_raster_format, preflight_dimension_check};
 
     #[test]
     fn test_animated_format_fallback() {
@@ -175,11 +164,11 @@ mod tests {
         ];
 
         let options = MediaProcessingOptions {
-            preserve_dimensions: true,
             generate_blurhash: false,
             sanitize_exif: true, // Request sanitization
             max_dimension: Some(100),
             max_file_size: None,
+            max_filename_length: None,
         };
 
         // Test that GIF with sanitize_exif=true falls back to original data
@@ -224,11 +213,11 @@ mod tests {
         ];
 
         let options = MediaProcessingOptions {
-            preserve_dimensions: true,
             generate_blurhash: false,
             sanitize_exif: false, // Don't sanitize
             max_dimension: Some(100),
             max_file_size: None,
+            max_filename_length: None,
         };
 
         // Test that GIF without sanitization works normally
@@ -266,11 +255,11 @@ mod tests {
             b"<svg xmlns=\"http://www.w3.org/2000/svg\"><rect width=\"10\" height=\"10\"/></svg>";
 
         let options = MediaProcessingOptions {
-            preserve_dimensions: false,
             generate_blurhash: false,
             sanitize_exif: true, // Request sanitization (should be skipped for SVG)
             max_dimension: Some(100),
             max_file_size: None,
+            max_filename_length: None,
         };
 
         // SVG should pass through as-is since it's not a safe raster format
@@ -310,16 +299,15 @@ mod tests {
         ];
 
         let options = MediaProcessingOptions {
-            preserve_dimensions: true,
             generate_blurhash: false,
             sanitize_exif: true,
             max_dimension: Some(16384), // Standard max dimension
             max_file_size: None,
+            max_filename_length: None,
         };
 
         // Should reject during preflight check, not during decode
-        let validation_options = options.to_image_validation_options();
-        let result = preflight_dimension_check(&huge_png_header, &validation_options);
+        let result = preflight_dimension_check(&huge_png_header, &options);
         assert!(
             result.is_err(),
             "Preflight should reject oversized image dimensions"

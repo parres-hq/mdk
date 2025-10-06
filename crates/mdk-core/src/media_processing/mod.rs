@@ -11,11 +11,7 @@ pub mod types;
 pub mod validation;
 
 // Re-export commonly used types and functions
-pub use metadata::{
-    extract_metadata_from_decoded_image, extract_metadata_from_encoded_image, generate_blurhash,
-    is_safe_raster_format, preflight_dimension_check, strip_exif_and_return_image,
-};
 pub use types::{
-    ImageMetadata, ImageValidationOptions, MAX_FILE_SIZE, MAX_FILENAME_LENGTH, MAX_IMAGE_DIMENSION,
-    MAX_IMAGE_MEMORY_MB, MAX_IMAGE_PIXELS,
+    ImageMetadata, MAX_FILE_SIZE, MAX_FILENAME_LENGTH, MAX_IMAGE_DIMENSION, MediaProcessingError,
+    MediaProcessingOptions,
 };

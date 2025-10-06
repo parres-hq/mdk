@@ -19,24 +19,44 @@ pub const MAX_IMAGE_PIXELS: u64 = 50_000_000;
 /// This is a hard limit on memory allocation to prevent OOM from decompression bombs.
 pub const MAX_IMAGE_MEMORY_MB: u64 = 256;
 
-/// Lightweight validation options for image processing
+/// Unified options for media processing and validation
 ///
-/// This is a simplified version of the full MediaProcessingOptions used in MIP-04,
-/// containing only the validation-related settings that are relevant for both
-/// MIP-04 encrypted media and MIP-01 group images.
+/// This type serves both MIP-04 encrypted media and MIP-01 group images,
+/// providing configuration for validation, sanitization, and metadata extraction.
 #[derive(Debug, Clone)]
-pub struct ImageValidationOptions {
+pub struct MediaProcessingOptions {
+    /// Sanitize EXIF and other metadata for privacy (default: true)
+    pub sanitize_exif: bool,
+    /// Generate blurhash for images (default: true)
+    pub generate_blurhash: bool,
     /// Maximum allowed dimension for images (default: uses MAX_IMAGE_DIMENSION)
     pub max_dimension: Option<u32>,
     /// Custom file size limit (default: uses MAX_FILE_SIZE)
     pub max_file_size: Option<usize>,
+    /// Maximum allowed filename length (default: uses MAX_FILENAME_LENGTH)
+    pub max_filename_length: Option<usize>,
 }
 
-impl Default for ImageValidationOptions {
+impl Default for MediaProcessingOptions {
     fn default() -> Self {
         Self {
+            sanitize_exif: true,     // Privacy-first default
+            generate_blurhash: true, // Good UX
             max_dimension: Some(MAX_IMAGE_DIMENSION),
             max_file_size: Some(MAX_FILE_SIZE),
+            max_filename_length: Some(MAX_FILENAME_LENGTH),
+        }
+    }
+}
+
+impl MediaProcessingOptions {
+    /// Create options suitable for validation-only use cases
+    /// (no sanitization or blurhash generation)
+    pub fn validation_only() -> Self {
+        Self {
+            sanitize_exif: false,
+            generate_blurhash: false,
+            ..Default::default()
         }
     }
 }
@@ -71,7 +91,7 @@ impl Default for ImageMetadata {
 
 /// Errors that can occur during image validation and processing
 #[derive(Debug, thiserror::Error)]
-pub enum ImageProcessingError {
+pub enum MediaProcessingError {
     /// File is too large
     #[error("File size {size} exceeds maximum allowed size {max_size}")]
     FileTooLarge {
@@ -116,7 +136,7 @@ pub enum ImageProcessingError {
 
     /// Image dimensions are too large
     #[error("Image dimensions {width}x{height} exceed maximum {max_dimension}")]
-    DimensionsTooLarge {
+    ImageDimensionsTooLarge {
         /// The image width in pixels
         width: u32,
         /// The image height in pixels
@@ -127,7 +147,7 @@ pub enum ImageProcessingError {
 
     /// Image has too many pixels (decompression bomb protection)
     #[error("Image has {total_pixels} pixels, exceeding maximum {max_pixels}")]
-    TooManyPixels {
+    ImageTooManyPixels {
         /// Total number of pixels
         total_pixels: u64,
         /// Maximum allowed pixels
@@ -156,10 +176,23 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_image_validation_options_default() {
-        let options = ImageValidationOptions::default();
+    fn test_media_processing_options_default() {
+        let options = MediaProcessingOptions::default();
+        assert!(options.sanitize_exif);
+        assert!(options.generate_blurhash);
         assert_eq!(options.max_dimension, Some(MAX_IMAGE_DIMENSION));
         assert_eq!(options.max_file_size, Some(MAX_FILE_SIZE));
+        assert_eq!(options.max_filename_length, Some(MAX_FILENAME_LENGTH));
+    }
+
+    #[test]
+    fn test_media_processing_options_validation_only() {
+        let options = MediaProcessingOptions::validation_only();
+        assert!(!options.sanitize_exif);
+        assert!(!options.generate_blurhash);
+        assert_eq!(options.max_dimension, Some(MAX_IMAGE_DIMENSION));
+        assert_eq!(options.max_file_size, Some(MAX_FILE_SIZE));
+        assert_eq!(options.max_filename_length, Some(MAX_FILENAME_LENGTH));
     }
 
     #[test]

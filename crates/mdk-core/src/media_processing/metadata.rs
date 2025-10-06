@@ -12,8 +12,8 @@ use image::codecs::jpeg::JpegEncoder;
 use image::codecs::png::PngEncoder;
 use image::{ImageEncoder, ImageReader};
 
-use crate::image_processing::types::{ImageMetadata, ImageProcessingError, ImageValidationOptions};
-use crate::image_processing::validation::validate_image_dimensions;
+use crate::media_processing::types::{ImageMetadata, MediaProcessingError, MediaProcessingOptions};
+use crate::media_processing::validation::validate_image_dimensions;
 
 /// Extract metadata from an encoded image (decodes the image data first)
 ///
@@ -30,21 +30,21 @@ use crate::image_processing::validation::validate_image_dimensions;
 ///
 /// # Errors
 /// * `MetadataExtractionFailed` - If the image cannot be decoded
-/// * `DimensionsTooLarge` / `TooManyPixels` / `ImageMemoryTooLarge` - If dimensions exceed limits
-pub fn extract_metadata_from_encoded_image(
+/// * `ImageDimensionsTooLarge` / `ImageTooManyPixels` / `ImageMemoryTooLarge` - If dimensions exceed limits
+pub(crate) fn extract_metadata_from_encoded_image(
     data: &[u8],
-    options: &ImageValidationOptions,
+    options: &MediaProcessingOptions,
     generate_blurhash_flag: bool,
-) -> Result<ImageMetadata, ImageProcessingError> {
+) -> Result<ImageMetadata, MediaProcessingError> {
     // First, get dimensions without full decode for performance
     let img_reader = ImageReader::new(Cursor::new(data))
         .with_guessed_format()
-        .map_err(|e| ImageProcessingError::MetadataExtractionFailed {
+        .map_err(|e| MediaProcessingError::MetadataExtractionFailed {
             reason: format!("Failed to read image: {}", e),
         })?;
 
     let (width, height) = img_reader.into_dimensions().map_err(|e| {
-        ImageProcessingError::MetadataExtractionFailed {
+        MediaProcessingError::MetadataExtractionFailed {
             reason: format!("Failed to get image dimensions: {}", e),
         }
     })?;
@@ -61,14 +61,14 @@ pub fn extract_metadata_from_encoded_image(
     if generate_blurhash_flag {
         let img_reader = ImageReader::new(Cursor::new(data))
             .with_guessed_format()
-            .map_err(|e| ImageProcessingError::MetadataExtractionFailed {
+            .map_err(|e| MediaProcessingError::MetadataExtractionFailed {
                 reason: format!("Failed to read image for blurhash: {}", e),
             })?;
 
         let img =
             img_reader
                 .decode()
-                .map_err(|e| ImageProcessingError::MetadataExtractionFailed {
+                .map_err(|e| MediaProcessingError::MetadataExtractionFailed {
                     reason: format!("Failed to decode image for blurhash: {}", e),
                 })?;
 
@@ -92,12 +92,12 @@ pub fn extract_metadata_from_encoded_image(
 /// * `ImageMetadata` with dimensions and optional blurhash
 ///
 /// # Errors
-/// * `DimensionsTooLarge` / `TooManyPixels` / `ImageMemoryTooLarge` - If dimensions exceed limits
-pub fn extract_metadata_from_decoded_image(
+/// * `ImageDimensionsTooLarge` / `ImageTooManyPixels` / `ImageMemoryTooLarge` - If dimensions exceed limits
+pub(crate) fn extract_metadata_from_decoded_image(
     img: &image::DynamicImage,
-    options: &ImageValidationOptions,
+    options: &MediaProcessingOptions,
     generate_blurhash_flag: bool,
-) -> Result<ImageMetadata, ImageProcessingError> {
+) -> Result<ImageMetadata, MediaProcessingError> {
     let width = img.width();
     let height = img.height();
 
@@ -127,7 +127,7 @@ pub fn extract_metadata_from_decoded_image(
 ///
 /// # Returns
 /// * `Some(String)` with the blurhash, or `None` if generation fails
-pub fn generate_blurhash(img: &image::DynamicImage) -> Option<String> {
+pub(crate) fn generate_blurhash(img: &image::DynamicImage) -> Option<String> {
     // Resize image for blurhash (max 32x32 for performance)
     let small_img = img.resize(32, 32, image::imageops::FilterType::Lanczos3);
     let rgb_img = small_img.to_rgb8();
@@ -142,18 +142,13 @@ pub fn generate_blurhash(img: &image::DynamicImage) -> Option<String> {
 /// 2. Can be re-encoded without loss of format features (e.g., not animated)
 /// 3. Are commonly used formats where EXIF stripping is valuable
 ///
-/// Formats explicitly excluded:
+/// Formats which are excluded:
 /// - image/gif: May be animated, would be flattened
 /// - image/webp: May be animated, would be flattened
 /// - image/svg+xml: Vector format, cannot be decoded as raster
 /// - Other vector or specialized formats
-pub fn is_safe_raster_format(mime_type: &str) -> bool {
-    matches!(
-        mime_type,
-        "image/jpeg" | "image/png" // Note: GIF and WebP are explicitly excluded because they may be animated
-                                   // and sanitization would flatten them to a single frame.
-                                   // Future work could detect if they're static and handle them.
-    )
+pub(crate) fn is_safe_raster_format(mime_type: &str) -> bool {
+    matches!(mime_type, "image/jpeg" | "image/png")
 }
 
 /// Perform a lightweight preflight check on image dimensions without full decode
@@ -164,21 +159,21 @@ pub fn is_safe_raster_format(mime_type: &str) -> bool {
 ///
 /// This is much faster and safer than decoding the entire image, as it only
 /// reads the image header (typically the first few KB of data).
-pub fn preflight_dimension_check(
+pub(crate) fn preflight_dimension_check(
     data: &[u8],
-    options: &ImageValidationOptions,
-) -> Result<(), ImageProcessingError> {
+    options: &MediaProcessingOptions,
+) -> Result<(), MediaProcessingError> {
     // Read just the image header to get dimensions
     let img_reader = ImageReader::new(Cursor::new(data))
         .with_guessed_format()
-        .map_err(|e| ImageProcessingError::MetadataExtractionFailed {
+        .map_err(|e| MediaProcessingError::MetadataExtractionFailed {
             reason: format!("Failed to read image header during preflight: {}", e),
         })?;
 
     // Get dimensions without decoding the full image
     // This is very fast and doesn't allocate memory for pixel data
     let (width, height) = img_reader.into_dimensions().map_err(|e| {
-        ImageProcessingError::MetadataExtractionFailed {
+        MediaProcessingError::MetadataExtractionFailed {
             reason: format!("Failed to get image dimensions during preflight: {}", e),
         }
     })?;
@@ -199,21 +194,21 @@ pub fn preflight_dimension_check(
 /// The caller is responsible for checking format compatibility via `is_safe_raster_format()`.
 ///
 /// Returns: (cleaned_data, decoded_image)
-pub fn strip_exif_and_return_image(
+pub(crate) fn strip_exif_and_return_image(
     data: &[u8],
     mime_type: &str,
-) -> Result<(Vec<u8>, image::DynamicImage), ImageProcessingError> {
+) -> Result<(Vec<u8>, image::DynamicImage), MediaProcessingError> {
     // Decode the image once
     let img_reader = ImageReader::new(Cursor::new(data))
         .with_guessed_format()
-        .map_err(|e| ImageProcessingError::MetadataExtractionFailed {
+        .map_err(|e| MediaProcessingError::MetadataExtractionFailed {
             reason: format!("Failed to read image for EXIF stripping: {}", e),
         })?;
 
     let mut img =
         img_reader
             .decode()
-            .map_err(|e| ImageProcessingError::MetadataExtractionFailed {
+            .map_err(|e| MediaProcessingError::MetadataExtractionFailed {
                 reason: format!("Failed to decode image for EXIF stripping: {}", e),
             })?;
 
@@ -237,7 +232,7 @@ pub fn strip_exif_and_return_image(
                     img.height(),
                     img.color().into(),
                 )
-                .map_err(|e| ImageProcessingError::MetadataExtractionFailed {
+                .map_err(|e| MediaProcessingError::MetadataExtractionFailed {
                     reason: format!("Failed to re-encode JPEG: {}", e),
                 })?;
         }
@@ -250,13 +245,13 @@ pub fn strip_exif_and_return_image(
                     img.height(),
                     img.color().into(),
                 )
-                .map_err(|e| ImageProcessingError::MetadataExtractionFailed {
+                .map_err(|e| MediaProcessingError::MetadataExtractionFailed {
                     reason: format!("Failed to re-encode PNG: {}", e),
                 })?;
         }
         _ => {
             // For unknown formats, return error
-            return Err(ImageProcessingError::MetadataExtractionFailed {
+            return Err(MediaProcessingError::MetadataExtractionFailed {
                 reason: format!("Unsupported image format for EXIF stripping: {}", mime_type),
             });
         }
@@ -283,7 +278,7 @@ pub fn strip_exif_and_return_image(
 fn apply_exif_orientation(
     data: &[u8],
     img: image::DynamicImage,
-) -> Result<image::DynamicImage, ImageProcessingError> {
+) -> Result<image::DynamicImage, MediaProcessingError> {
     // Try to read EXIF data - if it fails or doesn't exist, just return the original image
     let exif_reader = match Reader::new().read_from_container(&mut Cursor::new(data)) {
         Ok(exif) => exif,
@@ -331,7 +326,7 @@ mod tests {
         )
         .unwrap();
 
-        let options = ImageValidationOptions::default();
+        let options = MediaProcessingOptions::validation_only();
 
         // Test without blurhash
         let result = extract_metadata_from_encoded_image(&png_data, &options, false);
@@ -361,14 +356,16 @@ mod tests {
         ];
 
         // Test with dimension validation failure
-        let strict_options = ImageValidationOptions {
+        let strict_options = MediaProcessingOptions {
+            sanitize_exif: false,
+            generate_blurhash: false,
             max_dimension: Some(0), // This should cause validation to fail
             ..Default::default()
         };
 
         let result = extract_metadata_from_encoded_image(&png_data, &strict_options, false);
         assert!(result.is_err());
-        if let Err(ImageProcessingError::DimensionsTooLarge {
+        if let Err(MediaProcessingError::ImageDimensionsTooLarge {
             width,
             height,
             max_dimension,

@@ -3,49 +3,10 @@
 //! This module contains all the core types, constants, and error definitions
 //! used throughout the encrypted media system.
 
-// Re-export shared constants from image_processing module
-pub use crate::image_processing::{
-    MAX_FILE_SIZE, MAX_FILENAME_LENGTH, MAX_IMAGE_DIMENSION, MAX_IMAGE_MEMORY_MB, MAX_IMAGE_PIXELS,
+// Re-export shared types and constants from media_processing module
+pub use crate::media_processing::{
+    MAX_FILE_SIZE, MAX_FILENAME_LENGTH, MAX_IMAGE_DIMENSION, MediaProcessingOptions,
 };
-
-/// Configuration options for media processing
-#[derive(Debug, Clone)]
-pub struct MediaProcessingOptions {
-    /// Sanitize EXIF and other metadata for privacy (default: true)
-    pub sanitize_exif: bool,
-    /// Preserve image dimensions in metadata (default: true)
-    pub preserve_dimensions: bool,
-    /// Generate blurhash for images (default: true)
-    pub generate_blurhash: bool,
-    /// Maximum allowed dimension for images (default: uses MAX_IMAGE_DIMENSION)
-    pub max_dimension: Option<u32>,
-    /// Custom size limit (default: uses MAX_FILE_SIZE)
-    pub max_file_size: Option<usize>,
-}
-
-impl Default for MediaProcessingOptions {
-    fn default() -> Self {
-        Self {
-            sanitize_exif: true,       // Privacy-first default
-            preserve_dimensions: true, // Useful for display
-            generate_blurhash: true,   // Good UX
-            max_dimension: Some(MAX_IMAGE_DIMENSION),
-            max_file_size: None,
-        }
-    }
-}
-
-impl MediaProcessingOptions {
-    /// Convert to ImageValidationOptions for use with shared validation functions
-    pub(crate) fn to_image_validation_options(
-        &self,
-    ) -> crate::image_processing::ImageValidationOptions {
-        crate::image_processing::ImageValidationOptions {
-            max_dimension: self.max_dimension,
-            max_file_size: self.max_file_size,
-        }
-    }
-}
 
 /// Metadata extracted from media files
 #[derive(Debug, Clone)]
@@ -101,9 +62,9 @@ pub struct MediaReference {
 /// Errors that can occur during encrypted media operations
 #[derive(Debug, thiserror::Error)]
 pub enum EncryptedMediaError {
-    /// Image processing error (validation, metadata extraction, etc.)
+    /// Media processing error (validation, metadata extraction, etc.)
     #[error(transparent)]
-    ImageProcessing(#[from] crate::image_processing::types::ImageProcessingError),
+    MediaProcessing(#[from] crate::media_processing::types::MediaProcessingError),
 
     /// Unsupported MIME type
     #[error("MIME type '{mime_type}' is not supported")]
@@ -154,32 +115,29 @@ mod tests {
     fn test_media_processing_options_default() {
         let options = MediaProcessingOptions::default();
         assert!(options.sanitize_exif);
-        assert!(options.preserve_dimensions);
         assert!(options.generate_blurhash);
         assert_eq!(options.max_dimension, Some(MAX_IMAGE_DIMENSION));
-        assert_eq!(options.max_file_size, None);
+        assert_eq!(options.max_file_size, Some(MAX_FILE_SIZE));
     }
 
     #[test]
     fn test_media_processing_options() {
         let default_options = MediaProcessingOptions::default();
         assert!(default_options.sanitize_exif);
-        assert!(default_options.preserve_dimensions);
         assert!(default_options.generate_blurhash);
         assert_eq!(default_options.max_dimension, Some(MAX_IMAGE_DIMENSION));
-        assert_eq!(default_options.max_file_size, None);
+        assert_eq!(default_options.max_file_size, Some(MAX_FILE_SIZE));
 
         // Test custom options
         let custom_options = MediaProcessingOptions {
             sanitize_exif: false,
-            preserve_dimensions: false,
             generate_blurhash: false,
             max_dimension: Some(1024),
             max_file_size: Some(1024 * 1024),
+            max_filename_length: Some(100),
         };
 
         assert!(!custom_options.sanitize_exif);
-        assert!(!custom_options.preserve_dimensions);
         assert!(!custom_options.generate_blurhash);
         assert_eq!(custom_options.max_dimension, Some(1024));
         assert_eq!(custom_options.max_file_size, Some(1024 * 1024));
@@ -231,36 +189,36 @@ mod tests {
 
     #[test]
     fn test_error_types() {
-        use crate::image_processing::types::ImageProcessingError;
+        use crate::media_processing::types::MediaProcessingError;
 
         // Test that all error types can be created and formatted properly
         let errors = vec![
-            EncryptedMediaError::ImageProcessing(ImageProcessingError::FileTooLarge {
+            EncryptedMediaError::MediaProcessing(MediaProcessingError::FileTooLarge {
                 size: 1000,
                 max_size: 500,
             }),
-            EncryptedMediaError::ImageProcessing(ImageProcessingError::InvalidMimeType {
+            EncryptedMediaError::MediaProcessing(MediaProcessingError::InvalidMimeType {
                 mime_type: "invalid".to_string(),
             }),
-            EncryptedMediaError::ImageProcessing(ImageProcessingError::FilenameTooLong {
+            EncryptedMediaError::MediaProcessing(MediaProcessingError::FilenameTooLong {
                 length: 300,
                 max_length: 210,
             }),
-            EncryptedMediaError::ImageProcessing(ImageProcessingError::EmptyFilename),
-            EncryptedMediaError::ImageProcessing(ImageProcessingError::DimensionsTooLarge {
+            EncryptedMediaError::MediaProcessing(MediaProcessingError::EmptyFilename),
+            EncryptedMediaError::MediaProcessing(MediaProcessingError::ImageDimensionsTooLarge {
                 width: 20000,
                 height: 15000,
                 max_dimension: 16384,
             }),
-            EncryptedMediaError::ImageProcessing(ImageProcessingError::TooManyPixels {
+            EncryptedMediaError::MediaProcessing(MediaProcessingError::ImageTooManyPixels {
                 total_pixels: 100_000_000,
                 max_pixels: 50_000_000,
             }),
-            EncryptedMediaError::ImageProcessing(ImageProcessingError::ImageMemoryTooLarge {
+            EncryptedMediaError::MediaProcessing(MediaProcessingError::ImageMemoryTooLarge {
                 estimated_mb: 1024,
                 max_mb: 256,
             }),
-            EncryptedMediaError::ImageProcessing(ImageProcessingError::MetadataExtractionFailed {
+            EncryptedMediaError::MediaProcessing(MediaProcessingError::MetadataExtractionFailed {
                 reason: "Test metadata failure".to_string(),
             }),
             EncryptedMediaError::EncryptionFailed {
