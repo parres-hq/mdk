@@ -21,6 +21,7 @@ pub mod encrypted_media;
 pub mod error;
 pub mod extension;
 pub mod groups;
+pub mod image_processing;
 pub mod key_packages;
 pub mod messages;
 pub mod prelude;

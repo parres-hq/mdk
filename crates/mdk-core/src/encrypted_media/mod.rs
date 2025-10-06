@@ -11,7 +11,6 @@ pub mod crypto;
 pub mod manager;
 pub mod metadata;
 pub mod types;
-pub mod validation;
 
 // Re-export public API
 pub use types::{

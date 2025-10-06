@@ -1,6 +1,7 @@
 //! Group image encryption and decryption functionality for MIP-01
 //!
 //! This module provides cryptographic operations for group avatar images:
+//! - Image validation (dimensions, file size)
 //! - Encryption with ChaCha20-Poly1305 AEAD
 //! - Decryption and integrity verification
 //! - Deterministic upload keypair derivation for Blossom cleanup
@@ -16,6 +17,9 @@ use chacha20poly1305::{
 use hkdf::Hkdf;
 use nostr::secp256k1::rand::{RngCore, rngs::OsRng};
 use sha2::{Digest, Sha256};
+
+use crate::image_processing::validation::validate_file_size;
+use crate::image_processing::{ImageValidationOptions, extract_metadata_from_encoded_image};
 
 /// Domain separation label for upload keypair derivation (MIP-01 spec)
 const UPLOAD_KEYPAIR_CONTEXT: &[u8] = b"mip01-blossom-upload-v1";
@@ -33,8 +37,18 @@ pub struct GroupImageUploadPrepared {
     pub image_nonce: [u8; 12],
     /// Derived keypair for Blossom authentication
     pub upload_keypair: nostr::Keys,
-    /// Original image size before encryption
+    /// Original image size before encryption (and before EXIF stripping if applicable)
     pub original_size: usize,
+    /// Size after EXIF stripping but before encryption
+    pub sanitized_size: usize,
+    /// Size after encryption
+    pub encrypted_size: usize,
+    /// Validated and canonical MIME type
+    pub mime_type: String,
+    /// Image dimensions (width, height) if available
+    pub dimensions: Option<(u32, u32)>,
+    /// Blurhash for preview if generated
+    pub blurhash: Option<String>,
 }
 
 /// Group image encryption result with hash (internal type)
@@ -64,6 +78,10 @@ pub struct GroupImageEncryptionInfo {
 /// Errors that can occur during group image operations
 #[derive(Debug, thiserror::Error)]
 pub enum GroupImageError {
+    /// Image validation or processing error
+    #[error(transparent)]
+    ImageProcessing(#[from] crate::image_processing::types::ImageProcessingError),
+
     /// Encryption failed
     #[error("Encryption failed: {reason}")]
     EncryptionFailed {
@@ -219,20 +237,34 @@ pub fn derive_upload_keypair(image_key: &[u8; 32]) -> Result<nostr::Keys, GroupI
     Ok(nostr::Keys::new(secret_key))
 }
 
-/// Prepare group image for upload (encrypt + derive keypair)
+/// Prepare group image for upload (validate + encrypt + derive keypair)
 ///
-/// This is a convenience function that encrypts the image and derives the upload keypair
+/// This function validates the image and MIME type, encrypts it, and derives the upload keypair
 /// in one step, returning everything needed for the upload workflow.
 ///
 /// # Arguments
 /// * `image_data` - Raw image bytes
+/// * `mime_type` - MIME type of the image (e.g., "image/jpeg", "image/png")
 ///
 /// # Returns
 /// * `GroupImageUploadPrepared` with encrypted data, hash, and upload keypair
 ///
+/// # Errors
+/// * `ImageProcessing` - If the image fails validation (too large, invalid dimensions, invalid MIME type, etc.)
+/// * `EncryptionFailed` - If encryption fails
+/// * `KeypairDerivationFailed` - If keypair derivation fails
+///
 /// # Example
 /// ```ignore
-/// let prepared = prepare_group_image_for_upload(&image_bytes)?;
+/// let prepared = prepare_group_image_for_upload(&image_bytes, "image/jpeg")?;
+///
+/// // Access metadata
+/// println!("Dimensions: {:?}", prepared.dimensions);
+/// println!("Blurhash: {:?}", prepared.blurhash);
+/// println!("MIME type: {}", prepared.mime_type);
+/// println!("Original size: {} bytes", prepared.original_size);
+/// println!("Sanitized size: {} bytes", prepared.sanitized_size);
+/// println!("Encrypted size: {} bytes", prepared.encrypted_size);
 ///
 /// // Upload to Blossom
 /// let blob_hash = blossom_client.upload(
@@ -243,7 +275,7 @@ pub fn derive_upload_keypair(image_key: &[u8; 32]) -> Result<nostr::Keys, GroupI
 /// // Verify the Blossom response matches our hash
 /// assert_eq!(blob_hash, prepared.encrypted_hash);
 ///
-/// // Update extension with the verified hash
+/// // Update extension with the verified hash and metadata
 /// let update = NostrGroupDataUpdate::new()
 ///     .image_hash(Some(blob_hash))
 ///     .image_key(Some(prepared.image_key))
@@ -251,8 +283,84 @@ pub fn derive_upload_keypair(image_key: &[u8; 32]) -> Result<nostr::Keys, GroupI
 /// ```
 pub fn prepare_group_image_for_upload(
     image_data: &[u8],
+    mime_type: &str,
 ) -> Result<GroupImageUploadPrepared, GroupImageError> {
-    let encrypted = encrypt_group_image(image_data)?;
+    prepare_group_image_for_upload_with_options(image_data, mime_type, true)
+}
+
+/// Prepare group image for upload with configurable blurhash generation
+///
+/// This is an internal function that allows tests to disable blurhash generation
+/// to work around bugs in the blurhash library. Production code should use
+/// `prepare_group_image_for_upload()` which generates blurhash by default.
+fn prepare_group_image_for_upload_with_options(
+    image_data: &[u8],
+    mime_type: &str,
+    generate_blurhash: bool,
+) -> Result<GroupImageUploadPrepared, GroupImageError> {
+    use crate::image_processing::{
+        extract_metadata_from_decoded_image, is_safe_raster_format, preflight_dimension_check,
+        strip_exif_and_return_image,
+    };
+
+    // Validate image before processing
+    let validation_options = ImageValidationOptions::default();
+
+    // Validate file size to ensure the image isn't too large
+    validate_file_size(image_data, &validation_options)?;
+
+    // Validate and canonicalize MIME type, ensuring it matches the actual file data
+    // This protects against MIME type confusion attacks
+    let canonical_mime_type = crate::image_processing::validation::validate_mime_type_matches_data(
+        image_data, mime_type,
+    )?;
+
+    let original_size = image_data.len();
+    let sanitized_data: Vec<u8>;
+    let dimensions: Option<(u32, u32)>;
+    let blurhash: Option<String>;
+
+    // Strip EXIF data for privacy if it's a safe raster format (JPEG, PNG)
+    // For other formats (GIF, WebP, etc.), use the original data
+    if is_safe_raster_format(&canonical_mime_type) {
+        // PREFLIGHT CHECK: Validate dimensions without full decode to prevent OOM
+        // This lightweight check protects against decompression bombs before
+        // we fully decode the image for EXIF stripping
+        preflight_dimension_check(image_data, &validation_options)?;
+
+        // Strip EXIF and get the decoded image
+        let (cleaned_data, decoded_img) =
+            strip_exif_and_return_image(image_data, &canonical_mime_type)?;
+
+        // Extract metadata from the already-decoded image
+        let metadata = extract_metadata_from_decoded_image(
+            &decoded_img,
+            &validation_options,
+            generate_blurhash,
+        )?;
+
+        sanitized_data = cleaned_data;
+        dimensions = metadata.dimensions;
+        blurhash = metadata.blurhash;
+    } else {
+        // For non-safe formats (GIF, WebP, etc.), skip EXIF stripping
+        // and extract metadata from the encoded image
+        let metadata = extract_metadata_from_encoded_image(
+            image_data,
+            &validation_options,
+            generate_blurhash,
+        )?;
+
+        sanitized_data = image_data.to_vec();
+        dimensions = metadata.dimensions;
+        blurhash = metadata.blurhash;
+    }
+
+    let sanitized_size = sanitized_data.len();
+
+    // Now that validation and sanitization passed, proceed with encryption
+    let encrypted = encrypt_group_image(&sanitized_data)?;
+    let encrypted_size = encrypted.encrypted_data.len();
     let upload_keypair = derive_upload_keypair(&encrypted.image_key)?;
 
     Ok(GroupImageUploadPrepared {
@@ -261,7 +369,12 @@ pub fn prepare_group_image_for_upload(
         image_key: encrypted.image_key,
         image_nonce: encrypted.image_nonce,
         upload_keypair,
-        original_size: image_data.len(),
+        original_size,
+        sanitized_size,
+        encrypted_size,
+        mime_type: canonical_mime_type,
+        dimensions,
+        blurhash,
     })
 }
 
@@ -357,26 +470,51 @@ mod tests {
 
     #[test]
     fn test_prepare_group_image_for_upload() {
-        let image_data = b"Test group avatar";
+        // Create a valid 64x64 gradient image for testing
+        use image::{ImageBuffer, Rgb};
+        let img = ImageBuffer::from_fn(64, 64, |x, y| {
+            Rgb([(x * 4) as u8, (y * 4) as u8, ((x + y) * 2) as u8])
+        });
+        let mut image_data = Vec::new();
+        img.write_to(
+            &mut std::io::Cursor::new(&mut image_data),
+            image::ImageFormat::Png,
+        )
+        .unwrap();
 
-        let prepared = prepare_group_image_for_upload(image_data).unwrap();
+        // Test without blurhash due to bugs in blurhash library v0.2
+        // The important thing is that the metadata structure is returned
+        let prepared =
+            prepare_group_image_for_upload_with_options(&image_data, "image/png", false).unwrap();
 
         // Verify all fields are populated
         assert!(!prepared.encrypted_data.is_empty());
         assert_eq!(prepared.original_size, image_data.len());
+        assert_eq!(prepared.mime_type, "image/png");
+
+        // Verify metadata is populated
+        assert_eq!(prepared.dimensions, Some((64, 64)));
+        assert_eq!(prepared.blurhash, None); // Disabled for this test
+
+        // Verify size fields
+        assert_eq!(prepared.original_size, image_data.len());
+        // For PNG, EXIF stripping re-encodes so sanitized_size may differ from original
+        assert!(prepared.sanitized_size > 0);
+        assert_eq!(prepared.encrypted_size, prepared.encrypted_data.len());
 
         // Verify the encrypted hash matches the actual hash
         let calculated_hash: [u8; 32] = Sha256::digest(&prepared.encrypted_data).into();
         assert_eq!(prepared.encrypted_hash, calculated_hash);
 
-        // Verify we can decrypt
+        // Verify we can decrypt (should get back the sanitized data, not original)
         let decrypted = decrypt_group_image(
             &prepared.encrypted_data,
             &prepared.image_key,
             &prepared.image_nonce,
         )
         .unwrap();
-        assert_eq!(decrypted.as_slice(), image_data);
+        // The decrypted data should match the sanitized size
+        assert_eq!(decrypted.len(), prepared.sanitized_size);
 
         // Verify keypair derivation is correct
         let derived_keypair = derive_upload_keypair(&prepared.image_key).unwrap();
@@ -412,5 +550,56 @@ mod tests {
             result,
             Err(GroupImageError::DecryptionFailed { .. })
         ));
+    }
+
+    #[test]
+    fn test_mime_type_validation() {
+        // Create a valid 64x64 gradient PNG image for testing
+        use image::{ImageBuffer, Rgb};
+        let img = ImageBuffer::from_fn(64, 64, |x, y| {
+            Rgb([(x * 4) as u8, (y * 4) as u8, ((x + y) * 2) as u8])
+        });
+        let mut png_data = Vec::new();
+        img.write_to(
+            &mut std::io::Cursor::new(&mut png_data),
+            image::ImageFormat::Png,
+        )
+        .unwrap();
+
+        // Test valid MIME type that matches the actual file
+        let result = prepare_group_image_for_upload_with_options(&png_data, "image/png", false);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().mime_type, "image/png");
+
+        // Test MIME type canonicalization (uppercase -> lowercase)
+        let result = prepare_group_image_for_upload_with_options(&png_data, "Image/PNG", false);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().mime_type, "image/png");
+
+        // Test MIME type with whitespace
+        let result = prepare_group_image_for_upload_with_options(&png_data, "  image/png  ", false);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().mime_type, "image/png");
+
+        // Test MIME type mismatch - claiming JPEG but file is PNG
+        let result = prepare_group_image_for_upload_with_options(&png_data, "image/jpeg", false);
+        assert!(result.is_err());
+        assert!(matches!(result, Err(GroupImageError::ImageProcessing(_))));
+
+        // Test MIME type mismatch - claiming WebP but file is PNG
+        let result = prepare_group_image_for_upload_with_options(&png_data, "image/webp", false);
+        assert!(result.is_err());
+        assert!(matches!(result, Err(GroupImageError::ImageProcessing(_))));
+
+        // Test invalid MIME type (no slash)
+        let result = prepare_group_image_for_upload_with_options(&png_data, "invalid", false);
+        assert!(result.is_err());
+        assert!(matches!(result, Err(GroupImageError::ImageProcessing(_))));
+
+        // Test invalid MIME type (too long)
+        let long_mime = "a".repeat(101);
+        let result = prepare_group_image_for_upload_with_options(&png_data, &long_mime, false);
+        assert!(result.is_err());
+        assert!(matches!(result, Err(GroupImageError::ImageProcessing(_))));
     }
 }

@@ -3,24 +3,10 @@
 //! This module contains all the core types, constants, and error definitions
 //! used throughout the encrypted media system.
 
-/// Maximum file size for encrypted media (100MB)
-pub const MAX_FILE_SIZE: usize = 100 * 1024 * 1024;
-
-/// Maximum filename length
-pub const MAX_FILENAME_LENGTH: usize = 210;
-
-/// Maximum image dimension (width or height) - supports flagship phone cameras (200MP)
-pub const MAX_IMAGE_DIMENSION: u32 = 16384;
-
-/// Maximum total pixels allowed in an image (50 million pixels)
-/// This prevents decompression bombs. At 50M pixels with 4 bytes per pixel (RGBA),
-/// this allows ~200MB of decoded image data, which is reasonable for high-res images
-/// but protects against malicious images that could exhaust memory.
-pub const MAX_IMAGE_PIXELS: u64 = 50_000_000;
-
-/// Maximum memory allowed for decoded images in MB (256MB)
-/// This is a hard limit on memory allocation to prevent OOM from decompression bombs.
-pub const MAX_IMAGE_MEMORY_MB: u64 = 256;
+// Re-export shared constants from image_processing module
+pub use crate::image_processing::{
+    MAX_FILE_SIZE, MAX_FILENAME_LENGTH, MAX_IMAGE_DIMENSION, MAX_IMAGE_MEMORY_MB, MAX_IMAGE_PIXELS,
+};
 
 /// Configuration options for media processing
 #[derive(Debug, Clone)]
@@ -45,6 +31,18 @@ impl Default for MediaProcessingOptions {
             generate_blurhash: true,   // Good UX
             max_dimension: Some(MAX_IMAGE_DIMENSION),
             max_file_size: None,
+        }
+    }
+}
+
+impl MediaProcessingOptions {
+    /// Convert to ImageValidationOptions for use with shared validation functions
+    pub(crate) fn to_image_validation_options(
+        &self,
+    ) -> crate::image_processing::ImageValidationOptions {
+        crate::image_processing::ImageValidationOptions {
+            max_dimension: self.max_dimension,
+            max_file_size: self.max_file_size,
         }
     }
 }
@@ -103,73 +101,15 @@ pub struct MediaReference {
 /// Errors that can occur during encrypted media operations
 #[derive(Debug, thiserror::Error)]
 pub enum EncryptedMediaError {
-    /// File is too large
-    #[error("File size {size} exceeds maximum allowed size {max_size}")]
-    FileTooLarge {
-        /// The actual file size
-        size: usize,
-        /// The maximum allowed file size
-        max_size: usize,
-    },
+    /// Image processing error (validation, metadata extraction, etc.)
+    #[error(transparent)]
+    ImageProcessing(#[from] crate::image_processing::types::ImageProcessingError),
 
     /// Unsupported MIME type
     #[error("MIME type '{mime_type}' is not supported")]
     UnsupportedMimeType {
         /// The unsupported MIME type
         mime_type: String,
-    },
-
-    /// Invalid MIME type format
-    #[error("Invalid MIME type format: {mime_type}")]
-    InvalidMimeType {
-        /// The invalid MIME type
-        mime_type: String,
-    },
-
-    /// Filename is too long
-    #[error("Filename length {length} exceeds maximum {max_length}")]
-    FilenameTooLong {
-        /// The actual filename length
-        length: usize,
-        /// The maximum allowed filename length
-        max_length: usize,
-    },
-
-    /// Filename is empty or invalid
-    #[error("Filename cannot be empty")]
-    EmptyFilename,
-
-    /// Filename contains invalid characters
-    #[error("Filename contains invalid characters")]
-    InvalidFilename,
-
-    /// Image dimensions are too large
-    #[error("Image dimensions {width}x{height} exceed maximum {max_dimension}")]
-    DimensionsTooLarge {
-        /// The image width in pixels
-        width: u32,
-        /// The image height in pixels
-        height: u32,
-        /// The maximum allowed dimension
-        max_dimension: u32,
-    },
-
-    /// Image has too many pixels (decompression bomb protection)
-    #[error("Image has {total_pixels} pixels, exceeding maximum {max_pixels}")]
-    TooManyPixels {
-        /// Total number of pixels
-        total_pixels: u64,
-        /// Maximum allowed pixels
-        max_pixels: u64,
-    },
-
-    /// Image would require too much memory to decode (decompression bomb protection)
-    #[error("Image would require {estimated_mb}MB to decode, exceeding maximum {max_mb}MB")]
-    ImageMemoryTooLarge {
-        /// Estimated memory requirement in MB
-        estimated_mb: u64,
-        /// Maximum allowed memory in MB
-        max_mb: u64,
     },
 
     /// Encryption failed
@@ -183,13 +123,6 @@ pub enum EncryptedMediaError {
     #[error("Decryption failed: {reason}")]
     DecryptionFailed {
         /// The reason for decryption failure
-        reason: String,
-    },
-
-    /// Metadata extraction failed
-    #[error("Failed to extract metadata: {reason}")]
-    MetadataExtractionFailed {
-        /// The reason for metadata extraction failure
         reason: String,
     },
 
@@ -298,41 +231,43 @@ mod tests {
 
     #[test]
     fn test_error_types() {
+        use crate::image_processing::types::ImageProcessingError;
+
         // Test that all error types can be created and formatted properly
         let errors = vec![
-            EncryptedMediaError::FileTooLarge {
+            EncryptedMediaError::ImageProcessing(ImageProcessingError::FileTooLarge {
                 size: 1000,
                 max_size: 500,
-            },
-            EncryptedMediaError::InvalidMimeType {
+            }),
+            EncryptedMediaError::ImageProcessing(ImageProcessingError::InvalidMimeType {
                 mime_type: "invalid".to_string(),
-            },
-            EncryptedMediaError::FilenameTooLong {
+            }),
+            EncryptedMediaError::ImageProcessing(ImageProcessingError::FilenameTooLong {
                 length: 300,
                 max_length: 210,
-            },
-            EncryptedMediaError::EmptyFilename,
-            EncryptedMediaError::DimensionsTooLarge {
+            }),
+            EncryptedMediaError::ImageProcessing(ImageProcessingError::EmptyFilename),
+            EncryptedMediaError::ImageProcessing(ImageProcessingError::DimensionsTooLarge {
                 width: 20000,
                 height: 15000,
                 max_dimension: 16384,
-            },
-            EncryptedMediaError::TooManyPixels {
+            }),
+            EncryptedMediaError::ImageProcessing(ImageProcessingError::TooManyPixels {
                 total_pixels: 100_000_000,
                 max_pixels: 50_000_000,
-            },
-            EncryptedMediaError::ImageMemoryTooLarge {
+            }),
+            EncryptedMediaError::ImageProcessing(ImageProcessingError::ImageMemoryTooLarge {
                 estimated_mb: 1024,
                 max_mb: 256,
-            },
+            }),
+            EncryptedMediaError::ImageProcessing(ImageProcessingError::MetadataExtractionFailed {
+                reason: "Test metadata failure".to_string(),
+            }),
             EncryptedMediaError::EncryptionFailed {
                 reason: "Test encryption failure".to_string(),
             },
             EncryptedMediaError::DecryptionFailed {
                 reason: "Test decryption failure".to_string(),
-            },
-            EncryptedMediaError::MetadataExtractionFailed {
-                reason: "Test metadata failure".to_string(),
             },
             EncryptedMediaError::HashVerificationFailed,
             EncryptedMediaError::GroupNotFound,
