@@ -26,7 +26,7 @@ const UPLOAD_KEYPAIR_CONTEXT: &[u8] = b"mip01-blossom-upload-v1";
 
 /// Prepared group image data ready for upload to Blossom
 #[derive(Debug, Clone)]
-pub struct GroupImageUploadPrepared {
+pub struct GroupImageUpload {
     /// Encrypted image data (ready to upload to Blossom)
     pub encrypted_data: Vec<u8>,
     /// SHA256 hash of encrypted data (verify against Blossom response)
@@ -39,8 +39,6 @@ pub struct GroupImageUploadPrepared {
     pub upload_keypair: nostr::Keys,
     /// Original image size before encryption (and before EXIF stripping if applicable)
     pub original_size: usize,
-    /// Size after EXIF stripping but before encryption
-    pub sanitized_size: usize,
     /// Size after encryption
     pub encrypted_size: usize,
     /// Validated and canonical MIME type
@@ -247,7 +245,7 @@ pub fn derive_upload_keypair(image_key: &[u8; 32]) -> Result<nostr::Keys, GroupI
 /// * `mime_type` - MIME type of the image (e.g., "image/jpeg", "image/png")
 ///
 /// # Returns
-/// * `GroupImageUploadPrepared` with encrypted data, hash, and upload keypair
+/// * `GroupImageUpload` with encrypted data, hash, and upload keypair
 ///
 /// # Errors
 /// * `ImageProcessing` - If the image fails validation (too large, invalid dimensions, invalid MIME type, etc.)
@@ -263,7 +261,6 @@ pub fn derive_upload_keypair(image_key: &[u8; 32]) -> Result<nostr::Keys, GroupI
 /// println!("Blurhash: {:?}", prepared.blurhash);
 /// println!("MIME type: {}", prepared.mime_type);
 /// println!("Original size: {} bytes", prepared.original_size);
-/// println!("Sanitized size: {} bytes", prepared.sanitized_size);
 /// println!("Encrypted size: {} bytes", prepared.encrypted_size);
 ///
 /// // Upload to Blossom
@@ -284,7 +281,7 @@ pub fn derive_upload_keypair(image_key: &[u8; 32]) -> Result<nostr::Keys, GroupI
 pub fn prepare_group_image_for_upload(
     image_data: &[u8],
     mime_type: &str,
-) -> Result<GroupImageUploadPrepared, GroupImageError> {
+) -> Result<GroupImageUpload, GroupImageError> {
     prepare_group_image_for_upload_with_options(image_data, mime_type, true)
 }
 
@@ -297,7 +294,7 @@ fn prepare_group_image_for_upload_with_options(
     image_data: &[u8],
     mime_type: &str,
     generate_blurhash: bool,
-) -> Result<GroupImageUploadPrepared, GroupImageError> {
+) -> Result<GroupImageUpload, GroupImageError> {
     use crate::image_processing::{
         extract_metadata_from_decoded_image, is_safe_raster_format, preflight_dimension_check,
         strip_exif_and_return_image,
@@ -356,21 +353,18 @@ fn prepare_group_image_for_upload_with_options(
         blurhash = metadata.blurhash;
     }
 
-    let sanitized_size = sanitized_data.len();
-
     // Now that validation and sanitization passed, proceed with encryption
     let encrypted = encrypt_group_image(&sanitized_data)?;
     let encrypted_size = encrypted.encrypted_data.len();
     let upload_keypair = derive_upload_keypair(&encrypted.image_key)?;
 
-    Ok(GroupImageUploadPrepared {
+    Ok(GroupImageUpload {
         encrypted_data: encrypted.encrypted_data,
         encrypted_hash: encrypted.encrypted_hash,
         image_key: encrypted.image_key,
         image_nonce: encrypted.image_nonce,
         upload_keypair,
         original_size,
-        sanitized_size,
         encrypted_size,
         mime_type: canonical_mime_type,
         dimensions,
@@ -498,23 +492,21 @@ mod tests {
 
         // Verify size fields
         assert_eq!(prepared.original_size, image_data.len());
-        // For PNG, EXIF stripping re-encodes so sanitized_size may differ from original
-        assert!(prepared.sanitized_size > 0);
         assert_eq!(prepared.encrypted_size, prepared.encrypted_data.len());
 
         // Verify the encrypted hash matches the actual hash
         let calculated_hash: [u8; 32] = Sha256::digest(&prepared.encrypted_data).into();
         assert_eq!(prepared.encrypted_hash, calculated_hash);
 
-        // Verify we can decrypt (should get back the sanitized data, not original)
+        // Verify we can decrypt
         let decrypted = decrypt_group_image(
             &prepared.encrypted_data,
             &prepared.image_key,
             &prepared.image_nonce,
         )
         .unwrap();
-        // The decrypted data should match the sanitized size
-        assert_eq!(decrypted.len(), prepared.sanitized_size);
+        // The decrypted data should be valid
+        assert!(!decrypted.is_empty());
 
         // Verify keypair derivation is correct
         let derived_keypair = derive_upload_keypair(&prepared.image_key).unwrap();
