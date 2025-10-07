@@ -11,7 +11,6 @@ pub mod crypto;
 pub mod manager;
 pub mod metadata;
 pub mod types;
-pub mod validation;
 
 // Re-export public API
 pub use types::{
@@ -22,6 +21,4 @@ pub use types::{
 pub use manager::EncryptedMediaManager;
 
 // Re-export constants that users might need
-pub use types::{
-    MAX_FILE_SIZE, MAX_FILENAME_LENGTH, MAX_IMAGE_DIMENSION, MAX_IMAGE_MEMORY_MB, MAX_IMAGE_PIXELS,
-};
+pub use types::{MAX_FILE_SIZE, MAX_FILENAME_LENGTH, MAX_IMAGE_DIMENSION};

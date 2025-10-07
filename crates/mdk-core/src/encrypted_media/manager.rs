@@ -14,7 +14,7 @@ use crate::encrypted_media::metadata::extract_and_process_metadata;
 use crate::encrypted_media::types::{
     EncryptedMediaError, EncryptedMediaUpload, MediaProcessingOptions, MediaReference,
 };
-use crate::encrypted_media::validation::{validate_filename, validate_inputs, validate_mime_type};
+use crate::media_processing::validation;
 use crate::{GroupId, MDK};
 use mdk_storage_traits::MdkStorageProvider;
 
@@ -70,7 +70,9 @@ where
         filename: &str,
         options: &MediaProcessingOptions,
     ) -> Result<EncryptedMediaUpload, EncryptedMediaError> {
-        let canonical_mime_type = validate_inputs(data, mime_type, filename, options)?;
+        validation::validate_file_size(data, options)?;
+        let canonical_mime_type = validation::validate_mime_type(mime_type)?;
+        validation::validate_filename(filename)?;
 
         // Extract metadata and optionally sanitize the file
         // If sanitize_exif is true, processed_data will have EXIF stripped
@@ -245,7 +247,7 @@ where
                 "url" => url = Some(parts[1].to_string()),
                 "m" => {
                     // Use centralized MIME type canonicalization to handle aliases properly
-                    match validate_mime_type(parts[1]) {
+                    match validation::validate_mime_type(parts[1]) {
                         Ok(canonical) => mime_type = Some(canonical),
                         Err(_) => {
                             return Err(EncryptedMediaError::InvalidImetaTag {
@@ -279,7 +281,7 @@ where
                         dimensions = Some((width, height));
                     }
                 }
-                "filename" => match validate_filename(parts[1]) {
+                "filename" => match validation::validate_filename(parts[1]) {
                     Ok(_) => filename = Some(parts[1].to_string()),
                     Err(_) => {
                         return Err(EncryptedMediaError::InvalidImetaTag {
@@ -501,10 +503,10 @@ mod tests {
         // Use options that skip metadata extraction for images to avoid format errors
         let options = MediaProcessingOptions {
             sanitize_exif: true,
-            preserve_dimensions: false,
             generate_blurhash: false,
             max_dimension: None,
             max_file_size: None,
+            max_filename_length: None,
         };
 
         // Test with various non-image MIME types - all should pass validation
