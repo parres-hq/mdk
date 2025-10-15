@@ -51,11 +51,13 @@ You can manually specify which Rust version to use:
 ### CI/CD
 
 GitHub Actions runs the full test matrix:
+
 - **Rust versions**: 1.90.0 (MSRV) + stable
 - **Operating systems**: Ubuntu, macOS (latest), macOS (M1)
 - **Feature combinations**: all-features, no-features, mip04-only
 
 This gives us confidence that the code works across:
+
 - 2 Rust versions (MSRV and latest)
 - 3 operating systems
 - 3 feature configurations
@@ -77,4 +79,3 @@ When you need to bump the MSRV, update these locations:
 3. **Before pushing**: Ensure CI will pass by checking locally first
 
 This approach balances speed during development with comprehensive validation before committing.
-

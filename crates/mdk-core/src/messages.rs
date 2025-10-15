@@ -42,11 +42,20 @@ pub enum MessageProcessingResult {
     /// Proposal message
     Proposal(UpdateGroupResult),
     /// External Join Proposal
-    ExternalJoinProposal,
+    ExternalJoinProposal {
+        /// The MLS group ID this proposal belongs to
+        mls_group_id: GroupId,
+    },
     /// Commit message
-    Commit,
+    Commit {
+        /// The MLS group ID this commit applies to
+        mls_group_id: GroupId,
+    },
     /// Unprocessable message
-    Unprocessable,
+    Unprocessable {
+        /// The MLS group ID of the message that could not be processed
+        mls_group_id: GroupId,
+    },
 }
 
 impl<Storage> MDK<Storage>
@@ -422,6 +431,7 @@ where
                             Ok(UpdateGroupResult {
                                 evolution_event: commit_event,
                                 welcome_rumors,
+                                mls_group_id: mls_group.group_id().into(),
                             })
                         } else {
                             Err(Error::ProposalFromNonAdmin)
@@ -619,7 +629,9 @@ where
             }
             Ok(ProcessedMessageContent::StagedCommitMessage(staged_commit)) => {
                 self.process_commit_message_for_group(mls_group, event, *staged_commit)?;
-                Ok(MessageProcessingResult::Commit)
+                Ok(MessageProcessingResult::Commit {
+                    mls_group_id: group.mls_group_id.clone(),
+                })
             }
             Ok(ProcessedMessageContent::ExternalJoinProposalMessage(_external_join_proposal)) => {
                 // Save a processed message so we don't reprocess
@@ -635,7 +647,9 @@ where
                     .save_processed_message(processed_message)
                     .map_err(|e| Error::Message(e.to_string()))?;
 
-                Ok(MessageProcessingResult::ExternalJoinProposal)
+                Ok(MessageProcessingResult::ExternalJoinProposal {
+                    mls_group_id: group.mls_group_id.clone(),
+                })
             }
             Err(e) => Err(e),
         }
@@ -712,12 +726,16 @@ where
                                 Error::Message(format!("Failed to sync group metadata: {}", e))
                             })?;
 
-                        Ok(MessageProcessingResult::Commit)
+                        Ok(MessageProcessingResult::Commit {
+                            mls_group_id: group.mls_group_id.clone(),
+                        })
                     }
                     message_types::ProcessedMessageState::Processed
                     | message_types::ProcessedMessageState::Failed => {
                         tracing::debug!(target: "mdk_core::messages::process_message", "Message cannot be processed (already processed or failed)");
-                        Ok(MessageProcessingResult::Unprocessable)
+                        Ok(MessageProcessingResult::Unprocessable {
+                            mls_group_id: group.mls_group_id.clone(),
+                        })
                     }
                 }
             }
@@ -740,7 +758,9 @@ where
                             Error::Message(format!("Failed to sync group metadata: {}", e))
                         })?;
 
-                    return Ok(MessageProcessingResult::Commit);
+                    return Ok(MessageProcessingResult::Commit {
+                        mls_group_id: group.mls_group_id.clone(),
+                    });
                 }
 
                 // Not our own commit - this is a genuine error
@@ -756,7 +776,9 @@ where
                     .save_processed_message(processed_message)
                     .map_err(|e| Error::Message(e.to_string()))?;
 
-                Ok(MessageProcessingResult::Unprocessable)
+                Ok(MessageProcessingResult::Unprocessable {
+                    mls_group_id: group.mls_group_id.clone(),
+                })
             }
             Error::ProcessMessageWrongGroupId => {
                 tracing::error!(target: "mdk_core::messages::process_message", "Group ID mismatch: {:?}", error);
@@ -771,7 +793,9 @@ where
                     .save_processed_message(processed_message)
                     .map_err(|e| Error::Message(e.to_string()))?;
 
-                Ok(MessageProcessingResult::Unprocessable)
+                Ok(MessageProcessingResult::Unprocessable {
+                    mls_group_id: group.mls_group_id.clone(),
+                })
             }
             Error::ProcessMessageUseAfterEviction => {
                 tracing::error!(target: "mdk_core::messages::process_message", "Attempted to use group after eviction: {:?}", error);
@@ -786,7 +810,9 @@ where
                     .save_processed_message(processed_message)
                     .map_err(|e| Error::Message(e.to_string()))?;
 
-                Ok(MessageProcessingResult::Unprocessable)
+                Ok(MessageProcessingResult::Unprocessable {
+                    mls_group_id: group.mls_group_id.clone(),
+                })
             }
             _ => {
                 tracing::error!(target: "mdk_core::messages::process_message", "Unexpected error processing message: {:?}", error);
@@ -801,7 +827,9 @@ where
                     .save_processed_message(processed_message)
                     .map_err(|e| Error::Message(e.to_string()))?;
 
-                Ok(MessageProcessingResult::Unprocessable)
+                Ok(MessageProcessingResult::Unprocessable {
+                    mls_group_id: group.mls_group_id.clone(),
+                })
             }
         }
     }
@@ -1183,6 +1211,7 @@ mod tests {
     #[test]
     fn test_message_processing_result_variants() {
         // Test that MessageProcessingResult variants can be created and matched
+        let test_group_id = GroupId::from_slice(&[1, 2, 3, 4]);
         let dummy_message = message_types::Message {
             id: EventId::all_zeros(),
             pubkey: PublicKey::from_hex(
@@ -1190,7 +1219,7 @@ mod tests {
             )
             .unwrap(),
             kind: Kind::TextNote,
-            mls_group_id: GroupId::from_slice(&[1, 2, 3, 4]),
+            mls_group_id: test_group_id.clone(),
             created_at: Timestamp::now(),
             content: "Test".to_string(),
             tags: Tags::new(),
@@ -1205,9 +1234,15 @@ mod tests {
         };
 
         let app_result = MessageProcessingResult::ApplicationMessage(dummy_message);
-        let commit_result = MessageProcessingResult::Commit;
-        let external_join_result = MessageProcessingResult::ExternalJoinProposal;
-        let unprocessable_result = MessageProcessingResult::Unprocessable;
+        let commit_result = MessageProcessingResult::Commit {
+            mls_group_id: test_group_id.clone(),
+        };
+        let external_join_result = MessageProcessingResult::ExternalJoinProposal {
+            mls_group_id: test_group_id.clone(),
+        };
+        let unprocessable_result = MessageProcessingResult::Unprocessable {
+            mls_group_id: test_group_id.clone(),
+        };
 
         // Test that we can match on variants
         match app_result {
@@ -1216,17 +1251,17 @@ mod tests {
         }
 
         match commit_result {
-            MessageProcessingResult::Commit => {}
+            MessageProcessingResult::Commit { .. } => {}
             _ => panic!("Expected Commit variant"),
         }
 
         match external_join_result {
-            MessageProcessingResult::ExternalJoinProposal => {}
+            MessageProcessingResult::ExternalJoinProposal { .. } => {}
             _ => panic!("Expected ExternalJoinProposal variant"),
         }
 
         match unprocessable_result {
-            MessageProcessingResult::Unprocessable => {}
+            MessageProcessingResult::Unprocessable { .. } => {}
             _ => panic!("Expected Unprocessable variant"),
         }
     }
@@ -1987,7 +2022,10 @@ mod tests {
             .expect("Failed to process own commit message");
 
         // Verify it returns Commit result (our fix should handle epoch mismatch errors)
-        assert!(matches!(message_result, MessageProcessingResult::Commit));
+        assert!(matches!(
+            message_result,
+            MessageProcessingResult::Commit { .. }
+        ));
 
         // Most importantly: verify that processing our own commit synchronized the stored group metadata
         let synced_group = mdk
