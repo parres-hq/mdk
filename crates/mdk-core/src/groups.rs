@@ -43,6 +43,8 @@ pub struct UpdateGroupResult {
     pub evolution_event: Event,
     /// A vec of Kind:444 Welcome Events to be published for any members added as part of the update.
     pub welcome_rumors: Option<Vec<UnsignedEvent>>,
+    /// The MLS group ID this update applies to
+    pub mls_group_id: GroupId,
 }
 
 /// Configuration data for the Group
@@ -535,6 +537,7 @@ where
         Ok(UpdateGroupResult {
             evolution_event: commit_event,
             welcome_rumors, // serialized_group_info,
+            mls_group_id: group_id.clone(),
         })
     }
 
@@ -636,6 +639,7 @@ where
         Ok(UpdateGroupResult {
             evolution_event: commit_event,
             welcome_rumors: None, // serialized_group_info,
+            mls_group_id: group_id.clone(),
         })
     }
 
@@ -684,6 +688,7 @@ where
         Ok(UpdateGroupResult {
             evolution_event: commit_event,
             welcome_rumors: None,
+            mls_group_id: group_id.clone(),
         })
     }
 
@@ -1062,6 +1067,7 @@ where
         Ok(UpdateGroupResult {
             evolution_event: commit_event,
             welcome_rumors: None, // serialized_group_info,
+            mls_group_id: group_id.clone(),
         })
     }
 
@@ -1106,6 +1112,7 @@ where
         Ok(UpdateGroupResult {
             evolution_event,
             welcome_rumors: None,
+            mls_group_id: group_id.clone(),
         })
     }
 

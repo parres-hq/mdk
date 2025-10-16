@@ -1306,7 +1306,7 @@ dependencies = [
 
 [[package]]
 name = "mdk-core"
-version = "0.5.1"
+version = "0.5.2"
 dependencies = [
  "blurhash",
  "chacha20poly1305",

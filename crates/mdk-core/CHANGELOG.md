@@ -31,6 +31,24 @@
 
 ### Added
 
+### Fixed
+
+### Removed
+
+### Deprecated
+
+## [0.5.2] - 2025-10-16
+
+### Breaking changes
+
+- **Message Processing Results**: Enhanced `MessageProcessingResult` and `UpdateGroupResult` to include group context
+  - `UpdateGroupResult` now includes `mls_group_id: GroupId` field
+  - `MessageProcessingResult` variants `ExternalJoinProposal`, `Commit`, and `Unprocessable` are now struct variants with `mls_group_id: GroupId` field
+  - External code pattern matching on these variants must be updated to use struct syntax: `MessageProcessingResult::Commit { .. }` instead of `MessageProcessingResult::Commit`
+  - The `Proposal` variant remains unchanged but now contains `UpdateGroupResult` with the new field
+
+### Added
+
 - **Extension Versioning (MIP-01)**: Added version field to `NostrGroupDataExtension`
   - New `version` field (current version: 1) for forward/backward compatibility
   - Constant `NostrGroupDataExtension::CURRENT_VERSION` for version management
