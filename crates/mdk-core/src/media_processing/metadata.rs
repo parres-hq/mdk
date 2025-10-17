@@ -130,9 +130,10 @@ pub(crate) fn extract_metadata_from_decoded_image(
 pub(crate) fn generate_blurhash(img: &image::DynamicImage) -> Option<String> {
     // Resize image for blurhash (max 32x32 for performance)
     let small_img = img.resize(32, 32, image::imageops::FilterType::Lanczos3);
-    let rgb_img = small_img.to_rgb8();
+    // Convert to RGBA8 because blurhash expects 4 bytes per pixel (RGBA format)
+    let rgba_img = small_img.to_rgba8();
 
-    encode(4, 3, rgb_img.width(), rgb_img.height(), rgb_img.as_raw()).ok()
+    encode(4, 3, rgba_img.width(), rgba_img.height(), rgba_img.as_raw()).ok()
 }
 
 /// Check if a MIME type is a known safe raster format that supports EXIF sanitization

@@ -33,6 +33,8 @@
 
 ### Fixed
 
+- Blurhash Generation: Fixed blurhash generation to use RGBA format instead of RGB (changed `to_rgb8()` to `to_rgba8()`)
+
 ### Removed
 
 ### Deprecated
