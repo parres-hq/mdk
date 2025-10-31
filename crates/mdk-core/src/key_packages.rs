@@ -151,10 +151,9 @@ where
         &self,
         public_key: &PublicKey,
     ) -> Result<(CredentialWithKey, SignatureKeyPair), Error> {
-        // Encode to hex
-        let public_key: String = public_key.to_hex();
+        let public_key_bytes: Vec<u8> = public_key.to_bytes().to_vec();
 
-        let credential = BasicCredential::new(public_key.into());
+        let credential = BasicCredential::new(public_key_bytes);
         let signature_keypair = SignatureKeyPair::new(self.ciphersuite.signature_algorithm())?;
 
         signature_keypair
@@ -168,6 +167,50 @@ where
             },
             signature_keypair,
         ))
+    }
+
+    /// Parses a public key from credential identity bytes with backwards compatibility.
+    ///
+    /// This function supports both the incorrect 64-byte UTF-8 encoded hex string format
+    /// and the correct 32-byte raw format as specified in MIP-00.
+    ///
+    /// # Arguments
+    ///
+    /// * `identity_bytes` - The raw bytes from a BasicCredential's identity field
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(PublicKey)` - The parsed public key
+    /// * `Err(Error)` - If the identity bytes cannot be parsed in either format
+    ///
+    /// # Format Support
+    ///
+    /// - **32 bytes**: New format (raw public key bytes) - preferred
+    /// - **64 bytes**: Legacy format (UTF-8 encoded hex string) - deprecated but supported
+    pub(crate) fn parse_credential_identity(
+        &self,
+        identity_bytes: &[u8],
+    ) -> Result<PublicKey, Error> {
+        match identity_bytes.len() {
+            32 => {
+                // Correct format: raw 32 bytes
+                PublicKey::from_slice(identity_bytes)
+                    .map_err(|e| Error::KeyPackage(format!("Invalid 32-byte public key: {}", e)))
+            }
+            64 => {
+                // Incorrect format: 64-byte UTF-8 encoded hex string
+                let hex_str = std::str::from_utf8(identity_bytes).map_err(|e| {
+                    Error::KeyPackage(format!("Invalid UTF-8 in legacy credential: {}", e))
+                })?;
+                PublicKey::from_hex(hex_str).map_err(|e| {
+                    Error::KeyPackage(format!("Invalid hex in legacy credential: {}", e))
+                })
+            }
+            _ => Err(Error::KeyPackage(format!(
+                "Invalid credential identity length: {} (expected 32 or 64)",
+                identity_bytes.len()
+            ))),
+        }
     }
 }
 
@@ -467,5 +510,120 @@ mod tests {
 
         let result = mdk.generate_credential_with_key(&test_pubkey);
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_parse_credential_identity_backwards_compatibility() {
+        let mdk = create_test_mdk();
+        let test_pubkey =
+            PublicKey::from_hex("884704bd421671e01c13f854d2ce23ce2a5bfe9562f4f297ad2bc921ba30c3a6")
+                .unwrap();
+
+        // Test new format: 32-byte raw format (what we now write)
+        let raw_bytes = test_pubkey.to_bytes();
+        assert_eq!(raw_bytes.len(), 32, "Raw public key should be 32 bytes");
+
+        let parsed_from_raw = mdk
+            .parse_credential_identity(&raw_bytes)
+            .expect("Should parse 32-byte raw format");
+        assert_eq!(
+            parsed_from_raw, test_pubkey,
+            "Parsed public key from raw bytes should match original"
+        );
+
+        // Test legacy format: 64-byte UTF-8 encoded hex string (what we used to write)
+        let hex_string = test_pubkey.to_hex();
+        let utf8_bytes = hex_string.as_bytes();
+        assert_eq!(
+            utf8_bytes.len(),
+            64,
+            "UTF-8 encoded hex string should be 64 bytes"
+        );
+
+        let parsed_from_legacy = mdk
+            .parse_credential_identity(utf8_bytes)
+            .expect("Should parse 64-byte legacy format");
+        assert_eq!(
+            parsed_from_legacy, test_pubkey,
+            "Parsed public key from legacy format should match original"
+        );
+
+        // Verify both formats produce the same result
+        assert_eq!(
+            parsed_from_raw, parsed_from_legacy,
+            "Both formats should parse to the same public key"
+        );
+
+        // Test invalid lengths
+        let invalid_33_bytes = vec![0u8; 33];
+        let result = mdk.parse_credential_identity(&invalid_33_bytes);
+        assert!(
+            matches!(result, Err(Error::KeyPackage(_))),
+            "Should reject 33-byte input"
+        );
+
+        let invalid_63_bytes = vec![0u8; 63];
+        let result = mdk.parse_credential_identity(&invalid_63_bytes);
+        assert!(
+            matches!(result, Err(Error::KeyPackage(_))),
+            "Should reject 63-byte input"
+        );
+
+        // Test invalid UTF-8 in legacy format (64 bytes but not valid UTF-8)
+        let invalid_utf8 = vec![0xFFu8; 64];
+        let result = mdk.parse_credential_identity(&invalid_utf8);
+        assert!(
+            matches!(result, Err(Error::KeyPackage(_))),
+            "Should reject invalid UTF-8 in legacy format"
+        );
+
+        // Test valid UTF-8 but invalid hex in legacy format
+        let invalid_hex = b"gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg";
+        assert_eq!(invalid_hex.len(), 64);
+        let result = mdk.parse_credential_identity(invalid_hex);
+        assert!(
+            matches!(result, Err(Error::KeyPackage(_))),
+            "Should reject invalid hex in legacy format"
+        );
+    }
+
+    #[test]
+    fn test_new_credentials_use_32_byte_format() {
+        let mdk = create_test_mdk();
+        let test_pubkey =
+            PublicKey::from_hex("884704bd421671e01c13f854d2ce23ce2a5bfe9562f4f297ad2bc921ba30c3a6")
+                .unwrap();
+
+        // Generate a credential
+        let (credential_with_key, _) = mdk
+            .generate_credential_with_key(&test_pubkey)
+            .expect("Should generate credential");
+
+        // Extract the identity bytes
+        let basic_credential = BasicCredential::try_from(credential_with_key.credential)
+            .expect("Should extract basic credential");
+        let identity_bytes = basic_credential.identity();
+
+        // Verify it's using the new 32-byte format
+        assert_eq!(
+            identity_bytes.len(),
+            32,
+            "New credentials should use 32-byte raw format, not 64-byte UTF-8 encoded hex"
+        );
+
+        // Verify it's actually the raw bytes, not UTF-8 encoded hex
+        let raw_bytes = test_pubkey.to_bytes();
+        assert_eq!(
+            identity_bytes, raw_bytes,
+            "Identity should be raw public key bytes"
+        );
+
+        // Verify it's NOT the UTF-8 encoded hex string
+        let hex_string = test_pubkey.to_hex();
+        let utf8_bytes = hex_string.as_bytes();
+        assert_ne!(
+            identity_bytes, utf8_bytes,
+            "Identity should NOT be UTF-8 encoded hex string"
+        );
     }
 }

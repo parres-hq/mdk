@@ -12,7 +12,6 @@
 //! relay-based message routing and group discovery.
 
 use std::collections::BTreeSet;
-use std::str;
 
 use mdk_storage_traits::GroupId;
 use mdk_storage_traits::MdkStorageProvider;
@@ -181,10 +180,8 @@ where
         let own_leaf = group.own_leaf().ok_or(Error::OwnLeafNotFound)?;
         let credentials: BasicCredential =
             BasicCredential::try_from(own_leaf.credential().clone())?;
-        let hex_bytes: &[u8] = credentials.identity();
-        let hex_str: &str = str::from_utf8(hex_bytes)?;
-        let public_key = PublicKey::from_hex(hex_str)?;
-        Ok(public_key)
+        let identity_bytes: &[u8] = credentials.identity();
+        self.parse_credential_identity(identity_bytes)
     }
 
     /// Checks if the LeafNode is an admin of an MLS group
@@ -244,10 +241,8 @@ where
     pub(crate) fn pubkey_for_leaf_node(&self, leaf_node: &LeafNode) -> Result<PublicKey, Error> {
         let credentials: BasicCredential =
             BasicCredential::try_from(leaf_node.credential().clone())?;
-        let hex_bytes: &[u8] = credentials.identity();
-        let hex_str: &str = str::from_utf8(hex_bytes)?;
-        let public_key = PublicKey::from_hex(hex_str)?;
-        Ok(public_key)
+        let identity_bytes: &[u8] = credentials.identity();
+        self.parse_credential_identity(identity_bytes)
     }
 
     /// Extracts the public key from a member
@@ -262,10 +257,8 @@ where
     /// * `Err(Error)` - If the public key cannot be extracted or there is an error converting the public key to hex
     pub(crate) fn pubkey_for_member(&self, member: &Member) -> Result<PublicKey, Error> {
         let credentials: BasicCredential = BasicCredential::try_from(member.credential.clone())?;
-        let hex_bytes: &[u8] = credentials.identity();
-        let hex_str: &str = str::from_utf8(hex_bytes)?;
-        let public_key = PublicKey::from_hex(hex_str)?;
-        Ok(public_key)
+        let identity_bytes: &[u8] = credentials.identity();
+        self.parse_credential_identity(identity_bytes)
     }
 
     /// Loads the signature key pair for the current member in an MLS group
@@ -400,9 +393,8 @@ where
         let mut members = group.members();
         members.try_fold(BTreeSet::new(), |mut acc, m| {
             let credentials: BasicCredential = BasicCredential::try_from(m.credential)?;
-            let hex_bytes: &[u8] = credentials.identity();
-            let hex_str: &str = str::from_utf8(hex_bytes)?;
-            let public_key = PublicKey::from_hex(hex_str)?;
+            let identity_bytes: &[u8] = credentials.identity();
+            let public_key = self.parse_credential_identity(identity_bytes)?;
             acc.insert(public_key);
             Ok(acc)
         })
