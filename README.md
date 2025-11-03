@@ -3,6 +3,7 @@
 **A Rust implementation of the Marmot Protocol for secure, decentralized group messaging**
 
 ![CI](https://github.com/parres-hq/mdk/actions/workflows/ci.yml/badge.svg)
+![Coverage](https://github.com/parres-hq/mdk/actions/workflows/coverage.yml/badge.svg)
 [![License: MIT](https://img.shields.io/badge/License-MIT-orange.svg)](https://opensource.org/licenses/MIT)
 
 MDK is a Rust library that implements the [Marmot Protocol](https://github.com/parres-hq/marmot), bringing together the [MLS (Messaging Layer Security) Protocol](https://www.rfc-editor.org/rfc/rfc9420.html) with [Nostr's](https://github.com/nostr-protocol/nostr) decentralized network to enable secure group messaging without centralized servers.
@@ -275,6 +276,20 @@ cargo test --features mip04
 # Run tests for specific crate
 cargo test -p mdk-core
 ```
+
+### Test Coverage
+
+Check test coverage across all crates:
+
+```bash
+# Generate coverage summary
+just coverage
+
+# Generate HTML coverage report
+just coverage-html
+```
+
+See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md#test-coverage) for detailed coverage documentation.
 
 ## 📚 Documentation
 

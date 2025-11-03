@@ -73,3 +73,11 @@ precommit:
 check-full:
     @just check
 
+# Run test coverage with summary output
+coverage:
+    @bash scripts/coverage.sh
+
+# Generate HTML coverage report
+coverage-html:
+    @bash scripts/coverage.sh --html
+

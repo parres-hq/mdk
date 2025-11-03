@@ -79,3 +79,56 @@ When you need to bump the MSRV, update these locations:
 3. **Before pushing**: Ensure CI will pass by checking locally first
 
 This approach balances speed during development with comprehensive validation before committing.
+
+
+## Test Coverage
+
+MDK uses `cargo-llvm-cov` to measure test coverage across all crates in the workspace.
+
+### Running Coverage Locally
+
+**Generate coverage summary:**
+
+```bash
+just coverage
+```
+
+This runs all tests with coverage instrumentation and displays a summary showing:
+- Overall workspace coverage percentage
+- Per-crate coverage breakdown
+- Coverage by type (lines, functions, regions)
+
+**Generate HTML coverage report:**
+
+```bash
+just coverage-html
+```
+
+This creates an interactive HTML report at `coverage/html/index.html` that you can open in your browser to see:
+- Detailed line-by-line coverage for each file
+- Which functions are covered/uncovered
+- Visual highlighting of covered vs uncovered code
+
+### Installing cargo-llvm-cov
+
+If you don't have `cargo-llvm-cov` installed, the coverage script will prompt you to install it:
+
+```bash
+cargo install cargo-llvm-cov
+```
+
+### Coverage in CI
+
+Coverage is automatically checked in CI on every pull request. The CI workflow:
+- Runs coverage for all workspace crates
+- Uploads HTML and lcov reports as artifacts (90-day retention)
+- Compares PR coverage against master branch baseline
+- Fails if coverage decreases (prevents coverage regression)
+
+You can download coverage artifacts from the GitHub Actions workflow run to review detailed coverage reports.
+
+### Coverage Reports Location
+
+All coverage reports are saved to the `coverage/` directory (git-ignored):
+- `coverage/html/` - Interactive HTML reports
+- Coverage data files (`.profraw`, `.profdata`) are automatically cleaned between runs
