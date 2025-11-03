@@ -1,0 +1,149 @@
+name: Coverage
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+    inputs:
+      baseline_coverage:
+        description: "Manual baseline coverage % (for testing)"
+        required: false
+        default: "0"
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  coverage:
+    runs-on: ubuntu-latest
+    name: Test Coverage
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Fetch all history for coverage comparison
+
+      - name: Setup Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: coverage
+
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y pkg-config
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+
+      - name: Generate coverage
+        run: |
+          echo "=== Generating Coverage Report ==="
+          mkdir -p coverage
+
+          # Run tests with coverage (only once)
+          cargo llvm-cov --all-features --workspace --no-report
+
+          # Generate all report formats from the same data
+          cargo llvm-cov report --lcov --output-path coverage/lcov.info
+          cargo llvm-cov report --html --output-dir coverage/html
+          cargo llvm-cov report | tee coverage/summary.txt
+
+          echo ""
+          echo "=== Coverage Summary ==="
+          cat coverage/summary.txt
+
+      - name: Extract coverage percentage
+        id: coverage
+        run: |
+          chmod +x scripts/extract-coverage.sh
+          COVERAGE=$(./scripts/extract-coverage.sh coverage/lcov.info)
+          echo "percentage=$COVERAGE" >> $GITHUB_OUTPUT
+          echo "Current coverage: $COVERAGE%"
+
+      - name: Get master branch coverage (for PRs)
+        if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+        id: master_coverage
+        run: |
+          # Check if manual baseline provided (for testing)
+          if [ "${{ github.event.inputs.baseline_coverage }}" != "" ] && [ "${{ github.event.inputs.baseline_coverage }}" != "0" ]; then
+            MASTER_COV="${{ github.event.inputs.baseline_coverage }}"
+            echo "baseline=$MASTER_COV" >> $GITHUB_OUTPUT
+            echo "Using manual baseline: $MASTER_COV%"
+          else
+            # Try to download master coverage from latest successful run
+            gh run download --repo ${{ github.repository }} --branch master --name coverage-baseline --dir master-coverage 2>/dev/null || echo "No baseline found"
+
+            if [ -f master-coverage/coverage-baseline.txt ]; then
+              MASTER_COV=$(cat master-coverage/coverage-baseline.txt)
+              echo "baseline=$MASTER_COV" >> $GITHUB_OUTPUT
+              echo "Master branch coverage: $MASTER_COV%"
+            else
+              echo "baseline=0" >> $GITHUB_OUTPUT
+              echo "No master baseline found, skipping comparison"
+            fi
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Compare coverage
+        if: (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch') && steps.master_coverage.outputs.baseline != '0'
+        run: |
+          CURRENT=${{ steps.coverage.outputs.percentage }}
+          BASELINE=${{ steps.master_coverage.outputs.baseline }}
+
+          echo "=== Coverage Comparison ==="
+          echo "Master branch: $BASELINE%"
+          echo "This PR:       $CURRENT%"
+
+          DIFF=$(awk "BEGIN {printf \"%.2f\", $CURRENT - $BASELINE}")
+
+          if (( $(awk "BEGIN {print ($CURRENT < $BASELINE)}") )); then
+            echo "❌ Coverage decreased by $DIFF%"
+            echo "::error::Coverage regression detected. Coverage decreased from $BASELINE% to $CURRENT% (-$DIFF%)"
+            exit 1
+          elif (( $(awk "BEGIN {print ($CURRENT > $BASELINE)}") )); then
+            echo "✅ Coverage improved by $DIFF%"
+          else
+            echo "✅ Coverage maintained at $BASELINE%"
+          fi
+
+      - name: Save coverage baseline (master only)
+        if: github.ref == 'refs/heads/master' && github.event_name == 'push'
+        run: |
+          mkdir -p coverage-baseline
+          echo "${{ steps.coverage.outputs.percentage }}" > coverage-baseline/coverage-baseline.txt
+          echo "Saved baseline: ${{ steps.coverage.outputs.percentage }}%"
+
+      - name: Upload coverage baseline (master only)
+        if: github.ref == 'refs/heads/master' && github.event_name == 'push'
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-baseline
+          path: coverage-baseline/coverage-baseline.txt
+          retention-days: 90
+
+      - name: Upload HTML coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report-html
+          path: coverage/html/
+          retention-days: 90
+
+      - name: Upload lcov coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report-lcov
+          path: coverage/lcov.info
+          retention-days: 90
+
+      - name: Upload coverage summary
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-summary
+          path: coverage/summary.txt
+          retention-days: 90

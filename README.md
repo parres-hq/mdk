@@ -276,6 +276,20 @@ cargo test --features mip04
 cargo test -p mdk-core
 ```
 
+### Test Coverage
+
+Check test coverage across all crates:
+
+```bash
+# Generate coverage summary
+just coverage
+
+# Generate HTML coverage report
+just coverage-html
+```
+
+See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md#test-coverage) for detailed coverage documentation.
+
 ## 📚 Documentation
 
 - **API Documentation**: [docs.rs/mdk-core](https://docs.rs/mdk-core)
