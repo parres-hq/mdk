@@ -66,15 +66,27 @@ mkdir -p "$OUTPUT_DIR"
 echo -e "${BLUE}Running tests with coverage instrumentation...${NC}"
 echo ""
 
+# Run tests with coverage for all feature combinations
+echo -e "${BLUE}Testing with all features...${NC}"
+cargo llvm-cov --all-features --workspace --no-report
+
+echo -e "${BLUE}Testing with no default features...${NC}"
+cargo llvm-cov --no-default-features --workspace --no-report
+
+echo -e "${BLUE}Testing with mip04 feature only...${NC}"
+cargo llvm-cov --no-default-features --features mip04 --workspace --no-report
+
+echo ""
+
 if [ -n "$HTML_FLAG" ]; then
-    # Generate HTML report
-    cargo llvm-cov --all-features --workspace --html --output-dir "$OUTPUT_DIR"
+    # Generate HTML report from merged coverage data
+    cargo llvm-cov report --html --output-dir "$OUTPUT_DIR"
     echo ""
     echo -e "${GREEN}✓ HTML coverage report generated${NC}"
     echo -e "  Open: ${BLUE}$OUTPUT_DIR/html/index.html${NC}"
 else
-    # Generate text summary
-    cargo llvm-cov --all-features --workspace
+    # Generate text summary from merged coverage data
+    cargo llvm-cov report
 fi
 
 echo ""
