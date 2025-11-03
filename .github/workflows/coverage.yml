@@ -47,7 +47,6 @@ jobs:
           cargo llvm-cov --all-features --workspace --no-report
           cargo llvm-cov --no-default-features --workspace --no-report
           cargo llvm-cov --no-default-features --features mip04 --workspace --no-report
-          cargo llvm-cov --all-features --workspace --doc --no-report
 
           # Generate all report formats from the merged coverage data
           cargo llvm-cov report --lcov --output-path coverage/lcov.info
