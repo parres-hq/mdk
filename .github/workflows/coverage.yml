@@ -62,7 +62,7 @@ jobs:
         run: |
           chmod +x scripts/extract-coverage.sh
           COVERAGE=$(./scripts/extract-coverage.sh coverage/lcov.info)
-          echo "percentage=$COVERAGE" >> $GITHUB_OUTPUT
+          echo "percentage=$COVERAGE" >> "$GITHUB_OUTPUT"
           echo "Current coverage: $COVERAGE%"
 
       - name: Get master branch coverage (for PRs)
