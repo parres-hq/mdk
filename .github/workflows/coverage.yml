@@ -23,8 +23,6 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0 # Fetch all history for coverage comparison
 
       - name: Setup Rust (stable)
         uses: dtolnay/rust-toolchain@stable
@@ -45,10 +43,13 @@ jobs:
           echo "=== Generating Coverage Report ==="
           mkdir -p coverage
 
-          # Run tests with coverage (only once)
+          # Run tests with coverage for all feature combinations
           cargo llvm-cov --all-features --workspace --no-report
+          cargo llvm-cov --no-default-features --workspace --no-report
+          cargo llvm-cov --no-default-features --features mip04 --workspace --no-report
+          cargo llvm-cov --all-features --workspace --doc --no-report
 
-          # Generate all report formats from the same data
+          # Generate all report formats from the merged coverage data
           cargo llvm-cov report --lcov --output-path coverage/lcov.info
           cargo llvm-cov report --html --output-dir coverage/html
           cargo llvm-cov report | tee coverage/summary.txt
@@ -70,20 +71,20 @@ jobs:
         id: master_coverage
         run: |
           # Check if manual baseline provided (for testing)
-          if [ "${{ github.event.inputs.baseline_coverage }}" != "" ] && [ "${{ github.event.inputs.baseline_coverage }}" != "0" ]; then
+          if [ -n "${{ github.event.inputs.baseline_coverage }}" ]; then
             MASTER_COV="${{ github.event.inputs.baseline_coverage }}"
-            echo "baseline=$MASTER_COV" >> $GITHUB_OUTPUT
+            echo "baseline=$MASTER_COV" >> "$GITHUB_OUTPUT"
             echo "Using manual baseline: $MASTER_COV%"
           else
             # Try to download master coverage from latest successful run
-            gh run download --repo ${{ github.repository }} --branch master --name coverage-baseline --dir master-coverage 2>/dev/null || echo "No baseline found"
+            gh run download --repo ${{ github.repository }} --branch master --name coverage-baseline --dir master-coverage 2>/dev/null || true
 
             if [ -f master-coverage/coverage-baseline.txt ]; then
               MASTER_COV=$(cat master-coverage/coverage-baseline.txt)
-              echo "baseline=$MASTER_COV" >> $GITHUB_OUTPUT
+              echo "baseline=$MASTER_COV" >> "$GITHUB_OUTPUT"
               echo "Master branch coverage: $MASTER_COV%"
             else
-              echo "baseline=0" >> $GITHUB_OUTPUT
+              echo "baseline=0" >> "$GITHUB_OUTPUT"
               echo "No master baseline found, skipping comparison"
             fi
           fi
