@@ -12,11 +12,11 @@ if [ ! -f "$LCOV_FILE" ]; then
 fi
 
 # Extract coverage percentage from lcov.info
-# Calculate: (lines hit / total lines) * 100
-LINES_HIT=$(grep -E "^DA:" "$LCOV_FILE" | grep -v ",0$" | wc -l)
-TOTAL_LINES=$(grep -E "^DA:" "$LCOV_FILE" | wc -l)
+# Use LH (Lines Hit) and LF (Lines Found) summary fields for accuracy
+LINES_HIT=$(grep -E "^LH:" "$LCOV_FILE" | awk -F: '{sum+=$2} END {print sum}')
+TOTAL_LINES=$(grep -E "^LF:" "$LCOV_FILE" | awk -F: '{sum+=$2} END {print sum}')
 
-if [ "$TOTAL_LINES" -eq 0 ]; then
+if [ -z "$TOTAL_LINES" ] || [ "$TOTAL_LINES" -eq 0 ]; then
     echo "0.0"
     exit 0
 fi
