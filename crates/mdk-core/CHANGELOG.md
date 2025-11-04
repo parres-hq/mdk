@@ -68,7 +68,7 @@
 ### Fixed
 
 - **MIP-00 Compliance**: Fixed key package tag format to match specification
-  - `ciphersuite` tag now uses single hex value format: `["ciphersuite", "0x0001"]` instead of string format
+  - `mls_ciphersuite` tag now uses single hex value format: `["mls_ciphersuite", "0x0001"]` instead of string format
   - `mls_extensions` tag now uses multiple hex values: `["mls_extensions", "0x0003", "0x000a", "0x0002", "0xf2ee"]` instead of single comma-separated string
   - Ensures interoperability with other Marmot protocol implementations
 
