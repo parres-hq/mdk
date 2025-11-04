@@ -11,6 +11,7 @@ use tls_codec::{Deserialize as TlsDeserialize, Serialize as TlsSerialize};
 use crate::MDK;
 use crate::constant::{DEFAULT_CIPHERSUITE, REQUIRED_EXTENSIONS};
 use crate::error::Error;
+use crate::util::NostrTagFormat;
 
 impl<Storage> MDK<Storage>
 where
@@ -274,7 +275,7 @@ where
             })?;
 
         // Validate the actual value - must match DEFAULT_CIPHERSUITE
-        let expected_hex = format!("0x{:04x}", u16::from(DEFAULT_CIPHERSUITE));
+        let expected_hex = DEFAULT_CIPHERSUITE.to_nostr_tag();
         if ciphersuite_value != expected_hex {
             return Err(Error::KeyPackage(format!(
                 "Unsupported ciphersuite: {}. Only {} (MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519) is supported",
@@ -387,9 +388,15 @@ where
 
         // Validate that all required extensions are present
         // Convert our constant ExtensionType array to hex strings for comparison
+        // Normalize extension values to lowercase for case-insensitive comparison
+        let normalized_extensions: std::collections::HashSet<String> = extension_values
+            .iter()
+            .map(|s| s.to_lowercase())
+            .collect();
+
         for required_ext in REQUIRED_EXTENSIONS.iter() {
-            let required_hex = format!("0x{:04x}", u16::from(*required_ext));
-            if !extension_values.contains(&required_hex.as_str()) {
+            let required_hex = required_ext.to_nostr_tag();
+            if !normalized_extensions.contains(&required_hex) {
                 let ext_name = match u16::from(*required_ext) {
                     0x0003 => "RequiredCapabilities",
                     0x000a => "LastResort",
@@ -568,6 +575,8 @@ where
 
 #[cfg(test)]
 mod tests {
+    use nostr::EventBuilder;
+
     use super::*;
     use crate::constant::DEFAULT_CIPHERSUITE;
     use crate::tests::create_test_mdk;
@@ -993,7 +1002,6 @@ mod tests {
             .expect("Failed to create key package");
 
         // Create an event with correct MIP-00 tags
-        use nostr::EventBuilder;
         let event = EventBuilder::new(Kind::MlsKeyPackage, key_package_hex)
             .tags(tags.to_vec())
             .sign_with_keys(&nostr::Keys::generate())
@@ -1023,7 +1031,6 @@ mod tests {
 
         // Create event with legacy tag format (without mls_ prefix for ciphersuite and extensions)
         // Note: protocol_version was always correct in production, no legacy support needed
-        use nostr::EventBuilder;
         let legacy_tags = vec![
             Tag::custom(TagKind::MlsProtocolVersion, ["1.0"]),
             Tag::custom(TagKind::custom("ciphersuite"), ["0x0001"]),
@@ -1061,7 +1068,6 @@ mod tests {
             .expect("Failed to create key package");
 
         // Create event with legacy string values (not hex format) - separate values
-        use nostr::EventBuilder;
         let legacy_tags = vec![
             Tag::custom(TagKind::MlsProtocolVersion, ["1.0"]),
             Tag::custom(
@@ -1107,7 +1113,6 @@ mod tests {
             .expect("Failed to create key package");
 
         // Create event with legacy single comma-separated string format
-        use nostr::EventBuilder;
         let legacy_tags = vec![
             Tag::custom(TagKind::MlsProtocolVersion, ["1.0"]),
             Tag::custom(
@@ -1146,8 +1151,6 @@ mod tests {
         let (key_package_hex, _) = mdk
             .create_key_package_for_event(&test_pubkey, vec![])
             .expect("Failed to create key package");
-
-        use nostr::EventBuilder;
 
         // Test numeric ciphersuite "1" (should map to 0x0001)
         {
@@ -1213,7 +1216,6 @@ mod tests {
         let key_package_hex = "0001000120bb8f754cb3b10edfaeb3853591ec45c44e6aee11b81f37dd0ea6a7184d300153201d1507624d5e3ab2a8df6019236e454ae42fb71a0f991373412f5a2ae541c150200e9ccae869886055bdfbfce5b2d2f5eef41cd5294ba6f903c1bb657503509f090001404035353262313062313831643537653063663162633333333532636637643137646564353861383135623234343230316437646263393338633661336566343063020001020001080003000a0002f2ee0002000101000000006909bca700000000697888b7004040a8c295c3f04e7f5212ea7f3265064acb28f3220e7634137c120f96916efa6623b8661f34611cfe82f7ea6176cb07b45b8b346f65a084a5013a9f92587fdeea0203000a004040f123560da089ae702d3cb311659a22a67dc038141eea235483f90a7cf62aa3233d4983074418d5dba1e4351d4a18d7174bab543e3dea8bd9c8bda23c28876b03";
 
         // Real tags from production: numeric ciphersuite "1" and comma-separated extensions
-        use nostr::EventBuilder;
         let production_tags = vec![
             Tag::custom(TagKind::MlsProtocolVersion, ["1.0"]),
             Tag::custom(TagKind::MlsCiphersuite, ["1"]), // Numeric format from production
@@ -1257,8 +1259,6 @@ mod tests {
         let (key_package_hex, _) = mdk
             .create_key_package_for_event(&test_pubkey, vec![])
             .expect("Failed to create key package");
-
-        use nostr::EventBuilder;
 
         // Test missing protocol version
         {
@@ -1338,8 +1338,6 @@ mod tests {
             .create_key_package_for_event(&test_pubkey, vec![])
             .expect("Failed to create key package");
 
-        use nostr::EventBuilder;
-
         // Test invalid hex length (too short)
         {
             let tags = vec![
@@ -1413,8 +1411,6 @@ mod tests {
             .create_key_package_for_event(&test_pubkey, vec![])
             .expect("Failed to create key package");
 
-        use nostr::EventBuilder;
-
         // Test invalid hex length in extensions
         {
             let tags = vec![
@@ -1487,8 +1483,6 @@ mod tests {
         let (key_package_hex, _) = mdk
             .create_key_package_for_event(&test_pubkey, vec![])
             .expect("Failed to create key package");
-
-        use nostr::EventBuilder;
 
         // Test unsupported ciphersuite in hex format
         {
@@ -1568,8 +1562,6 @@ mod tests {
         let (key_package_hex, _) = mdk
             .create_key_package_for_event(&test_pubkey, vec![])
             .expect("Failed to create key package");
-
-        use nostr::EventBuilder;
 
         // Test missing RequiredCapabilities (0x0003)
         {
@@ -1662,8 +1654,6 @@ mod tests {
             .create_key_package_for_event(&test_pubkey, vec![])
             .expect("Failed to create key package");
 
-        use nostr::EventBuilder;
-
         // Test missing RequiredCapabilities in legacy format (separate values)
         {
             let tags = vec![
@@ -1738,7 +1728,6 @@ mod tests {
             .expect("Failed to create key package");
 
         // Create an event with correct MIP-00 tags
-        use nostr::EventBuilder;
         let event = EventBuilder::new(Kind::MlsKeyPackage, key_package_hex)
             .tags(tags.to_vec())
             .sign_with_keys(&nostr::Keys::generate())
@@ -1768,7 +1757,6 @@ mod tests {
 
         // Create event with legacy tag format (without mls_ prefix for ciphersuite/extensions, string values)
         // Note: protocol_version was always correct, no legacy support needed
-        use nostr::EventBuilder;
         let legacy_tags = vec![
             Tag::custom(TagKind::MlsProtocolVersion, ["1.0"]),
             Tag::custom(
@@ -1811,8 +1799,6 @@ mod tests {
         let (key_package_hex, _) = mdk
             .create_key_package_for_event(&test_pubkey, vec![])
             .expect("Failed to create key package");
-
-        use nostr::EventBuilder;
 
         // Create event with missing tags
         let incomplete_tags = vec![

@@ -31,6 +31,7 @@ mod util;
 pub mod welcomes;
 
 use self::constant::{DEFAULT_CIPHERSUITE, REQUIRED_EXTENSIONS};
+use self::util::NostrTagFormat;
 pub use self::error::Error;
 
 // Re-export GroupId for convenience
@@ -134,14 +135,14 @@ where
 
     /// Get the ciphersuite value formatted for Nostr tags (hex with 0x prefix)
     pub(crate) fn ciphersuite_value(&self) -> String {
-        format!("0x{:04x}", u16::from(self.ciphersuite))
+        self.ciphersuite.to_nostr_tag()
     }
 
     /// Get the extensions value formatted for Nostr tags (array of hex values)
     pub(crate) fn extensions_value(&self) -> Vec<String> {
         self.extensions
             .iter()
-            .map(|e| format!("0x{:04x}", u16::from(*e)))
+            .map(|e| e.to_nostr_tag())
             .collect()
     }
 

@@ -29,7 +29,18 @@
 
 ### Changed
 
+- **Key Package Formatting**: Centralized hex formatting with new `NostrTagFormat` trait
+  - All MLS types (Ciphersuite, ExtensionType) now use consistent lowercase hex format via `to_nostr_tag()` method
+  - Eliminates duplicate formatting logic across the codebase
+
 ### Added
+
+- **Key Package Tag Validation**: Added comprehensive validation for MIP-00 key package tags
+  - Validates `mls_ciphersuite` tag format and value (must be `0x0001`)
+  - Validates `mls_extensions` tag hex format (0x prefix + 4 hex digits)
+  - Validates presence of all required extensions (RequiredCapabilities, LastResort, RatchetTree, MarmotGroupData)
+  - Case-insensitive validation for hex values (handles both uppercase and lowercase)
+  - Maintains backward compatibility with legacy tag formats
 
 ### Fixed
 

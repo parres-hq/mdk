@@ -226,6 +226,8 @@ pub(crate) fn validate_image_dimensions(
 
 #[cfg(test)]
 mod tests {
+    use image::{ImageBuffer, Rgb};
+
     use super::*;
 
     #[test]
@@ -411,7 +413,6 @@ mod tests {
     #[test]
     fn test_validate_mime_type_matches_data() {
         // Create a simple PNG image
-        use image::{ImageBuffer, Rgb};
         let img = ImageBuffer::from_fn(8, 8, |x, y| {
             Rgb([(x * 32) as u8, (y * 32) as u8, ((x + y) * 16) as u8])
         });
@@ -478,7 +479,6 @@ mod tests {
     #[test]
     fn test_detect_mime_type_from_data() {
         // Create test images in different formats
-        use image::{ImageBuffer, Rgb};
         let img = ImageBuffer::from_fn(8, 8, |x, y| {
             Rgb([(x * 32) as u8, (y * 32) as u8, ((x + y) * 16) as u8])
         });
