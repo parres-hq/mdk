@@ -8,9 +8,9 @@ use openmls_basic_credential::SignatureKeyPair;
 use openmls_traits::storage::StorageProvider;
 use tls_codec::{Deserialize as TlsDeserialize, Serialize as TlsSerialize};
 
+use crate::MDK;
 use crate::constant::{DEFAULT_CIPHERSUITE, REQUIRED_EXTENSIONS};
 use crate::error::Error;
-use crate::MDK;
 
 impl<Storage> MDK<Storage>
 where
@@ -193,9 +193,7 @@ where
             .tags
             .iter()
             .find(|tag| self.is_extensions_tag(tag))
-            .ok_or_else(|| {
-                Error::KeyPackage("Missing required tag: mls_extensions".to_string())
-            })?;
+            .ok_or_else(|| Error::KeyPackage("Missing required tag: mls_extensions".to_string()))?;
         self.validate_extensions_tag(extensions_tag)?;
 
         Ok(())
@@ -237,9 +235,9 @@ where
         let values: Vec<&str> = tag.as_slice().iter().map(|s| s.as_str()).collect();
 
         // Skip the tag name (first element) and get the value
-        let ciphersuite_value = values.get(1).ok_or_else(|| {
-            Error::KeyPackage("Ciphersuite tag must have a value".to_string())
-        })?;
+        let ciphersuite_value = values
+            .get(1)
+            .ok_or_else(|| Error::KeyPackage("Ciphersuite tag must have a value".to_string()))?;
 
         // Try spec-compliant validation first
         if ciphersuite_value.starts_with("0x") {
@@ -280,8 +278,7 @@ where
         if ciphersuite_value != expected_hex {
             return Err(Error::KeyPackage(format!(
                 "Unsupported ciphersuite: {}. Only {} (MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519) is supported",
-                ciphersuite_value,
-                expected_hex
+                ciphersuite_value, expected_hex
             )));
         }
 
@@ -402,8 +399,7 @@ where
                 };
                 return Err(Error::KeyPackage(format!(
                     "Missing required extension: {} ({})",
-                    required_hex,
-                    ext_name
+                    required_hex, ext_name
                 )));
             }
         }
@@ -1074,7 +1070,12 @@ mod tests {
             ),
             Tag::custom(
                 TagKind::MlsExtensions,
-                ["RequiredCapabilities", "LastResort", "RatchetTree", "Unknown(62190)"],
+                [
+                    "RequiredCapabilities",
+                    "LastResort",
+                    "RatchetTree",
+                    "Unknown(62190)",
+                ],
             ),
         ];
 
@@ -1193,10 +1194,12 @@ mod tests {
                 result.is_err(),
                 "Should reject unsupported numeric ciphersuite '2'"
             );
-            assert!(result
-                .unwrap_err()
-                .to_string()
-                .contains("Unsupported ciphersuite"));
+            assert!(
+                result
+                    .unwrap_err()
+                    .to_string()
+                    .contains("Unsupported ciphersuite")
+            );
         }
     }
 
@@ -1274,10 +1277,12 @@ mod tests {
                 result.is_err(),
                 "Should reject event without protocol_version tag"
             );
-            assert!(result
-                .unwrap_err()
-                .to_string()
-                .contains("mls_protocol_version"));
+            assert!(
+                result
+                    .unwrap_err()
+                    .to_string()
+                    .contains("mls_protocol_version")
+            );
         }
 
         // Test missing ciphersuite
@@ -1293,7 +1298,10 @@ mod tests {
                 .unwrap();
 
             let result = mdk.validate_key_package_tags(&event);
-            assert!(result.is_err(), "Should reject event without ciphersuite tag");
+            assert!(
+                result.is_err(),
+                "Should reject event without ciphersuite tag"
+            );
             assert!(result.unwrap_err().to_string().contains("mls_ciphersuite"));
         }
 
@@ -1310,7 +1318,10 @@ mod tests {
                 .unwrap();
 
             let result = mdk.validate_key_package_tags(&event);
-            assert!(result.is_err(), "Should reject event without extensions tag");
+            assert!(
+                result.is_err(),
+                "Should reject event without extensions tag"
+            );
             assert!(result.unwrap_err().to_string().contains("mls_extensions"));
         }
     }
@@ -1500,17 +1511,30 @@ mod tests {
                 result.is_err(),
                 "Should reject unsupported ciphersuite 0x0002"
             );
-            assert!(result.unwrap_err().to_string().contains("Unsupported ciphersuite"));
+            assert!(
+                result
+                    .unwrap_err()
+                    .to_string()
+                    .contains("Unsupported ciphersuite")
+            );
         }
 
         // Test unsupported ciphersuite in legacy string format
         {
             let tags = vec![
                 Tag::custom(TagKind::MlsProtocolVersion, ["1.0"]),
-                Tag::custom(TagKind::MlsCiphersuite, ["MLS_256_DHKEMX448_CHACHA20POLY1305_SHA512_Ed448"]), // Unsupported
+                Tag::custom(
+                    TagKind::MlsCiphersuite,
+                    ["MLS_256_DHKEMX448_CHACHA20POLY1305_SHA512_Ed448"],
+                ), // Unsupported
                 Tag::custom(
                     TagKind::MlsExtensions,
-                    ["RequiredCapabilities", "LastResort", "RatchetTree", "Unknown(62190)"],
+                    [
+                        "RequiredCapabilities",
+                        "LastResort",
+                        "RatchetTree",
+                        "Unknown(62190)",
+                    ],
                 ),
             ];
 
@@ -1524,7 +1548,12 @@ mod tests {
                 result.is_err(),
                 "Should reject unsupported legacy ciphersuite"
             );
-            assert!(result.unwrap_err().to_string().contains("Unsupported legacy ciphersuite"));
+            assert!(
+                result
+                    .unwrap_err()
+                    .to_string()
+                    .contains("Unsupported legacy ciphersuite")
+            );
         }
     }
 
@@ -1659,10 +1688,12 @@ mod tests {
                 result.is_err(),
                 "Should reject legacy format missing RequiredCapabilities"
             );
-            assert!(result
-                .unwrap_err()
-                .to_string()
-                .contains("RequiredCapabilities"));
+            assert!(
+                result
+                    .unwrap_err()
+                    .to_string()
+                    .contains("RequiredCapabilities")
+            );
         }
 
         // Test missing extension in legacy single-string format
@@ -1746,7 +1777,12 @@ mod tests {
             ),
             Tag::custom(
                 TagKind::custom("extensions"),
-                ["RequiredCapabilities", "LastResort", "RatchetTree", "Unknown(62190)"],
+                [
+                    "RequiredCapabilities",
+                    "LastResort",
+                    "RatchetTree",
+                    "Unknown(62190)",
+                ],
             ),
         ];
 
