@@ -31,8 +31,8 @@ mod util;
 pub mod welcomes;
 
 use self::constant::{DEFAULT_CIPHERSUITE, REQUIRED_EXTENSIONS};
-use self::util::NostrTagFormat;
 pub use self::error::Error;
+use self::util::NostrTagFormat;
 
 // Re-export GroupId for convenience
 pub use mdk_storage_traits::GroupId;
@@ -140,10 +140,7 @@ where
 
     /// Get the extensions value formatted for Nostr tags (array of hex values)
     pub(crate) fn extensions_value(&self) -> Vec<String> {
-        self.extensions
-            .iter()
-            .map(|e| e.to_nostr_tag())
-            .collect()
+        self.extensions.iter().map(|e| e.to_nostr_tag()).collect()
     }
 
     /// Get the storage provider

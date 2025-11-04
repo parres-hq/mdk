@@ -389,10 +389,8 @@ where
         // Validate that all required extensions are present
         // Convert our constant ExtensionType array to hex strings for comparison
         // Normalize extension values to lowercase for case-insensitive comparison
-        let normalized_extensions: std::collections::HashSet<String> = extension_values
-            .iter()
-            .map(|s| s.to_lowercase())
-            .collect();
+        let normalized_extensions: std::collections::HashSet<String> =
+            extension_values.iter().map(|s| s.to_lowercase()).collect();
 
         for required_ext in REQUIRED_EXTENSIONS.iter() {
             let required_hex = required_ext.to_nostr_tag();
