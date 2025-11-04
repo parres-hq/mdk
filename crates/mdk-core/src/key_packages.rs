@@ -276,7 +276,7 @@ where
 
         // Validate the actual value - must match DEFAULT_CIPHERSUITE
         let expected_hex = DEFAULT_CIPHERSUITE.to_nostr_tag();
-        if ciphersuite_value != expected_hex {
+        if ciphersuite_value.to_lowercase() != expected_hex.to_lowercase() {
             return Err(Error::KeyPackage(format!(
                 "Unsupported ciphersuite: {}. Only {} (MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519) is supported",
                 ciphersuite_value, expected_hex
