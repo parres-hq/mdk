@@ -78,16 +78,43 @@ jobs:
             echo "baseline=$MASTER_COV" >> "$GITHUB_OUTPUT"
             echo "Using manual baseline: $MASTER_COV%"
           else
-            # Try to download master coverage from latest successful run
-            gh run download --repo ${{ github.repository }} --branch master --name coverage-baseline --dir master-coverage 2>/dev/null || true
-
-            if [ -f master-coverage/coverage-baseline.txt ]; then
-              MASTER_COV=$(cat master-coverage/coverage-baseline.txt)
-              echo "baseline=$MASTER_COV" >> "$GITHUB_OUTPUT"
-              echo "Master branch coverage: $MASTER_COV%"
+            echo "🔍 Searching for baseline from master branch..."
+            
+            # Get the latest completed coverage workflow run ID from master
+            RUN_ID=$(gh run list \
+              --repo ${{ github.repository }} \
+              --workflow=coverage.yml \
+              --branch master \
+              --status completed \
+              --limit 1 \
+              --json databaseId \
+              --jq '.[0].databaseId')
+            
+            if [ -z "$RUN_ID" ] || [ "$RUN_ID" = "null" ]; then
+              echo "baseline=0" >> "$GITHUB_OUTPUT"
+              echo "⚠️  No completed coverage workflow run found on master"
+              exit 0
+            fi
+            
+            echo "Found workflow run ID: $RUN_ID"
+            
+            # Download the baseline artifact from that specific run
+            if gh run download "$RUN_ID" \
+              --repo ${{ github.repository }} \
+              --name coverage-baseline \
+              --dir master-coverage; then
+              
+              if [ -f master-coverage/coverage-baseline.txt ]; then
+                MASTER_COV=$(cat master-coverage/coverage-baseline.txt)
+                echo "baseline=$MASTER_COV" >> "$GITHUB_OUTPUT"
+                echo "✓ Master branch coverage: $MASTER_COV%"
+              else
+                echo "baseline=0" >> "$GITHUB_OUTPUT"
+                echo "⚠️  Baseline file not found in artifact"
+              fi
             else
               echo "baseline=0" >> "$GITHUB_OUTPUT"
-              echo "No master baseline found, skipping comparison"
+              echo "⚠️  Failed to download baseline artifact from run $RUN_ID"
             fi
           fi
         env:
