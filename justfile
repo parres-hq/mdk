@@ -73,3 +73,14 @@ precommit:
 check-full:
     @just check
 
+uniffi-bindgen: (gen-binding "python") (gen-binding "kotlin") (gen-binding "swift") (gen-binding "ruby")
+    @echo "Building mdk-uniffi library..."
+    cargo build --lib -p mdk-uniffi
+
+gen-binding lang:
+    @echo "Generating {{lang}} bindings..."
+    cd crates/mdk-uniffi && cargo run --bin uniffi-bindgen generate \
+        -l {{lang}} \
+        --library ../../target/debug/deps/libmdk_uniffi.so \
+        --out-dir bindings/{{lang}}
+    @echo "✓ Bindings generated in crates/mdk-uniffi/bindings/{{lang}}/"
