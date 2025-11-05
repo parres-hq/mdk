@@ -73,14 +73,24 @@ precommit:
 check-full:
     @just check
 
-uniffi-bindgen: (gen-binding "python") (gen-binding "kotlin") (gen-binding "swift") (gen-binding "ruby")
+_build-uniffi:
     @echo "Building mdk-uniffi library..."
     cargo build --lib -p mdk-uniffi
+
+uniffi-bindgen: _build-uniffi (gen-binding "python") (gen-binding "kotlin") (gen-binding "swift") (gen-binding "ruby")
+
+lib_path := if os() == "windows" {
+    "../../target/debug/mdk_uniffi.dll"
+} else if os() == "macos" {
+    "../../target/debug/libmdk_uniffi.dylib"
+} else {
+    "../../target/debug/libmdk_uniffi.so"
+}
 
 gen-binding lang:
     @echo "Generating {{lang}} bindings..."
     cd crates/mdk-uniffi && cargo run --bin uniffi-bindgen generate \
         -l {{lang}} \
-        --library ../../target/debug/deps/libmdk_uniffi.so \
+        --library {{lib_path}} \
         --out-dir bindings/{{lang}}
     @echo "✓ Bindings generated in crates/mdk-uniffi/bindings/{{lang}}/"
