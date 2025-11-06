@@ -84,11 +84,6 @@ fn parse_json<T: serde::de::DeserializeOwned>(
         .map_err(|e| MdkUniffiError::InvalidInput(format!("Invalid {context}: {e}")))
 }
 
-fn serialize_json<T: serde::Serialize>(value: &T) -> Result<String, MdkUniffiError> {
-    serde_json::to_string(value)
-        .map_err(|e| MdkUniffiError::InvalidInput(format!("Failed to serialize: {e}")))
-}
-
 impl Mdk {
     /// Lock the internal MDK instance for exclusive access.
     /// Panics if the mutex is poisoned (should never happen if using MDK correctly (do NOT share memory across threads)).
@@ -121,10 +116,7 @@ impl Mdk {
         let mdk = self.lock();
         let (key_package_hex, tags) = mdk.create_key_package_for_event(&pubkey, relay_urls)?;
 
-        let tags: Vec<String> = tags
-            .iter()
-            .map(|tag| serialize_json(tag))
-            .collect::<Result<_, _>>()?;
+        let tags: Vec<Vec<String>> = tags.iter().map(|tag| tag.as_slice().to_vec()).collect();
 
         Ok(KeyPackageResult {
             key_package: key_package_hex,
@@ -238,7 +230,7 @@ pub struct KeyPackageResult {
     /// Hex-encoded key package
     pub key_package: String,
     /// JSON-encoded tags for the key package event
-    pub tags: Vec<String>,
+    pub tags: Vec<Vec<String>>,
 }
 
 /// Group representation
