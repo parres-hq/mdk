@@ -79,18 +79,20 @@ _build-uniffi:
 
 uniffi-bindgen: _build-uniffi (gen-binding "python") (gen-binding "kotlin") (gen-binding "swift") (gen-binding "ruby")
 
-lib_path := if os() == "windows" {
-    "../../target/debug/mdk_uniffi.dll"
+lib_filename := if os() == "windows" {
+    "mdk_uniffi.dll"
 } else if os() == "macos" {
-    "../../target/debug/libmdk_uniffi.dylib"
+    "libmdk_uniffi.dylib"
 } else {
-    "../../target/debug/libmdk_uniffi.so"
+    "libmdk_uniffi.so"
 }
 
 gen-binding lang:
     @echo "Generating {{lang}} bindings..."
     cd crates/mdk-uniffi && cargo run --bin uniffi-bindgen generate \
         -l {{lang}} \
-        --library {{lib_path}} \
+        --library ../../target/debug/{{lib_filename}} \
         --out-dir bindings/{{lang}}
+    cd crates/mdk-uniffi && cp ../../target/debug/{{lib_filename}} bindings/{{lang}}/{{lib_filename}}
     @echo "✓ Bindings generated in crates/mdk-uniffi/bindings/{{lang}}/"
+    @echo "✓ Library copied to crates/mdk-uniffi/bindings/{{lang}}/{{lib_filename}}"

@@ -6,13 +6,13 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
-use mdk_core::{Error as MdkError, MDK};
+use mdk_core::{Error as MdkError, MDK, groups::NostrGroupConfigData};
 use mdk_sqlite_storage::MdkSqliteStorage;
 use mdk_storage_traits::{
     GroupId, groups::types as group_types, messages::types as message_types,
     welcomes::types as welcome_types,
 };
-use nostr::{Event, EventId, PublicKey, RelayUrl, TagKind, UnsignedEvent};
+use nostr::{Event, EventBuilder, EventId, Kind, PublicKey, RelayUrl, TagKind, UnsignedEvent};
 use std::path::PathBuf;
 use std::sync::Mutex;
 
@@ -222,6 +222,130 @@ impl Mdk {
             .map(|r| r.to_string())
             .collect())
     }
+
+    /// Create a new group
+    pub fn create_group(
+        &self,
+        creator_public_key: String,
+        member_key_package_events_json: Vec<String>,
+        name: String,
+        description: String,
+        relays: Vec<String>,
+        admins: Vec<String>,
+    ) -> Result<CreateGroupResult, MdkUniffiError> {
+        let creator_pubkey = parse_public_key(&creator_public_key)?;
+        let relay_urls = parse_relay_urls(&relays)?;
+        let admin_pubkeys: Result<Vec<PublicKey>, _> =
+            admins.iter().map(|a| parse_public_key(a)).collect();
+        let admin_pubkeys = admin_pubkeys?;
+
+        let member_key_package_events: Result<Vec<Event>, _> = member_key_package_events_json
+            .iter()
+            .map(|json| parse_json(json, "key package event JSON"))
+            .collect();
+        let member_key_package_events = member_key_package_events?;
+
+        let config = NostrGroupConfigData::new(
+            name,
+            description,
+            None, // image_hash
+            None, // image_key
+            None, // image_nonce
+            relay_urls,
+            admin_pubkeys,
+        );
+
+        let mdk = self.lock();
+        let result = mdk.create_group(&creator_pubkey, member_key_package_events, config)?;
+
+        let welcome_rumors_json: Vec<String> = result
+            .welcome_rumors
+            .iter()
+            .map(|rumor| {
+                serde_json::to_string(rumor).map_err(|e| {
+                    MdkUniffiError::InvalidInput(format!("Failed to serialize welcome rumor: {e}"))
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(CreateGroupResult {
+            group: Group::from(result.group),
+            welcome_rumors_json,
+        })
+    }
+
+    /// Add members to a group
+    pub fn add_members(
+        &self,
+        mls_group_id: String,
+        key_package_events_json: Vec<String>,
+    ) -> Result<AddMembersResult, MdkUniffiError> {
+        let group_id = parse_group_id(&mls_group_id)?;
+
+        let key_package_events: Result<Vec<Event>, _> = key_package_events_json
+            .iter()
+            .map(|json| parse_json(json, "key package event JSON"))
+            .collect();
+        let key_package_events = key_package_events?;
+
+        let mdk = self.lock();
+        let result = mdk.add_members(&group_id, &key_package_events)?;
+
+        let evolution_event_json = serde_json::to_string(&result.evolution_event).map_err(|e| {
+            MdkUniffiError::InvalidInput(format!("Failed to serialize evolution event: {e}"))
+        })?;
+
+        let welcome_rumors_json: Option<Vec<String>> = result
+            .welcome_rumors
+            .map(|rumors| {
+                rumors
+                    .iter()
+                    .map(|rumor| {
+                        serde_json::to_string(rumor).map_err(|e| {
+                            MdkUniffiError::InvalidInput(format!(
+                                "Failed to serialize welcome rumor: {e}"
+                            ))
+                        })
+                    })
+                    .collect::<Result<Vec<_>, _>>()
+            })
+            .transpose()?;
+
+        Ok(AddMembersResult {
+            evolution_event_json,
+            welcome_rumors_json,
+            mls_group_id: hex::encode(result.mls_group_id.as_slice()),
+        })
+    }
+
+    /// Merge pending commit for a group
+    pub fn merge_pending_commit(&self, mls_group_id: String) -> Result<(), MdkUniffiError> {
+        let group_id = parse_group_id(&mls_group_id)?;
+        self.lock().merge_pending_commit(&group_id)?;
+        Ok(())
+    }
+
+    /// Create a message in a group
+    pub fn create_message(
+        &self,
+        mls_group_id: String,
+        sender_public_key: String,
+        content: String,
+        kind: u16,
+    ) -> Result<String, MdkUniffiError> {
+        let group_id = parse_group_id(&mls_group_id)?;
+        let sender_pubkey = parse_public_key(&sender_public_key)?;
+        let mdk = self.lock();
+
+        let rumor = EventBuilder::new(Kind::Custom(kind), content).build(sender_pubkey);
+
+        let event = mdk.create_message(&group_id, rumor)?;
+
+        let event_json = serde_json::to_string(&event)
+            .map_err(|e| MdkUniffiError::InvalidInput(format!("Failed to serialize event: {e}")))?;
+
+        Ok(event_json)
+    }
 }
 
 /// Result of creating a key package
@@ -231,6 +355,26 @@ pub struct KeyPackageResult {
     pub key_package: String,
     /// JSON-encoded tags for the key package event
     pub tags: Vec<Vec<String>>,
+}
+
+/// Result of creating a group
+#[derive(uniffi::Record)]
+pub struct CreateGroupResult {
+    /// The created group
+    pub group: Group,
+    /// JSON-encoded welcome rumors to be published
+    pub welcome_rumors_json: Vec<String>,
+}
+
+/// Result of adding members to a group
+#[derive(uniffi::Record)]
+pub struct AddMembersResult {
+    /// JSON-encoded evolution event to be published
+    pub evolution_event_json: String,
+    /// Optional JSON-encoded welcome rumors to be published
+    pub welcome_rumors_json: Option<Vec<String>>,
+    /// Hex-encoded MLS group ID
+    pub mls_group_id: String,
 }
 
 /// Group representation
