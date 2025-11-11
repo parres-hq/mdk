@@ -195,7 +195,7 @@ where
         let group_id = self
             .group_id
             .as_ref()
-            .ok_or_else(|| crate::Error::GroupNotFound)?;
+            .ok_or(crate::Error::GroupNotFound)?;
 
         let client = self
             .get_client(client_idx)

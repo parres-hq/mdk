@@ -794,8 +794,7 @@ mod tests {
 
         // This might succeed or fail depending on implementation details
         // The key point is that if it fails, it should have a clear error
-        if result.is_err() {
-            let error = result.unwrap_err();
+        if let Err(error) = result {
             let error_msg = error.to_string();
             // Error should be informative about what went wrong
             assert!(!error_msg.is_empty(), "Error message should not be empty");
