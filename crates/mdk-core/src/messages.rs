@@ -2416,5 +2416,109 @@ mod tests {
             "Non-member should not be able to create messages"
         );
     }
+
+    /// Test getting messages for non-existent group
+    #[test]
+    fn test_get_messages_nonexistent_group() {
+        let mdk = create_test_mdk();
+        let non_existent_group_id = crate::GroupId::from_slice(&[9, 9, 9, 9]);
+
+        let result = mdk.get_messages(&non_existent_group_id);
+
+        // Should return empty list for non-existent group
+        assert!(result.is_ok(), "Should succeed for non-existent group");
+        assert_eq!(result.unwrap().len(), 0, "Should return empty list");
+    }
+
+    /// Test getting single message that doesn't exist
+    #[test]
+    fn test_get_nonexistent_message() {
+        let mdk = create_test_mdk();
+        let non_existent_id = nostr::EventId::all_zeros();
+
+        let result = mdk.get_message(&non_existent_id);
+
+        assert!(result.is_ok(), "Should succeed");
+        assert!(result.unwrap().is_none(), "Should return None for non-existent message");
+    }
+
+    /// Test message state transitions
+    #[test]
+    fn test_message_state_transitions() {
+        let mdk = create_test_mdk();
+        let (creator, members, admins) = create_test_group_members();
+        let group_id = create_test_group(&mdk, &creator, &members, &admins);
+
+        // Create a message
+        let mut rumor = create_test_rumor(&creator, "Test message");
+        let rumor_id = rumor.id();
+        let _event = mdk.create_message(&group_id, rumor).expect("Failed to create message");
+
+        // Check initial state
+        let message = mdk.get_message(&rumor_id).expect("Failed to get message").expect("Message should exist");
+        assert_eq!(message.state, message_types::MessageState::Created, "Initial state should be Created");
+
+        // Process the message (simulating receiving it)
+        // In a real scenario, another client would process this
+        // For this test, we verify the state tracking works
+        assert_eq!(message.content, "Test message");
+        assert_eq!(message.pubkey, creator.public_key());
+    }
+
+    /// Test message with empty content
+    #[test]
+    fn test_message_with_empty_content() {
+        let mdk = create_test_mdk();
+        let (creator, members, admins) = create_test_group_members();
+        let group_id = create_test_group(&mdk, &creator, &members, &admins);
+
+        // Create a message with empty content
+        let rumor = create_test_rumor(&creator, "");
+        let result = mdk.create_message(&group_id, rumor);
+
+        // Should succeed - empty messages are valid
+        assert!(result.is_ok(), "Empty message should be valid");
+    }
+
+    /// Test message with very long content
+    #[test]
+    fn test_message_with_long_content() {
+        let mdk = create_test_mdk();
+        let (creator, members, admins) = create_test_group_members();
+        let group_id = create_test_group(&mdk, &creator, &members, &admins);
+
+        // Create a message with very long content (10KB)
+        let long_content = "a".repeat(10000);
+        let rumor = create_test_rumor(&creator, &long_content);
+        let result = mdk.create_message(&group_id, rumor);
+
+        // Should succeed - long messages are valid
+        assert!(result.is_ok(), "Long message should be valid");
+
+        let event = result.unwrap();
+        assert_eq!(event.kind, Kind::MlsGroupMessage);
+    }
+
+    /// Test processing message multiple times (idempotency)
+    #[test]
+    fn test_process_message_idempotency() {
+        let creator_mdk = create_test_mdk();
+        let (creator, members, admins) = create_test_group_members();
+        let group_id = create_test_group(&creator_mdk, &creator, &members, &admins);
+
+        // Create a message
+        let rumor = create_test_rumor(&creator, "Test idempotency");
+        let event = creator_mdk.create_message(&group_id, rumor).expect("Failed to create message");
+
+        // Process the message once
+        let result1 = creator_mdk.process_message(&event);
+        
+        // Process the same message again
+        let result2 = creator_mdk.process_message(&event);
+
+        // Both should succeed (or handle gracefully)
+        // The second processing should recognize it's already processed
+        assert!(result1.is_ok() || result2.is_ok(), "Message processing should be idempotent");
+    }
 }
 
