@@ -2080,9 +2080,7 @@ mod tests {
     /// - Multi-client state synchronization
     #[test]
     fn test_concurrent_commit_race_conditions() {
-        use crate::test_util::{
-            create_key_package_event, create_nostr_group_config_data,
-        };
+        use crate::test_util::{create_key_package_event, create_nostr_group_config_data};
 
         // Setup: Create Alice (admin) and Bob (admin)
         let alice_keys = Keys::generate();
@@ -2141,7 +2139,10 @@ mod tests {
             .expect("Bob's group should exist")
             .epoch;
 
-        assert_eq!(alice_epoch, bob_epoch, "Alice and Bob should be in same epoch");
+        assert_eq!(
+            alice_epoch, bob_epoch,
+            "Alice and Bob should be in same epoch"
+        );
 
         // Step 3: Simulate concurrent commits - both admins try to add different members
         let charlie_keys = Keys::generate();
@@ -2161,8 +2162,14 @@ mod tests {
             .expect("Bob should be able to create commit");
 
         // Verify both created commit events
-        assert_eq!(alice_commit_result.evolution_event.kind, Kind::MlsGroupMessage);
-        assert_eq!(bob_commit_result.evolution_event.kind, Kind::MlsGroupMessage);
+        assert_eq!(
+            alice_commit_result.evolution_event.kind,
+            Kind::MlsGroupMessage
+        );
+        assert_eq!(
+            bob_commit_result.evolution_event.kind,
+            Kind::MlsGroupMessage
+        );
 
         // Step 4: In a real scenario, relay would order these commits by timestamp/event ID
         // For this test, Alice's commit is accepted first (simulating earlier timestamp)
@@ -2185,7 +2192,8 @@ mod tests {
         // The exact error depends on implementation, but it should not succeed
         // or should be detected as stale
         assert!(
-            bob_process_own.is_err() || bob_mdk.get_group(&group_id).unwrap().unwrap().epoch > bob_epoch,
+            bob_process_own.is_err()
+                || bob_mdk.get_group(&group_id).unwrap().unwrap().epoch > bob_epoch,
             "Bob's commit should be rejected or epoch should have advanced"
         );
 
@@ -2369,16 +2377,8 @@ mod tests {
             .get_messages(&group_id)
             .expect("Failed to get Bob's messages");
 
-        assert_eq!(
-            alice_messages.len(),
-            3,
-            "Alice should have 3 messages"
-        );
-        assert_eq!(
-            bob_messages.len(),
-            3,
-            "Bob should have 3 messages"
-        );
+        assert_eq!(alice_messages.len(), 3, "Alice should have 3 messages");
+        assert_eq!(bob_messages.len(), 3, "Bob should have 3 messages");
 
         // Verify message content matches across clients
         assert_eq!(alice_messages[0].content, "Hello from Alice");

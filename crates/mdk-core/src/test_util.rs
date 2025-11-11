@@ -192,10 +192,7 @@ where
     ///
     /// This is useful for testing epoch transitions and lookback mechanisms.
     pub fn advance_epoch(&mut self, client_idx: usize) -> Result<(), crate::Error> {
-        let group_id = self
-            .group_id
-            .as_ref()
-            .ok_or(crate::Error::GroupNotFound)?;
+        let group_id = self.group_id.as_ref().ok_or(crate::Error::GroupNotFound)?;
 
         let client = self
             .get_client(client_idx)
