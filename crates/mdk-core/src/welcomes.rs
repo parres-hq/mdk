@@ -949,6 +949,103 @@ mod tests {
         // implemented in the group creation logic, not in the test itself.
         // This test validates that the size measurement infrastructure is in place.
     }
+
+    /// Test welcome processing with invalid welcome message
+    #[test]
+    fn test_process_welcome_invalid_message() {
+        let mdk = create_test_mdk();
+
+        // Create an invalid welcome (not a proper MLS Welcome message)
+        let invalid_welcome = nostr::UnsignedEvent {
+            id: Some(nostr::EventId::all_zeros()),
+            pubkey: Keys::generate().public_key(),
+            created_at: nostr::Timestamp::now(),
+            kind: Kind::MlsWelcome,
+            tags: nostr::Tags::new(),
+            content: "invalid_hex_content".to_string(), // Invalid hex
+        };
+
+        let result = mdk.process_welcome(&nostr::EventId::all_zeros(), &invalid_welcome);
+
+        // Should fail due to invalid hex content
+        assert!(
+            result.is_err(),
+            "Should fail when welcome content is invalid hex"
+        );
+    }
+
+    /// Test getting pending welcomes when none exist
+    #[test]
+    fn test_get_pending_welcomes_empty() {
+        let mdk = create_test_mdk();
+
+        let welcomes = mdk.get_pending_welcomes().expect("Should succeed");
+
+        assert_eq!(welcomes.len(), 0, "Should have no pending welcomes initially");
+    }
+
+    /// Test accepting welcome for non-existent welcome
+    #[test]
+    fn test_accept_nonexistent_welcome() {
+        use std::collections::BTreeSet;
+        let mdk = create_test_mdk();
+
+        // Create a fake welcome that doesn't exist in storage
+        let fake_welcome = welcome_types::Welcome {
+            id: nostr::EventId::all_zeros(),
+            event: nostr::UnsignedEvent {
+                id: Some(nostr::EventId::all_zeros()),
+                pubkey: Keys::generate().public_key(),
+                created_at: nostr::Timestamp::now(),
+                kind: Kind::MlsWelcome,
+                tags: nostr::Tags::new(),
+                content: "fake".to_string(),
+            },
+            mls_group_id: crate::GroupId::from_slice(&[1, 2, 3, 4]),
+            nostr_group_id: [0u8; 32],
+            group_name: "Fake Group".to_string(),
+            group_description: "Fake Description".to_string(),
+            group_image_hash: None,
+            group_image_key: None,
+            group_image_nonce: None,
+            group_admin_pubkeys: BTreeSet::new(),
+            group_relays: BTreeSet::new(),
+            welcomer: Keys::generate().public_key(),
+            member_count: 2,
+            state: welcome_types::WelcomeState::Pending,
+            wrapper_event_id: nostr::EventId::all_zeros(),
+        };
+
+        let result = mdk.accept_welcome(&fake_welcome);
+
+        // Should fail because the welcome doesn't exist
+        assert!(
+            result.is_err(),
+            "Should fail when accepting non-existent welcome"
+        );
+    }
+
+    /// Test leave group functionality
+    #[test]
+    fn test_leave_group() {
+        use crate::test_util::{create_test_group, create_test_group_members};
+
+        let (creator, members, admins) = create_test_group_members();
+        let creator_mdk = create_test_mdk();
+
+        // Create group
+        let group_id = create_test_group(&creator_mdk, &creator, &members, &admins);
+
+        // Try to leave a group that doesn't exist for this user
+        let non_member_mdk = create_test_mdk();
+        let result = non_member_mdk.leave_group(&group_id);
+
+        // Should fail because user hasn't joined the group
+        assert!(
+            result.is_err(),
+            "Should fail when leaving a group you haven't joined"
+        );
+    }
 }
 
 
