@@ -2549,13 +2549,13 @@ mod tests {
     fn test_non_admin_cannot_add_members() {
         let creator_mdk = create_test_mdk();
         let (creator, initial_members, admins) = create_test_group_members();
-        let creator_pk = creator.public_key();
+        let _creator_pk = creator.public_key();
 
         // Create group with only creator as admin
         let group_id = create_test_group(&creator_mdk, &creator, &initial_members, &admins);
 
         // Create a non-admin member's MDK instance
-        let non_admin_keys = &initial_members[1]; // member2 is not an admin
+        let _non_admin_keys = &initial_members[1]; // member2 is not an admin
         let non_admin_mdk = create_test_mdk();
 
         // Try to have the non-admin add a new member

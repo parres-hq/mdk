@@ -151,7 +151,9 @@ pub struct MultiClientTestSetup<Storage>
 where
     Storage: MdkStorageProvider,
 {
+    /// List of clients with their keys and MDK instances
     pub clients: Vec<(Keys, MDK<Storage>)>,
+    /// Optional group ID for the test group
     pub group_id: Option<GroupId>,
 }
 
@@ -212,6 +214,7 @@ where
 /// This structure helps create deterministic race condition scenarios
 /// by allowing control over event timestamps and IDs.
 pub struct RaceConditionSimulator {
+    /// Base timestamp for generating offset timestamps
     pub base_timestamp: nostr::Timestamp,
 }
 

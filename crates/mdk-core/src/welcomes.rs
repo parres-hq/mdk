@@ -882,10 +882,7 @@ mod tests {
             let group_config = create_nostr_group_config_data(vec![alice_keys.public_key()]);
             let group_result = alice_mdk
                 .create_group(&alice_keys.public_key(), key_package_events, group_config)
-                .expect(&format!(
-                    "Failed to create group with {} members",
-                    group_size
-                ));
+                .unwrap_or_else(|_| panic!("Failed to create group with {} members", group_size));
 
             // Measure welcome message sizes
             assert_eq!(

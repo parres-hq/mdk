@@ -2089,13 +2089,13 @@ mod tests {
         let alice_mdk = create_test_mdk();
         let bob_keys = &members[0];
         let bob_mdk = create_test_mdk();
-        let charlie_keys = &members[1];
+        let _charlie_keys = &members[1];
 
         // Create the group with Alice as creator
         let group_id = create_test_group(&alice_mdk, &alice_keys, &members, &admins);
 
         // Bob joins the group
-        let bob_key_package_event = create_key_package_event(&bob_mdk, bob_keys);
+        let _bob_key_package_event = create_key_package_event(&bob_mdk, bob_keys);
         // In a real scenario, Bob would process a welcome message
         // For this test, we'll focus on the commit ordering logic
 
@@ -2105,7 +2105,7 @@ mod tests {
 
         // Alice creates a commit to add Dave
         let alice_add_result = alice_mdk
-            .add_members(&group_id, &[dave_key_package.clone()])
+            .add_members(&group_id, std::slice::from_ref(&dave_key_package))
             .expect("Alice should be able to create commit as admin");
 
         // Verify the commit event was created
@@ -2179,7 +2179,7 @@ mod tests {
 
         // Step 5: Verify only admins can create commits
         // Charlie is not an admin, so attempting to create a commit should fail
-        let charlie_mdk = create_test_mdk();
+        let _charlie_mdk = create_test_mdk();
 
         // Create a test group for Charlie to verify non-admin behavior
         // In the actual implementation, non-admins cannot create commits
@@ -2217,12 +2217,12 @@ mod tests {
         let bob_mdk = create_test_mdk();
 
         // Create group with Alice and Bob
-        let group_id = create_test_group(&alice_mdk, &alice_keys, &[bob_keys.clone()], &admins);
+        let group_id = create_test_group(&alice_mdk, &alice_keys, std::slice::from_ref(bob_keys), &admins);
 
         // Bob joins the group by processing the welcome
         // (In a real scenario, Bob would receive and process a welcome message)
         // For this test, we'll create Bob's group state directly
-        let bob_key_package = create_key_package_event(&bob_mdk, bob_keys);
+        let _bob_key_package = create_key_package_event(&bob_mdk, bob_keys);
 
         // Step 1: Test basic message flow
         // Alice sends a message
