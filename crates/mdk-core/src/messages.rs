@@ -2331,5 +2331,90 @@ mod tests {
         // This test validates the core epoch management and message storage logic
         // that enables multi-client synchronization.
     }
+
+    /// Test message processing with wrong event kind
+    #[test]
+    fn test_process_message_wrong_event_kind() {
+        let mdk = create_test_mdk();
+        let creator = Keys::generate();
+
+        // Create an event with wrong kind (TextNote instead of MlsGroupMessage)
+        let event = EventBuilder::new(Kind::TextNote, "test content")
+            .sign_with_keys(&creator)
+            .expect("Failed to sign event");
+
+        let result = mdk.process_message(&event);
+
+        // Should return UnexpectedEvent error
+        assert!(
+            matches!(
+                result,
+                Err(crate::Error::UnexpectedEvent { expected, received })
+                if expected == Kind::MlsGroupMessage && received == Kind::TextNote
+            ),
+            "Should return UnexpectedEvent error for wrong kind"
+        );
+    }
+
+    /// Test message processing with missing group ID tag
+    #[test]
+    fn test_process_message_missing_group_id() {
+        let mdk = create_test_mdk();
+        let creator = Keys::generate();
+
+        // Create a group message event without the required 'h' tag
+        let event = EventBuilder::new(Kind::MlsGroupMessage, "encrypted_content")
+            .sign_with_keys(&creator)
+            .expect("Failed to sign event");
+
+        let result = mdk.process_message(&event);
+
+        // Should fail due to missing group ID tag
+        assert!(
+            result.is_err(),
+            "Should fail when group ID tag is missing"
+        );
+    }
+
+    /// Test creating message for non-existent group
+    #[test]
+    fn test_create_message_for_nonexistent_group() {
+        let mdk = create_test_mdk();
+        let creator = Keys::generate();
+        let rumor = create_test_rumor(&creator, "Hello");
+
+        let non_existent_group_id = crate::GroupId::from_slice(&[1, 2, 3, 4, 5]);
+        let result = mdk.create_message(&non_existent_group_id, rumor);
+
+        assert!(
+            matches!(result, Err(crate::Error::GroupNotFound)),
+            "Should return GroupNotFound error"
+        );
+    }
+
+    /// Test message from non-member
+    #[test]
+    fn test_message_from_non_member() {
+        let creator_mdk = create_test_mdk();
+        let (creator, members, admins) = create_test_group_members();
+
+        // Create group
+        let group_id = create_test_group(&creator_mdk, &creator, &members, &admins);
+
+        // Create a message from someone not in the group
+        let non_member = Keys::generate();
+        let rumor = create_test_rumor(&non_member, "I'm not in this group");
+
+        // Try to create a message (this would fail at the MLS level)
+        // In practice, a non-member wouldn't have the group loaded
+        let non_member_mdk = create_test_mdk();
+        let result = non_member_mdk.create_message(&group_id, rumor);
+
+        // Should fail because the group doesn't exist for this user
+        assert!(
+            result.is_err(),
+            "Non-member should not be able to create messages"
+        );
+    }
 }
 
