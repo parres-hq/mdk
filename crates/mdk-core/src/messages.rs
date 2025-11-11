@@ -2080,7 +2080,9 @@ mod tests {
     /// - Outdated commit rejection
     #[test]
     fn test_concurrent_commit_race_conditions() {
-        use crate::test_util::{create_key_package_event, create_test_group, create_test_group_members};
+        use crate::test_util::{
+            create_key_package_event, create_test_group, create_test_group_members,
+        };
 
         // Setup: Create three clients - Alice (admin), Bob (admin), Charlie (member)
         let (alice_keys, members, admins) = create_test_group_members();
@@ -2178,7 +2180,7 @@ mod tests {
         // Step 5: Verify only admins can create commits
         // Charlie is not an admin, so attempting to create a commit should fail
         let charlie_mdk = create_test_mdk();
-        
+
         // Create a test group for Charlie to verify non-admin behavior
         // In the actual implementation, non-admins cannot create commits
         // This is enforced at the MLS level and validated in the process_message logic
@@ -2203,7 +2205,10 @@ mod tests {
     /// - State convergence
     #[test]
     fn test_multi_client_message_synchronization() {
-        use crate::test_util::{create_key_package_event, create_test_group, create_test_group_members, create_test_rumor};
+        use crate::test_util::{
+            create_key_package_event, create_test_group, create_test_group_members,
+            create_test_rumor,
+        };
 
         // Setup: Create Alice and Bob
         let (alice_keys, members, admins) = create_test_group_members();
@@ -2218,7 +2223,7 @@ mod tests {
         // (In a real scenario, Bob would receive and process a welcome message)
         // For this test, we'll create Bob's group state directly
         let bob_key_package = create_key_package_event(&bob_mdk, bob_keys);
-        
+
         // Step 1: Test basic message flow
         // Alice sends a message
         let rumor1 = create_test_rumor(&alice_keys, "Hello from Alice");
@@ -2228,16 +2233,12 @@ mod tests {
 
         // Verify message was created
         assert_eq!(msg_event1.kind, Kind::MlsGroupMessage);
-        
+
         // Verify Alice can see her own message
         let alice_messages = alice_mdk
             .get_messages(&group_id)
             .expect("Failed to get Alice's messages");
-        assert_eq!(
-            alice_messages.len(),
-            1,
-            "Alice should have 1 message"
-        );
+        assert_eq!(alice_messages.len(), 1, "Alice should have 1 message");
 
         // Step 2: Test epoch advancement
         let initial_epoch = alice_mdk
@@ -2250,12 +2251,12 @@ mod tests {
         let update_result = alice_mdk
             .self_update(&group_id)
             .expect("Failed to create update");
-        
+
         // Process the update to save exporter secrets
         let _process_result = alice_mdk
             .process_message(&update_result.evolution_event)
             .expect("Failed to process update");
-        
+
         alice_mdk
             .merge_pending_commit(&group_id)
             .expect("Failed to merge update");
@@ -2292,7 +2293,7 @@ mod tests {
         let all_messages = alice_mdk
             .get_messages(&group_id)
             .expect("Failed to get messages");
-        
+
         assert_eq!(
             all_messages.len(),
             3,
@@ -2318,8 +2319,7 @@ mod tests {
 
         // Verify epoch progression
         assert_eq!(
-            final_group.epoch,
-            epoch_after_update,
+            final_group.epoch, epoch_after_update,
             "Epoch should match the last update"
         );
 
@@ -2370,10 +2370,7 @@ mod tests {
         let result = mdk.process_message(&event);
 
         // Should fail due to missing group ID tag
-        assert!(
-            result.is_err(),
-            "Should fail when group ID tag is missing"
-        );
+        assert!(result.is_err(), "Should fail when group ID tag is missing");
     }
 
     /// Test creating message for non-existent group
@@ -2439,7 +2436,10 @@ mod tests {
         let result = mdk.get_message(&non_existent_id);
 
         assert!(result.is_ok(), "Should succeed");
-        assert!(result.unwrap().is_none(), "Should return None for non-existent message");
+        assert!(
+            result.unwrap().is_none(),
+            "Should return None for non-existent message"
+        );
     }
 
     /// Test message state transitions
@@ -2452,11 +2452,20 @@ mod tests {
         // Create a message
         let mut rumor = create_test_rumor(&creator, "Test message");
         let rumor_id = rumor.id();
-        let _event = mdk.create_message(&group_id, rumor).expect("Failed to create message");
+        let _event = mdk
+            .create_message(&group_id, rumor)
+            .expect("Failed to create message");
 
         // Check initial state
-        let message = mdk.get_message(&rumor_id).expect("Failed to get message").expect("Message should exist");
-        assert_eq!(message.state, message_types::MessageState::Created, "Initial state should be Created");
+        let message = mdk
+            .get_message(&rumor_id)
+            .expect("Failed to get message")
+            .expect("Message should exist");
+        assert_eq!(
+            message.state,
+            message_types::MessageState::Created,
+            "Initial state should be Created"
+        );
 
         // Process the message (simulating receiving it)
         // In a real scenario, another client would process this
@@ -2508,17 +2517,21 @@ mod tests {
 
         // Create a message
         let rumor = create_test_rumor(&creator, "Test idempotency");
-        let event = creator_mdk.create_message(&group_id, rumor).expect("Failed to create message");
+        let event = creator_mdk
+            .create_message(&group_id, rumor)
+            .expect("Failed to create message");
 
         // Process the message once
         let result1 = creator_mdk.process_message(&event);
-        
+
         // Process the same message again
         let result2 = creator_mdk.process_message(&event);
 
         // Both should succeed (or handle gracefully)
         // The second processing should recognize it's already processed
-        assert!(result1.is_ok() || result2.is_ok(), "Message processing should be idempotent");
+        assert!(
+            result1.is_ok() || result2.is_ok(),
+            "Message processing should be idempotent"
+        );
     }
 }
-

@@ -718,11 +718,7 @@ mod tests {
 
         // Verify Bob joined the group
         let bob_groups = bob_mdk.get_groups().expect("Failed to get Bob's groups");
-        assert_eq!(
-            bob_groups.len(),
-            1,
-            "Bob should have joined 1 group"
-        );
+        assert_eq!(bob_groups.len(), 1, "Bob should have joined 1 group");
 
         // Step 4: Verify Bob can send messages (validates signing key is retained)
         let group = &bob_groups[0];
@@ -735,10 +731,7 @@ mod tests {
 
         // Step 5: Verify key rotation can be performed
         let rotation_result = bob_mdk.self_update(&group.mls_group_id);
-        assert!(
-            rotation_result.is_ok(),
-            "Bob should be able to rotate keys"
-        );
+        assert!(rotation_result.is_ok(), "Bob should be able to rotate keys");
 
         // Verify the rotation created a proposal
         let rotation_result_data = rotation_result.expect("Rotation should succeed");
@@ -755,4 +748,3 @@ mod tests {
         // lifecycle works correctly.
     }
 }
-

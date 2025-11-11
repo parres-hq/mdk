@@ -789,22 +789,21 @@ mod tests {
         // Change the event reference tag to point to a non-existent KeyPackage
         let fake_event_id = nostr::EventId::all_zeros();
         let mut new_tags = nostr::Tags::new();
-        new_tags.push(nostr::Tag::relays(vec![nostr::RelayUrl::parse("wss://test.relay").unwrap()]));
+        new_tags.push(nostr::Tag::relays(vec![
+            nostr::RelayUrl::parse("wss://test.relay").unwrap(),
+        ]));
         new_tags.push(nostr::Tag::event(fake_event_id));
         modified_welcome.tags = new_tags;
 
         let result = bob_device_a.process_welcome(&nostr::EventId::all_zeros(), &modified_welcome);
-        
+
         // This might succeed or fail depending on implementation details
         // The key point is that if it fails, it should have a clear error
         if result.is_err() {
             let error = result.unwrap_err();
             let error_msg = error.to_string();
             // Error should be informative about what went wrong
-            assert!(
-                !error_msg.is_empty(),
-                "Error message should not be empty"
-            );
+            assert!(!error_msg.is_empty(), "Error message should not be empty");
         }
 
         // Step 5: Test successful processing with correct device
@@ -882,12 +881,11 @@ mod tests {
             // Create the group
             let group_config = create_nostr_group_config_data(vec![alice_keys.public_key()]);
             let group_result = alice_mdk
-                .create_group(
-                    &alice_keys.public_key(),
-                    key_package_events,
-                    group_config,
-                )
-                .expect(&format!("Failed to create group with {} members", group_size));
+                .create_group(&alice_keys.public_key(), key_package_events, group_config)
+                .expect(&format!(
+                    "Failed to create group with {} members",
+                    group_size
+                ));
 
             // Measure welcome message sizes
             assert_eq!(
@@ -981,7 +979,11 @@ mod tests {
 
         let welcomes = mdk.get_pending_welcomes().expect("Should succeed");
 
-        assert_eq!(welcomes.len(), 0, "Should have no pending welcomes initially");
+        assert_eq!(
+            welcomes.len(),
+            0,
+            "Should have no pending welcomes initially"
+        );
     }
 
     /// Test accepting welcome for non-existent welcome
@@ -1047,5 +1049,3 @@ mod tests {
         );
     }
 }
-
-

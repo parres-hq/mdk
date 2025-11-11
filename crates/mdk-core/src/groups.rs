@@ -2667,7 +2667,10 @@ mod tests {
         let result = mdk.get_group(&non_existent_id);
 
         assert!(result.is_ok(), "Should succeed");
-        assert!(result.unwrap().is_none(), "Should return None for non-existent group");
+        assert!(
+            result.unwrap().is_none(),
+            "Should return None for non-existent group"
+        );
     }
 
     /// Test getting all groups when none exist
@@ -2703,21 +2706,30 @@ mod tests {
         let update = NostrGroupDataUpdate::new().name("New Name".to_string());
         let result = creator_mdk.update_group_data(&group_id, update);
         assert!(result.is_ok(), "Should be able to update group name");
-        creator_mdk.merge_pending_commit(&group_id).expect("Failed to merge commit");
+        creator_mdk
+            .merge_pending_commit(&group_id)
+            .expect("Failed to merge commit");
 
         // Update group description
         let update = NostrGroupDataUpdate::new().description("New Description".to_string());
         let result = creator_mdk.update_group_data(&group_id, update);
         assert!(result.is_ok(), "Should be able to update group description");
-        creator_mdk.merge_pending_commit(&group_id).expect("Failed to merge commit");
+        creator_mdk
+            .merge_pending_commit(&group_id)
+            .expect("Failed to merge commit");
 
         // Update both at once
         let update = NostrGroupDataUpdate::new()
             .name("Final Name".to_string())
             .description("Final Description".to_string());
         let result = creator_mdk.update_group_data(&group_id, update);
-        assert!(result.is_ok(), "Should be able to update both name and description");
-        creator_mdk.merge_pending_commit(&group_id).expect("Failed to merge commit");
+        assert!(
+            result.is_ok(),
+            "Should be able to update both name and description"
+        );
+        creator_mdk
+            .merge_pending_commit(&group_id)
+            .expect("Failed to merge commit");
     }
 
     /// Test group with empty name
@@ -2731,7 +2743,9 @@ mod tests {
         let update = NostrGroupDataUpdate::new().name("".to_string());
         let result = creator_mdk.update_group_data(&group_id, update);
         assert!(result.is_ok(), "Empty group name should be valid");
-        creator_mdk.merge_pending_commit(&group_id).expect("Failed to merge commit");
+        creator_mdk
+            .merge_pending_commit(&group_id)
+            .expect("Failed to merge commit");
     }
 
     /// Test group with very long name
@@ -2746,6 +2760,8 @@ mod tests {
         let update = NostrGroupDataUpdate::new().name(long_name);
         let result = creator_mdk.update_group_data(&group_id, update);
         assert!(result.is_ok(), "Long group name should be valid");
-        creator_mdk.merge_pending_commit(&group_id).expect("Failed to merge commit");
+        creator_mdk
+            .merge_pending_commit(&group_id)
+            .expect("Failed to merge commit");
     }
 }
