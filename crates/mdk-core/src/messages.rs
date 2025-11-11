@@ -2217,7 +2217,12 @@ mod tests {
         let bob_mdk = create_test_mdk();
 
         // Create group with Alice and Bob
-        let group_id = create_test_group(&alice_mdk, &alice_keys, std::slice::from_ref(bob_keys), &admins);
+        let group_id = create_test_group(
+            &alice_mdk,
+            &alice_keys,
+            std::slice::from_ref(bob_keys),
+            &admins,
+        );
 
         // Bob joins the group by processing the welcome
         // (In a real scenario, Bob would receive and process a welcome message)
