@@ -626,4 +626,133 @@ mod tests {
             "Identity should NOT be UTF-8 encoded hex string"
         );
     }
+
+    /// Test KeyPackage last resort extension presence and basic lifecycle (MIP-00)
+    ///
+    /// This test validates that KeyPackages include the last_resort extension by default
+    /// and that basic KeyPackage lifecycle operations work correctly.
+    ///
+    /// Note: The last_resort extension signals that a KeyPackage CAN be reused by multiple
+    /// group creators before the recipient processes any welcomes. However, once the recipient
+    /// processes and accepts a welcome, the KeyPackage is consumed and deleted from storage.
+    /// Testing true concurrent reuse would require more complex multi-device scenarios.
+    ///
+    /// Requirements tested:
+    /// - KeyPackage includes last_resort extension
+    /// - Signing key is retained after joining a group
+    /// - User can successfully join a group using a KeyPackage
+    /// - Key rotation proposals can be created after joining
+    #[test]
+    fn test_last_resort_keypackage_lifecycle() {
+        use crate::test_util::create_nostr_group_config_data;
+        use nostr::{EventBuilder, Keys};
+
+        // Setup: Create Bob who will be invited to a group
+        let bob_keys = Keys::generate();
+        let bob_mdk = create_test_mdk();
+        let bob_pubkey = bob_keys.public_key();
+
+        // Setup: Create Alice who will create the group
+        let alice_keys = Keys::generate();
+        let alice_mdk = create_test_mdk();
+
+        // Step 1: Bob creates a KeyPackage with last_resort extension
+        // Note: By default, MDK creates KeyPackages with last_resort extension enabled
+        let relays = vec![RelayUrl::parse("wss://test.relay").unwrap()];
+        let (bob_key_package_hex, tags) = bob_mdk
+            .create_key_package_for_event(&bob_pubkey, relays.clone())
+            .expect("Failed to create key package");
+
+        // Verify last_resort extension is present in the tags
+        let extensions_tag = tags
+            .iter()
+            .find(|t| t.kind() == TagKind::MlsExtensions)
+            .expect("Extensions tag not found");
+        let extension_ids: Vec<String> = extensions_tag
+            .as_slice()
+            .iter()
+            .skip(1) // Skip tag name
+            .map(|s| s.to_string())
+            .collect();
+        assert!(
+            extension_ids.contains(&"0x000a".to_string()),
+            "KeyPackage should include last_resort extension (0x000a)"
+        );
+
+        // Create the KeyPackage event
+        let bob_key_package_event = EventBuilder::new(Kind::MlsKeyPackage, bob_key_package_hex)
+            .tags(tags.to_vec())
+            .sign_with_keys(&bob_keys)
+            .expect("Failed to sign event");
+
+        // Step 2: Alice creates a group and adds Bob using the KeyPackage
+        let group_config = create_nostr_group_config_data(vec![alice_keys.public_key()]);
+        let group_result = alice_mdk
+            .create_group(
+                &alice_keys.public_key(),
+                vec![bob_key_package_event.clone()],
+                group_config,
+            )
+            .expect("Failed to create group");
+
+        // Alice merges the pending commit
+        alice_mdk
+            .merge_pending_commit(&group_result.group.mls_group_id)
+            .expect("Failed to merge pending commit");
+
+        // Step 3: Bob processes and accepts the welcome
+        let welcome = &group_result.welcome_rumors[0];
+        bob_mdk
+            .process_welcome(&nostr::EventId::all_zeros(), welcome)
+            .expect("Failed to process welcome");
+        let pending_welcomes = bob_mdk
+            .get_pending_welcomes()
+            .expect("Failed to get pending welcomes");
+        assert!(
+            !pending_welcomes.is_empty(),
+            "Bob should have pending welcomes after processing"
+        );
+        bob_mdk
+            .accept_welcome(&pending_welcomes[0])
+            .expect("Failed to accept welcome");
+
+        // Verify Bob joined the group
+        let bob_groups = bob_mdk.get_groups().expect("Failed to get Bob's groups");
+        assert_eq!(
+            bob_groups.len(),
+            1,
+            "Bob should have joined 1 group"
+        );
+
+        // Step 4: Verify Bob can send messages (validates signing key is retained)
+        let group = &bob_groups[0];
+        let rumor = crate::test_util::create_test_rumor(&bob_keys, "Test message");
+        let message_result = bob_mdk.create_message(&group.mls_group_id, rumor);
+        assert!(
+            message_result.is_ok(),
+            "Bob should be able to send messages (signing key retained)"
+        );
+
+        // Step 5: Verify key rotation can be performed
+        let rotation_result = bob_mdk.self_update(&group.mls_group_id);
+        assert!(
+            rotation_result.is_ok(),
+            "Bob should be able to rotate keys"
+        );
+
+        // Verify the rotation created a proposal
+        let rotation_result_data = rotation_result.expect("Rotation should succeed");
+        assert_eq!(
+            rotation_result_data.evolution_event.kind,
+            Kind::MlsGroupMessage,
+            "Rotation should create a group message event"
+        );
+
+        // Note: Testing true concurrent KeyPackage reuse (multiple group creators using the same
+        // KeyPackage before the recipient processes any welcomes) would require a more complex
+        // test setup with careful timing control. The last_resort extension enables this at the
+        // protocol level, but the current test validates the extension is present and basic
+        // lifecycle works correctly.
+    }
 }
+
