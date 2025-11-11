@@ -197,9 +197,10 @@ where
             .as_ref()
             .ok_or_else(|| crate::Error::GroupNotFound)?;
 
-        let (_keys, mdk) = self
+        let client = self
             .get_client(client_idx)
-            .ok_or_else(|| crate::Error::GroupNotFound)?;
+            .ok_or(crate::Error::GroupNotFound)?;
+        let mdk = &client.1;
 
         // Create self-update to advance epoch
         let _update_result = mdk.self_update(group_id)?;

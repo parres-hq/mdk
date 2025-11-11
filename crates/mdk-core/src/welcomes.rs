@@ -767,15 +767,10 @@ mod tests {
         // Bob Device B tries to process the welcome but doesn't have the signing key
         let result = bob_device_b.process_welcome(&nostr::EventId::all_zeros(), welcome);
 
-        // The error should indicate the signing key is unavailable
-        assert!(
-            result.is_err(),
-            "Processing welcome without signing key should fail"
-        );
-
         // Verify the error message is informative
-        let error = result.unwrap_err();
-        let error_msg = error.to_string();
+        let error_msg = result
+            .expect_err("Processing welcome without signing key should fail")
+            .to_string();
         assert!(
             error_msg.contains("key") || error_msg.contains("Key") || error_msg.contains("storage"),
             "Error message should mention key/storage issue: {}",
