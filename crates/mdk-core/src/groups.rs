@@ -2657,4 +2657,95 @@ mod tests {
             "Should error when admin is not a member"
         );
     }
+
+    /// Test getting group that doesn't exist
+    #[test]
+    fn test_get_nonexistent_group() {
+        let mdk = create_test_mdk();
+        let non_existent_id = crate::GroupId::from_slice(&[9, 9, 9, 9]);
+
+        let result = mdk.get_group(&non_existent_id);
+
+        assert!(result.is_ok(), "Should succeed");
+        assert!(result.unwrap().is_none(), "Should return None for non-existent group");
+    }
+
+    /// Test getting all groups when none exist
+    #[test]
+    fn test_get_groups_empty() {
+        let mdk = create_test_mdk();
+
+        let groups = mdk.get_groups().expect("Should succeed");
+
+        assert_eq!(groups.len(), 0, "Should have no groups initially");
+    }
+
+    /// Test getting members for non-existent group
+    #[test]
+    fn test_get_members_nonexistent_group() {
+        let mdk = create_test_mdk();
+        let non_existent_id = crate::GroupId::from_slice(&[9, 9, 9, 9]);
+
+        let result = mdk.get_members(&non_existent_id);
+
+        // Should fail because group doesn't exist
+        assert!(result.is_err(), "Should fail for non-existent group");
+    }
+
+    /// Test group name and description updates
+    #[test]
+    fn test_group_metadata_updates() {
+        let creator_mdk = create_test_mdk();
+        let (creator, members, admins) = create_test_group_members();
+        let group_id = create_test_group(&creator_mdk, &creator, &members, &admins);
+
+        // Update group name
+        let update = NostrGroupDataUpdate::new().name("New Name".to_string());
+        let result = creator_mdk.update_group_data(&group_id, update);
+        assert!(result.is_ok(), "Should be able to update group name");
+        creator_mdk.merge_pending_commit(&group_id).expect("Failed to merge commit");
+
+        // Update group description
+        let update = NostrGroupDataUpdate::new().description("New Description".to_string());
+        let result = creator_mdk.update_group_data(&group_id, update);
+        assert!(result.is_ok(), "Should be able to update group description");
+        creator_mdk.merge_pending_commit(&group_id).expect("Failed to merge commit");
+
+        // Update both at once
+        let update = NostrGroupDataUpdate::new()
+            .name("Final Name".to_string())
+            .description("Final Description".to_string());
+        let result = creator_mdk.update_group_data(&group_id, update);
+        assert!(result.is_ok(), "Should be able to update both name and description");
+        creator_mdk.merge_pending_commit(&group_id).expect("Failed to merge commit");
+    }
+
+    /// Test group with empty name
+    #[test]
+    fn test_group_with_empty_name() {
+        let creator_mdk = create_test_mdk();
+        let (creator, members, admins) = create_test_group_members();
+        let group_id = create_test_group(&creator_mdk, &creator, &members, &admins);
+
+        // Update to empty name (should be valid)
+        let update = NostrGroupDataUpdate::new().name("".to_string());
+        let result = creator_mdk.update_group_data(&group_id, update);
+        assert!(result.is_ok(), "Empty group name should be valid");
+        creator_mdk.merge_pending_commit(&group_id).expect("Failed to merge commit");
+    }
+
+    /// Test group with very long name
+    #[test]
+    fn test_group_with_long_name() {
+        let creator_mdk = create_test_mdk();
+        let (creator, members, admins) = create_test_group_members();
+        let group_id = create_test_group(&creator_mdk, &creator, &members, &admins);
+
+        // Update to very long name (1000 characters)
+        let long_name = "a".repeat(1000);
+        let update = NostrGroupDataUpdate::new().name(long_name);
+        let result = creator_mdk.update_group_data(&group_id, update);
+        assert!(result.is_ok(), "Long group name should be valid");
+        creator_mdk.merge_pending_commit(&group_id).expect("Failed to merge commit");
+    }
 }
