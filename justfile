@@ -76,10 +76,23 @@ check-full:
 _build-uniffi:
     @echo "Building mdk-uniffi library..."
     cargo build --lib -p mdk-uniffi
-    # android (most common)
-    NDK_HOME="${NDK_HOME:-/opt/android-ndk}" CC_aarch64_linux_android="${NDK_HOME:-/opt/android-ndk}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android21-clang" AR_aarch64_linux_android=llvm-ar CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="${NDK_HOME:-/opt/android-ndk}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android21-clang" cargo build --lib -p mdk-uniffi --target aarch64-linux-android --release
-    # android (older devices)
-    NDK_HOME="${NDK_HOME:-/opt/android-ndk}" CC_armv7_linux_androideabi="${NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin/armv7a-linux-androideabi21-clang" AR_armv7_linux_androideabi=llvm-ar CARGO_TARGET_ARMV7_LINUX_ANDROIDEABI_LINKER="${NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin/armv7a-linux-androideabi21-clang" cargo build --lib -p mdk-uniffi --target armv7-linux-androideabi --release
+    just _build-uniffi-android aarch64-linux-android aarch64-linux-android21-clang
+    just _build-uniffi-android armv7-linux-androideabi armv7a-linux-androideabi21-clang
+
+_build-uniffi-android TARGET CLANG_PREFIX:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    NDK_HOST=$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m)
+    NDK_PREBUILT="${NDK_HOME:-/opt/android-ndk}/toolchains/llvm/prebuilt/${NDK_HOST}"
+
+    TARGET_UPPER=$(echo "{{TARGET}}" | tr '[:lower:]-' '[:upper:]_')
+    TARGET_UNDER=$(echo "{{TARGET}}" | tr '-' '_')
+
+    export CC_${TARGET_UNDER}="${NDK_PREBUILT}/bin/{{CLANG_PREFIX}}"
+    export AR_${TARGET_UNDER}=llvm-ar
+    export CARGO_TARGET_${TARGET_UPPER}_LINKER="${NDK_PREBUILT}/bin/{{CLANG_PREFIX}}"
+
+    cargo build --lib -p mdk-uniffi --target {{TARGET}} --release
 
 uniffi-bindgen: _build-uniffi (gen-binding "python") (gen-binding-kotlin) (gen-binding "swift") (gen-binding "ruby")
 
@@ -97,7 +110,7 @@ gen-binding lang:
         -l {{lang}} \
         --library ../../target/debug/libmdk_uniffi.so \
         --out-dir bindings/{{lang}}
-    cp target/debug/libmdk_uniffi.so crates/mdk-uniffi/bindings/{{lang}}/libmdk_uniffi.so
+    cp target/debug/{{lib_filename}} crates/mdk-uniffi/bindings/{{lang}}/{{lib_filename}}
     @echo "✓ Bindings generated in crates/mdk-uniffi/bindings/{{lang}}/"
 
 gen-binding-kotlin: (gen-binding "kotlin")
