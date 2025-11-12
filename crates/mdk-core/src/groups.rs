@@ -2554,23 +2554,41 @@ mod tests {
         // Create group with only creator as admin
         let group_id = create_test_group(&creator_mdk, &creator, &initial_members, &admins);
 
+        // Verify member2 (initial_members[1]) is not an admin
+        let non_admin_keys = &initial_members[1];
+        assert!(
+            !admins.contains(&non_admin_keys.public_key()),
+            "member2 should not be in the admin list"
+        );
+
+        // Get initial member count
+        let initial_member_count = creator_mdk
+            .get_members(&group_id)
+            .expect("Failed to get members")
+            .len();
+
         // Create a non-admin member's MDK instance
-        let _non_admin_keys = &initial_members[1]; // member2 is not an admin
         let non_admin_mdk = create_test_mdk();
 
         // Try to have the non-admin add a new member
         let new_member_keys = Keys::generate();
         let new_member_key_package = create_key_package_event(&non_admin_mdk, &new_member_keys);
 
-        // This should fail because non-admin cannot add members
-        // Note: In practice, the non-admin wouldn't have the group loaded,
-        // but we're testing the permission check logic
         let result = non_admin_mdk.add_members(&group_id, &[new_member_key_package]);
 
-        // The error should indicate permission denied or group not found
         assert!(
             result.is_err(),
             "Non-admin should not be able to add members"
+        );
+
+        // Verify that the members list did not change
+        let final_member_count = creator_mdk
+            .get_members(&group_id)
+            .expect("Failed to get members")
+            .len();
+        assert_eq!(
+            initial_member_count, final_member_count,
+            "Member count should not change when non-admin attempts to add members"
         );
     }
 
@@ -2583,6 +2601,12 @@ mod tests {
         // Create group
         let group_id = create_test_group(&creator_mdk, &creator, &initial_members, &admins);
 
+        // Get initial members list
+        let initial_members_list = creator_mdk
+            .get_members(&group_id)
+            .expect("Failed to get members");
+        let initial_member_count = initial_members_list.len();
+
         // Create a non-admin member's MDK instance
         let non_admin_mdk = create_test_mdk();
 
@@ -2590,10 +2614,26 @@ mod tests {
         let member_to_remove = initial_members[0].public_key();
         let result = non_admin_mdk.remove_members(&group_id, &[member_to_remove]);
 
-        // Should fail - non-admin cannot remove members
         assert!(
             result.is_err(),
             "Non-admin should not be able to remove members"
+        );
+
+        // Verify that the members list did not change
+        let final_members_list = creator_mdk
+            .get_members(&group_id)
+            .expect("Failed to get members");
+        let final_member_count = final_members_list.len();
+
+        assert_eq!(
+            initial_member_count, final_member_count,
+            "Member count should not change when non-admin attempts to remove members"
+        );
+
+        // Verify the specific member is still present
+        assert!(
+            final_members_list.iter().any(|m| m == &member_to_remove),
+            "Target member should still be in the group"
         );
     }
 
@@ -2606,6 +2646,14 @@ mod tests {
         // Create group
         let group_id = create_test_group(&creator_mdk, &creator, &initial_members, &admins);
 
+        // Get initial group metadata
+        let initial_group = creator_mdk
+            .get_group(&group_id)
+            .expect("Failed to get group")
+            .expect("Group should exist");
+        let initial_name = initial_group.name.clone();
+        let initial_description = initial_group.description.clone();
+
         // Create a non-admin member's MDK instance
         let non_admin_mdk = create_test_mdk();
 
@@ -2613,10 +2661,24 @@ mod tests {
         let update = NostrGroupDataUpdate::new().name("Hacked Name".to_string());
         let result = non_admin_mdk.update_group_data(&group_id, update);
 
-        // Should fail - non-admin cannot update group extensions
         assert!(
             result.is_err(),
             "Non-admin should not be able to update group extensions"
+        );
+
+        // Verify that the group metadata did not change
+        let final_group = creator_mdk
+            .get_group(&group_id)
+            .expect("Failed to get group")
+            .expect("Group should exist");
+
+        assert_eq!(
+            initial_name, final_group.name,
+            "Group name should not change when non-admin attempts to update"
+        );
+        assert_eq!(
+            initial_description, final_group.description,
+            "Group description should not change when non-admin attempts to update"
         );
     }
 
