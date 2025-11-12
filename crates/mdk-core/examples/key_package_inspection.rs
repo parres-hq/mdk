@@ -7,8 +7,8 @@
 //! It creates a key package, displays the tags that would be used in a Nostr event,
 //! and then parses the key package back to inspect the internal OpenMLS KeyPackage object.
 
-use mdk_core::prelude::*;
 use mdk_core::Error;
+use mdk_core::prelude::*;
 use mdk_memory_storage::MdkMemoryStorage;
 use nostr::event::builder::EventBuilder;
 use nostr::{Keys, Kind, RelayUrl};
@@ -23,8 +23,7 @@ async fn main() -> Result<(), Error> {
         .with_max_level(Level::DEBUG)
         .finish();
 
-    tracing::subscriber::set_global_default(subscriber)
-        .expect("setting default subscriber failed");
+    tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
 
     println!("\n=== MLS Key Package Inspection Example ===\n");
 
@@ -59,7 +58,11 @@ async fn main() -> Result<(), Error> {
     for (i, tag) in tags.iter().enumerate() {
         println!("Tag {}:", i + 1);
         println!("  Kind: {:?}", tag.kind());
-        let tag_parts: Vec<String> = tag.as_slice().iter().map(|s| format!("\"{}\"", s)).collect();
+        let tag_parts: Vec<String> = tag
+            .as_slice()
+            .iter()
+            .map(|s| format!("\"{}\"", s))
+            .collect();
         println!("  Full tag: [{}]", tag_parts.join(", "));
         println!();
     }
@@ -135,7 +138,10 @@ async fn main() -> Result<(), Error> {
                 println!("    Data: LastResort (no additional data)");
             }
             Extension::ApplicationId(app_id) => {
-                println!("    Data: ApplicationId = {}", hex::encode(app_id.as_slice()));
+                println!(
+                    "    Data: ApplicationId = {}",
+                    hex::encode(app_id.as_slice())
+                );
             }
             Extension::RequiredCapabilities(req_caps) => {
                 println!("    Data: RequiredCapabilities");
@@ -171,7 +177,10 @@ async fn main() -> Result<(), Error> {
                 println!("    Data: LastResort (marks this as a last resort key package)");
             }
             Extension::ApplicationId(app_id) => {
-                println!("    Data: ApplicationId = {}", hex::encode(app_id.as_slice()));
+                println!(
+                    "    Data: ApplicationId = {}",
+                    hex::encode(app_id.as_slice())
+                );
             }
             Extension::RequiredCapabilities(req_caps) => {
                 println!("    Data: RequiredCapabilities");
@@ -194,7 +203,10 @@ async fn main() -> Result<(), Error> {
     // Check if it's a last resort key package
     println!("Special Properties:");
     println!("  Is Last Resort (from leaf node): {}", has_last_resort);
-    println!("  Is Last Resort (from key package): {}", kp_has_last_resort);
+    println!(
+        "  Is Last Resort (from key package): {}",
+        kp_has_last_resort
+    );
     println!();
 
     // ====================================
@@ -205,8 +217,14 @@ async fn main() -> Result<(), Error> {
     let key_package_bytes = hex::decode(&key_package_encoded)?;
     println!("Serialized Key Package:");
     println!("  Total bytes: {}", key_package_bytes.len());
-    println!("  First 32 bytes (hex): {}", hex::encode(&key_package_bytes[..32.min(key_package_bytes.len())]));
-    println!("  Last 32 bytes (hex): {}", hex::encode(&key_package_bytes[key_package_bytes.len().saturating_sub(32)..]));
+    println!(
+        "  First 32 bytes (hex): {}",
+        hex::encode(&key_package_bytes[..32.min(key_package_bytes.len())])
+    );
+    println!(
+        "  Last 32 bytes (hex): {}",
+        hex::encode(&key_package_bytes[key_package_bytes.len().saturating_sub(32)..])
+    );
     println!();
 
     // ====================================
@@ -239,4 +257,3 @@ async fn main() -> Result<(), Error> {
 
     Ok(())
 }
-

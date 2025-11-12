@@ -18,8 +18,8 @@
 
 #![cfg(feature = "debug-examples")]
 
-use mdk_core::prelude::*;
 use mdk_core::Error;
+use mdk_core::prelude::*;
 use mdk_memory_storage::MdkMemoryStorage;
 use nostr::{Keys, RelayUrl};
 use openmls::prelude::*;
@@ -33,8 +33,7 @@ async fn main() -> Result<(), Error> {
         .with_max_level(Level::DEBUG)
         .finish();
 
-    tracing::subscriber::set_global_default(subscriber)
-        .expect("setting default subscriber failed");
+    tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
 
     println!("\n=== MLS Group Inspection Example ===\n");
 
@@ -67,26 +66,22 @@ async fn main() -> Result<(), Error> {
     let (member1_kp_encoded, member1_tags) =
         mdk.create_key_package_for_event(&member1_keys.public_key(), [relay_url.clone()])?;
 
-    let member1_event = nostr::event::builder::EventBuilder::new(
-        nostr::Kind::MlsKeyPackage,
-        member1_kp_encoded,
-    )
-    .tags(member1_tags.to_vec())
-    .build(member1_keys.public_key())
-    .sign(&member1_keys)
-    .await?;
+    let member1_event =
+        nostr::event::builder::EventBuilder::new(nostr::Kind::MlsKeyPackage, member1_kp_encoded)
+            .tags(member1_tags.to_vec())
+            .build(member1_keys.public_key())
+            .sign(&member1_keys)
+            .await?;
 
     let (member2_kp_encoded, member2_tags) =
         mdk.create_key_package_for_event(&member2_keys.public_key(), [relay_url.clone()])?;
 
-    let member2_event = nostr::event::builder::EventBuilder::new(
-        nostr::Kind::MlsKeyPackage,
-        member2_kp_encoded,
-    )
-    .tags(member2_tags.to_vec())
-    .build(member2_keys.public_key())
-    .sign(&member2_keys)
-    .await?;
+    let member2_event =
+        nostr::event::builder::EventBuilder::new(nostr::Kind::MlsKeyPackage, member2_kp_encoded)
+            .tags(member2_tags.to_vec())
+            .build(member2_keys.public_key())
+            .sign(&member2_keys)
+            .await?;
 
     println!("Created key packages for {} members", 2);
     println!();
@@ -116,10 +111,16 @@ async fn main() -> Result<(), Error> {
     println!("  Name: {}", group_result.group.name);
     println!("  Description: {}", group_result.group.description);
     println!("  MLS Group ID: {:?}", group_result.group.mls_group_id);
-    println!("  Nostr Group ID: {}", hex::encode(group_result.group.nostr_group_id));
+    println!(
+        "  Nostr Group ID: {}",
+        hex::encode(group_result.group.nostr_group_id)
+    );
     println!("  Epoch: {}", group_result.group.epoch);
     println!("  State: {:?}", group_result.group.state);
-    println!("  Welcome events created: {}", group_result.welcome_rumors.len());
+    println!(
+        "  Welcome events created: {}",
+        group_result.welcome_rumors.len()
+    );
     println!();
 
     // ====================================
@@ -168,7 +169,10 @@ async fn main() -> Result<(), Error> {
     println!("  Description: {}", stored_group.description);
     println!("  Epoch: {}", stored_group.epoch);
     println!("  State: {:?}", stored_group.state);
-    println!("  Nostr Group ID: {}", hex::encode(stored_group.nostr_group_id));
+    println!(
+        "  Nostr Group ID: {}",
+        hex::encode(stored_group.nostr_group_id)
+    );
     println!("  MLS Group ID: {:?}", stored_group.mls_group_id);
     println!();
 
@@ -269,7 +273,10 @@ async fn main() -> Result<(), Error> {
                 println!("    Data: LastResort (marks this as a last resort key package)");
             }
             Extension::ApplicationId(app_id) => {
-                println!("    Data: ApplicationId = {}", hex::encode(app_id.as_slice()));
+                println!(
+                    "    Data: ApplicationId = {}",
+                    hex::encode(app_id.as_slice())
+                );
             }
             _ => {
                 println!("    Data: Other extension");
@@ -300,7 +307,10 @@ async fn main() -> Result<(), Error> {
             Extension::Unknown(ext_type, data) => {
                 println!("  Extension Type Code: {:?}", ext_type);
                 println!("  Data length: {} bytes", data.0.len());
-                println!("  Data (first 64 bytes): {}", hex::encode(&data.0[..data.0.len().min(64)]));
+                println!(
+                    "  Data (first 64 bytes): {}",
+                    hex::encode(&data.0[..data.0.len().min(64)])
+                );
             }
             Extension::RequiredCapabilities(req_caps) => {
                 println!("  Data: RequiredCapabilities");
@@ -333,7 +343,10 @@ async fn main() -> Result<(), Error> {
         println!("  Version: {}", group_data.version);
         println!("  Name: {}", group_data.name);
         println!("  Description: {}", group_data.description);
-        println!("  Nostr Group ID: {}", hex::encode(group_data.nostr_group_id));
+        println!(
+            "  Nostr Group ID: {}",
+            hex::encode(group_data.nostr_group_id)
+        );
         println!("  Admins ({}):", group_data.admins.len());
         for (i, admin) in group_data.admins.iter().enumerate() {
             println!("    {}. {}", i + 1, admin);
@@ -367,7 +380,10 @@ async fn main() -> Result<(), Error> {
     for (idx, member) in member_list.iter().enumerate() {
         println!("  Member {}:", idx + 1);
         println!("    Leaf Index: {}", member.index);
-        println!("    Credential type: {:?}", member.credential.credential_type());
+        println!(
+            "    Credential type: {:?}",
+            member.credential.credential_type()
+        );
 
         // Try to extract public key
         if let Ok(basic_cred) = BasicCredential::try_from(member.credential.clone()) {
@@ -379,7 +395,9 @@ async fn main() -> Result<(), Error> {
 
                 // Check if this is the creator or an admin
                 let is_creator = pubkey_hex == creator_keys.public_key().to_hex();
-                let is_admin = stored_group.admin_pubkeys.iter()
+                let is_admin = stored_group
+                    .admin_pubkeys
+                    .iter()
                     .any(|pk| pk.to_hex() == pubkey_hex);
 
                 if is_creator {
@@ -402,7 +420,10 @@ async fn main() -> Result<(), Error> {
     let exporter_secret = mdk.exporter_secret(group_id)?;
     println!("Exporter Secret:");
     println!("  Epoch: {}", exporter_secret.epoch);
-    println!("  Secret (first 16 bytes): {}...", hex::encode(&exporter_secret.secret[..16]));
+    println!(
+        "  Secret (first 16 bytes): {}...",
+        hex::encode(&exporter_secret.secret[..16])
+    );
     println!("  Note: This secret is used for NIP-44 encryption of group messages");
     println!();
 
@@ -411,7 +432,10 @@ async fn main() -> Result<(), Error> {
     // ====================================
     println!("=== Inspecting Welcome Event Structure ===\n");
 
-    println!("Welcome Events Created: {}", group_result.welcome_rumors.len());
+    println!(
+        "Welcome Events Created: {}",
+        group_result.welcome_rumors.len()
+    );
     println!("Note: One welcome event (rumor) is created for each member added to the group");
     println!();
 
@@ -420,9 +444,14 @@ async fn main() -> Result<(), Error> {
         println!("  Kind: {:?}", welcome_rumor.kind);
         println!("  Public Key: {}", welcome_rumor.pubkey);
         println!("  Created At: {:?}", welcome_rumor.created_at);
-        println!("  Content length: {} bytes (hex-encoded MLS Welcome message)", welcome_rumor.content.len());
-        println!("  Content preview: {}...",
-                 welcome_rumor.content.chars().take(64).collect::<String>());
+        println!(
+            "  Content length: {} bytes (hex-encoded MLS Welcome message)",
+            welcome_rumor.content.len()
+        );
+        println!(
+            "  Content preview: {}...",
+            welcome_rumor.content.chars().take(64).collect::<String>()
+        );
 
         println!("  Tags ({}):", welcome_rumor.tags.len());
         for (tag_idx, tag) in welcome_rumor.tags.iter().enumerate() {
@@ -491,4 +520,3 @@ async fn main() -> Result<(), Error> {
 
     Ok(())
 }
-

@@ -30,7 +30,9 @@ pub mod test_util;
 mod util;
 pub mod welcomes;
 
-use self::constant::{DEFAULT_CIPHERSUITE, GROUP_CONTEXT_REQUIRED_EXTENSIONS, SUPPORTED_EXTENSIONS, TAG_EXTENSIONS};
+use self::constant::{
+    DEFAULT_CIPHERSUITE, GROUP_CONTEXT_REQUIRED_EXTENSIONS, SUPPORTED_EXTENSIONS, TAG_EXTENSIONS,
+};
 pub use self::error::Error;
 use self::util::NostrTagFormat;
 

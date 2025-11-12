@@ -22,7 +22,7 @@ pub const DEFAULT_CIPHERSUITE: Ciphersuite =
 /// extensions to be declared in capabilities for validation, even though per the MLS
 /// Extensions draft it's technically just a KeyPackage marker.
 pub const SUPPORTED_EXTENSIONS: [ExtensionType; 2] = [
-    ExtensionType::LastResort,                               // 0x000A - Required by OpenMLS validation
+    ExtensionType::LastResort, // 0x000A - Required by OpenMLS validation
     ExtensionType::Unknown(NOSTR_GROUP_DATA_EXTENSION_TYPE), // 0xF2EE - NostrGroupData
 ];
 
@@ -41,7 +41,7 @@ pub const GROUP_CONTEXT_REQUIRED_EXTENSIONS: [ExtensionType; 1] = [
 /// KeyPackage capabilities contain. This allows other clients to validate
 /// compatibility before attempting to add this user to a group.
 pub const TAG_EXTENSIONS: [ExtensionType; 2] = [
-    ExtensionType::LastResort,                               // 0x000A - Required in capabilities
+    ExtensionType::LastResort, // 0x000A - Required in capabilities
     ExtensionType::Unknown(NOSTR_GROUP_DATA_EXTENSION_TYPE), // 0xF2EE - NostrGroupData
 ];
 

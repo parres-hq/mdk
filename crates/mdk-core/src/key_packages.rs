@@ -618,8 +618,14 @@ mod tests {
 
         // Verify client tag contains version
         let client_tag = tags[4].content().unwrap();
-        assert!(client_tag.starts_with("MDK/"), "Client tag should start with MDK/");
-        assert!(client_tag.contains('.'), "Client tag should contain version number");
+        assert!(
+            client_tag.starts_with("MDK/"),
+            "Client tag should start with MDK/"
+        );
+        assert!(
+            client_tag.contains('.'),
+            "Client tag should contain version number"
+        );
     }
 
     /// Test that ciphersuite tag format matches Marmot spec (MIP-00)
@@ -1592,8 +1598,14 @@ mod tests {
             let result = mdk.validate_key_package_tags(&event);
             assert!(result.is_err(), "Should reject event missing LastResort");
             let error_msg = result.unwrap_err().to_string();
-            assert!(error_msg.contains("0x000a"), "Error should contain hex code 0x000a");
-            assert!(error_msg.contains("LastResort"), "Error should contain extension name");
+            assert!(
+                error_msg.contains("0x000a"),
+                "Error should contain hex code 0x000a"
+            );
+            assert!(
+                error_msg.contains("LastResort"),
+                "Error should contain extension name"
+            );
         }
 
         // Test missing NostrGroupData (0xf2ee)
@@ -1615,8 +1627,14 @@ mod tests {
                 "Should reject event missing NostrGroupData"
             );
             let error_msg = result.unwrap_err().to_string();
-            assert!(error_msg.contains("0xf2ee"), "Error should contain hex code 0xf2ee");
-            assert!(error_msg.contains("NostrGroupData"), "Error should contain extension name");
+            assert!(
+                error_msg.contains("0xf2ee"),
+                "Error should contain hex code 0xf2ee"
+            );
+            assert!(
+                error_msg.contains("NostrGroupData"),
+                "Error should contain extension name"
+            );
         }
     }
 
