@@ -413,22 +413,7 @@ async fn main() -> Result<(), Error> {
     }
 
     // ====================================
-    // Step 13: Export group secret
-    // ====================================
-    println!("=== Exporting Group Secret ===\n");
-
-    let exporter_secret = mdk.exporter_secret(group_id)?;
-    println!("Exporter Secret:");
-    println!("  Epoch: {}", exporter_secret.epoch);
-    println!(
-        "  Secret (first 16 bytes): {}...",
-        hex::encode(&exporter_secret.secret[..16])
-    );
-    println!("  Note: This secret is used for NIP-44 encryption of group messages");
-    println!();
-
-    // ====================================
-    // Step 14: Inspect welcome event structure
+    // Step 13: Inspect welcome event structure
     // ====================================
     println!("=== Inspecting Welcome Event Structure ===\n");
 
@@ -472,7 +457,7 @@ async fn main() -> Result<(), Error> {
     println!();
 
     // ====================================
-    // Step 15: Inspect pending proposals
+    // Step 14: Inspect pending proposals
     // ====================================
     println!("=== Inspecting Pending Proposals ===\n");
 
@@ -510,12 +495,11 @@ async fn main() -> Result<(), Error> {
     println!("     - RequiredCapabilities extension");
     println!("     - RatchetTree extension");
     println!(" 11. Examining all members in the ratchet tree");
-    println!(" 12. Exporting group secrets for message encryption");
-    println!(" 13. Inspecting welcome event structure:");
+    println!(" 12. Inspecting welcome event structure:");
     println!("     - Kind, public key, timestamp");
     println!("     - Content (hex-encoded MLS Welcome message)");
     println!("     - Tags (relays, event references, client info)");
-    println!(" 14. Checking for pending proposals");
+    println!(" 13. Checking for pending proposals");
     println!();
 
     Ok(())

@@ -284,6 +284,12 @@ where
     }
 
     /// Loads an MLS group from storage by its ID
+    fn load_mls_group_impl(&self, group_id: &GroupId) -> Result<Option<MlsGroup>, Error> {
+        MlsGroup::load(self.provider.storage(), group_id.inner())
+            .map_err(|e| Error::Provider(e.to_string()))
+    }
+
+    /// Loads an MLS group from storage by its ID
     ///
     /// This method provides access to the underlying OpenMLS `MlsGroup` object,
     /// which can be useful for inspection, debugging, and advanced operations.
@@ -302,8 +308,7 @@ where
     /// * `Err(Error)` - If there is an error loading the group
     #[cfg(feature = "debug-examples")]
     pub fn load_mls_group(&self, group_id: &GroupId) -> Result<Option<MlsGroup>, Error> {
-        MlsGroup::load(self.provider.storage(), group_id.inner())
-            .map_err(|e| Error::Provider(e.to_string()))
+        self.load_mls_group_impl(group_id)
     }
 
     /// Loads an MLS group from storage by its ID (internal version)
@@ -319,60 +324,7 @@ where
     /// * `Err(Error)` - If there is an error loading the group
     #[cfg(not(feature = "debug-examples"))]
     pub(crate) fn load_mls_group(&self, group_id: &GroupId) -> Result<Option<MlsGroup>, Error> {
-        MlsGroup::load(self.provider.storage(), group_id.inner())
-            .map_err(|e| Error::Provider(e.to_string()))
-    }
-
-    /// Exports the current epoch's secret key from an MLS group
-    ///
-    /// This secret is used for NIP-44 message encryption in Group Message Events (kind:445).
-    /// The secret is cached in storage to avoid re-exporting it for each message.
-    ///
-    /// **Note:** This method is only available with the `debug-examples` feature flag.
-    /// It is intended for debugging and example purposes only.
-    ///
-    /// # Arguments
-    ///
-    /// * `group_id` - The MLS group ID
-    ///
-    /// # Returns
-    ///
-    /// * `Ok(GroupExporterSecret)` - The exported secret
-    /// * `Err(Error)` - If the group is not found or there is an error exporting the secret
-    #[cfg(feature = "debug-examples")]
-    pub fn exporter_secret(
-        &self,
-        group_id: &crate::GroupId,
-    ) -> Result<group_types::GroupExporterSecret, Error> {
-        let group = self.load_mls_group(group_id)?.ok_or(Error::GroupNotFound)?;
-
-        match self
-            .storage()
-            .get_group_exporter_secret(group_id, group.epoch().as_u64())
-            .map_err(|e| Error::Group(e.to_string()))?
-        {
-            Some(group_exporter_secret) => Ok(group_exporter_secret),
-            // If it's not already in the storage, export the secret and save it
-            None => {
-                let export_secret: [u8; 32] = group
-                    .export_secret(self.provider.crypto(), "nostr", b"nostr", 32)?
-                    .try_into()
-                    .map_err(|_| {
-                        Error::Group("Failed to convert export secret to [u8; 32]".to_string())
-                    })?;
-                let group_exporter_secret = group_types::GroupExporterSecret {
-                    mls_group_id: group_id.clone(),
-                    epoch: group.epoch().as_u64(),
-                    secret: export_secret,
-                };
-
-                self.storage()
-                    .save_group_exporter_secret(group_exporter_secret.clone())
-                    .map_err(|e| Error::Group(e.to_string()))?;
-
-                Ok(group_exporter_secret)
-            }
-        }
+        self.load_mls_group_impl(group_id)
     }
 
     /// Exports the current epoch's secret key from an MLS group (internal version)
@@ -388,7 +340,6 @@ where
     ///
     /// * `Ok(GroupExporterSecret)` - The exported secret
     /// * `Err(Error)` - If the group is not found or there is an error exporting the secret
-    #[cfg(not(feature = "debug-examples"))]
     pub(crate) fn exporter_secret(
         &self,
         group_id: &crate::GroupId,
