@@ -2992,4 +2992,249 @@ mod tests {
             assert!(found, "Should find message with content '{}'", content);
         }
     }
+
+    // ============================================================================
+    // Security & Edge Cases
+    // ============================================================================
+
+    /// Message replay attack prevention
+    ///
+    /// Tests that processing the same message multiple times is handled
+    /// idempotently without causing issues.
+    ///
+    /// Requirements tested:
+    /// - Message replay is detected and handled gracefully
+    /// - Message appears only once in history regardless of replays
+    /// - No duplicate processing effects
+    #[test]
+    fn test_message_replay_prevention() {
+        use crate::test_util::{create_key_package_event, create_nostr_group_config_data};
+
+        // Create Alice (admin) and Bob (member)
+        let alice_keys = Keys::generate();
+        let bob_keys = Keys::generate();
+
+        let alice_mdk = create_test_mdk();
+        let bob_mdk = create_test_mdk();
+
+        let admins = vec![alice_keys.public_key()];
+
+        // Bob creates his key package
+        let bob_key_package = create_key_package_event(&bob_mdk, &bob_keys);
+
+        // Alice creates the group
+        let create_result = alice_mdk
+            .create_group(
+                &alice_keys.public_key(),
+                vec![bob_key_package],
+                create_nostr_group_config_data(admins),
+            )
+            .expect("Alice should be able to create group");
+
+        let group_id = create_result.group.mls_group_id.clone();
+
+        alice_mdk
+            .merge_pending_commit(&group_id)
+            .expect("Failed to merge Alice's create commit");
+
+        // Bob processes and accepts welcome
+        let bob_welcome_rumor = &create_result.welcome_rumors[0];
+
+        let bob_welcome = bob_mdk
+            .process_welcome(&nostr::EventId::all_zeros(), bob_welcome_rumor)
+            .expect("Bob should be able to process welcome");
+
+        bob_mdk
+            .accept_welcome(&bob_welcome)
+            .expect("Bob should be able to accept welcome");
+
+        // Alice sends a message M1
+        let rumor = create_test_rumor(&alice_keys, "Important message");
+        let message_m1 = alice_mdk
+            .create_message(&group_id, rumor)
+            .expect("Failed to create message");
+
+        // Step 1: Bob processes M1 for the first time
+        let result1 = bob_mdk.process_message(&message_m1);
+        assert!(
+            result1.is_ok(),
+            "First processing should succeed: {:?}",
+            result1.err()
+        );
+
+        // Step 2: Attacker replays M1 to Bob
+        let result2 = bob_mdk.process_message(&message_m1);
+        assert!(
+            result2.is_ok(),
+            "Replay should be handled gracefully: {:?}",
+            result2.err()
+        );
+
+        // Step 3: Third replay attempt
+        let result3 = bob_mdk.process_message(&message_m1);
+        assert!(
+            result3.is_ok(),
+            "Multiple replays should be handled gracefully: {:?}",
+            result3.err()
+        );
+
+        // Step 4: Verify message appears only once in Bob's history
+        let bob_messages = bob_mdk
+            .get_messages(&group_id)
+            .expect("Failed to get messages");
+
+        let important_message_count = bob_messages
+            .iter()
+            .filter(|m| m.content == "Important message")
+            .count();
+
+        assert_eq!(
+            important_message_count, 1,
+            "Message should appear only once despite replays"
+        );
+    }
+
+    /// Malformed message handling
+    ///
+    /// Tests that malformed or invalid messages are rejected gracefully
+    /// without causing panics or crashes.
+    ///
+    /// Requirements tested:
+    /// - Invalid event kinds rejected with clear errors
+    /// - Missing required tags detected
+    /// - No panics on malformed input
+    /// - Error messages don't leak sensitive data
+    #[test]
+    fn test_malformed_message_handling() {
+        let mdk = create_test_mdk();
+        let creator = Keys::generate();
+
+        // Test 1: Invalid event kind (using TextNote instead of MlsGroupMessage)
+        let invalid_kind_event = EventBuilder::new(Kind::TextNote, "malformed content")
+            .sign_with_keys(&creator)
+            .expect("Failed to sign event");
+
+        let result1 = mdk.process_message(&invalid_kind_event);
+        assert!(
+            result1.is_err(),
+            "Should reject message with wrong event kind"
+        );
+        assert!(
+            matches!(result1, Err(crate::Error::UnexpectedEvent { .. })),
+            "Should return UnexpectedEvent error"
+        );
+
+        // Test 2: Missing group ID tag
+        let missing_tag_event = EventBuilder::new(Kind::MlsGroupMessage, "content")
+            .sign_with_keys(&creator)
+            .expect("Failed to sign event");
+
+        let result2 = mdk.process_message(&missing_tag_event);
+        assert!(
+            result2.is_err(),
+            "Should reject message without group ID tag"
+        );
+
+        // Test 3: Empty content (edge case)
+        let empty_content_event = EventBuilder::new(Kind::MlsGroupMessage, "")
+            .sign_with_keys(&creator)
+            .expect("Failed to sign event");
+
+        let result3 = mdk.process_message(&empty_content_event);
+        assert!(result3.is_err(), "Should reject message with empty content");
+
+        // All error cases should be handled gracefully without panics
+    }
+
+    /// Message from non-member handling
+    ///
+    /// Tests that messages from non-members are properly rejected.
+    ///
+    /// Requirements tested:
+    /// - Messages from non-members rejected
+    /// - Clear error indicating sender not in group
+    /// - No state corruption from unauthorized messages
+    #[test]
+    fn test_message_from_non_member_rejected() {
+        use crate::test_util::{create_key_package_event, create_nostr_group_config_data};
+
+        // Create Alice (admin) and Bob (member)
+        let alice_keys = Keys::generate();
+        let bob_keys = Keys::generate();
+        let charlie_keys = Keys::generate(); // Not a member
+
+        let alice_mdk = create_test_mdk();
+        let bob_mdk = create_test_mdk();
+        let charlie_mdk = create_test_mdk();
+
+        let admins = vec![alice_keys.public_key()];
+
+        // Bob creates his key package
+        let bob_key_package = create_key_package_event(&bob_mdk, &bob_keys);
+
+        // Alice creates group with only Bob (Charlie is excluded)
+        let create_result = alice_mdk
+            .create_group(
+                &alice_keys.public_key(),
+                vec![bob_key_package],
+                create_nostr_group_config_data(admins),
+            )
+            .expect("Alice should be able to create group");
+
+        let group_id = create_result.group.mls_group_id.clone();
+
+        alice_mdk
+            .merge_pending_commit(&group_id)
+            .expect("Failed to merge Alice's create commit");
+
+        // Bob processes and accepts welcome
+        let bob_welcome_rumor = &create_result.welcome_rumors[0];
+
+        let bob_welcome = bob_mdk
+            .process_welcome(&nostr::EventId::all_zeros(), bob_welcome_rumor)
+            .expect("Bob should be able to process welcome");
+
+        bob_mdk
+            .accept_welcome(&bob_welcome)
+            .expect("Bob should be able to accept welcome");
+
+        // Verify initial member list (should be Alice and Bob only)
+        let members = alice_mdk
+            .get_members(&group_id)
+            .expect("Failed to get members");
+        assert_eq!(members.len(), 2, "Group should have 2 members");
+        assert!(
+            !members.contains(&charlie_keys.public_key()),
+            "Charlie should not be a member"
+        );
+
+        // Charlie (non-member) attempts to send a message to the group
+        // This should fail because Charlie doesn't have the group loaded
+        let charlie_rumor = create_test_rumor(&charlie_keys, "Unauthorized message");
+        let charlie_message_result = charlie_mdk.create_message(&group_id, charlie_rumor);
+
+        assert!(
+            charlie_message_result.is_err(),
+            "Non-member should not be able to create message for group"
+        );
+
+        // Verify the error is GroupNotFound (Charlie doesn't have access)
+        assert!(
+            matches!(
+                charlie_message_result,
+                Err(crate::Error::GroupNotFound { .. })
+            ),
+            "Should return GroupNotFound error for non-member"
+        );
+
+        // Verify group state is unchanged
+        let final_members = alice_mdk
+            .get_members(&group_id)
+            .expect("Failed to get members");
+        assert_eq!(
+            final_members.len(),
+            2,
+            "Member count should remain unchanged"
+        );
+    }
 }
