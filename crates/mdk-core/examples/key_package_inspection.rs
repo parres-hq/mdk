@@ -240,6 +240,33 @@ async fn main() -> Result<(), Error> {
     println!("  - relay tag present");
     println!();
 
+    // ====================================
+    // Step 7: Verify protected tag
+    // ====================================
+    println!("=== Verifying Protected Tag ===\n");
+
+    // Verify that the protected tag is present in the event
+    let protected_tag = key_package_event
+        .tags
+        .iter()
+        .find(|tag| matches!(tag.kind(), nostr::TagKind::Protected));
+
+    match protected_tag {
+        Some(tag) => {
+            println!("✓ Protected tag found!");
+            println!("  Tag kind: {:?}", tag.kind());
+            println!("  Tag content: {:?}", tag.as_slice());
+            println!();
+            println!("The protected tag marks this event as protected per NIP-70.");
+            println!("This ensures the event content cannot be modified by relays.");
+        }
+        None => {
+            println!("✗ WARNING: Protected tag not found!");
+            println!("  This key package event should have a protected tag.");
+        }
+    }
+    println!();
+
     println!("=== Example Complete ===\n");
     println!("This example demonstrated:");
     println!("  1. Creating a key package with create_key_package_for_event()");
@@ -252,7 +279,8 @@ async fn main() -> Result<(), Error> {
     println!("     - Extensions (both leaf node and key package level)");
     println!("     - Last resort status");
     println!("  6. Raw serialized data inspection");
-    println!("  7. Tag validation verification");
+    println!("  7. Tag validation verification (protocol version, ciphersuite, extensions)");
+    println!("  8. Protected tag verification (NIP-70 compliance)");
     println!();
 
     Ok(())
