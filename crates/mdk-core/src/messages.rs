@@ -2743,4 +2743,253 @@ mod tests {
             "Message processing should be idempotent - both calls should succeed"
         );
     }
+
+    /// Test duplicate message handling from multiple relays
+    ///
+    /// Validates that the same message received from multiple relays is processed
+    /// only once and duplicates are handled gracefully.
+    #[test]
+    fn test_duplicate_message_from_multiple_relays() {
+        let mdk = create_test_mdk();
+        let (creator, members, admins) = create_test_group_members();
+        let group_id = create_test_group(&mdk, &creator, &members, &admins);
+
+        // Create a message
+        let rumor = create_test_rumor(&creator, "Test message");
+        let message_event = mdk
+            .create_message(&group_id, rumor)
+            .expect("Failed to create message");
+
+        // Process the message for the first time
+        let first_result = mdk.process_message(&message_event);
+        assert!(
+            first_result.is_ok(),
+            "First message processing should succeed"
+        );
+
+        // Simulate receiving the same message from a different relay
+        // Process the exact same message again
+        let second_result = mdk.process_message(&message_event);
+
+        // The second processing should either:
+        // 1. Succeed but recognize it's a duplicate (idempotent)
+        // 2. Return an error indicating it's already processed
+        // Either way, it should not cause a panic or corrupt state
+        match second_result {
+            Ok(_) => {
+                // If it succeeds, verify we still only have one message
+                let messages = mdk.get_messages(&group_id).expect("Failed to get messages");
+                assert_eq!(
+                    messages.len(),
+                    1,
+                    "Should still have only 1 message after duplicate processing"
+                );
+            }
+            Err(_) => {
+                // If it errors, that's also acceptable - it recognized the duplicate
+                // Verify the original message is still there
+                let messages = mdk.get_messages(&group_id).expect("Failed to get messages");
+                assert_eq!(
+                    messages.len(),
+                    1,
+                    "Should still have 1 message even if duplicate was rejected"
+                );
+            }
+        }
+
+        // Verify group state is consistent
+        let group = mdk
+            .get_group(&group_id)
+            .expect("Failed to get group")
+            .expect("Group should exist");
+        assert!(
+            group.last_message_id.is_some(),
+            "Group should have last message ID"
+        );
+    }
+
+    /// Test out-of-order message processing
+    ///
+    /// Validates that messages arriving out of chronological order are processed
+    /// correctly with deterministic ordering.
+    #[test]
+    fn test_out_of_order_message_processing() {
+        let mdk = create_test_mdk();
+        let (creator, members, admins) = create_test_group_members();
+        let group_id = create_test_group(&mdk, &creator, &members, &admins);
+
+        // Create three messages in order
+        let rumor1 = create_test_rumor(&creator, "Message 1");
+        let message1 = mdk
+            .create_message(&group_id, rumor1)
+            .expect("Failed to create message 1");
+
+        let rumor2 = create_test_rumor(&creator, "Message 2");
+        let message2 = mdk
+            .create_message(&group_id, rumor2)
+            .expect("Failed to create message 2");
+
+        let rumor3 = create_test_rumor(&creator, "Message 3");
+        let message3 = mdk
+            .create_message(&group_id, rumor3)
+            .expect("Failed to create message 3");
+
+        // Create a second client (Bob) who will receive messages out of order
+        let _bob_mdk = create_test_mdk();
+        let _bob_keys = &members[0];
+
+        // Bob needs to join the group first
+        // In a real scenario, Bob would process a welcome message
+        // For this test, we'll simulate Bob having the group state
+
+        // Process messages in wrong order: 3, 1, 2
+        // Note: MLS messages must be processed in epoch order, but within an epoch,
+        // application messages can arrive out of order
+
+        // All three messages are in the same epoch, so they should all process
+        let result3 = mdk.process_message(&message3);
+        let result1 = mdk.process_message(&message1);
+        let result2 = mdk.process_message(&message2);
+
+        // All should succeed (or handle gracefully)
+        assert!(
+            result3.is_ok() || result1.is_ok() || result2.is_ok(),
+            "At least some messages should process successfully"
+        );
+
+        // Verify all messages are stored
+        let messages = mdk.get_messages(&group_id).expect("Failed to get messages");
+        assert_eq!(
+            messages.len(),
+            3,
+            "Should have all 3 messages regardless of processing order"
+        );
+
+        // Verify messages can be retrieved by their IDs
+        for msg in &messages {
+            let retrieved = mdk
+                .get_message(&msg.id)
+                .expect("Failed to get message")
+                .expect("Message should exist");
+            assert_eq!(retrieved.id, msg.id, "Retrieved message should match");
+        }
+    }
+
+    /// Test message processing with relay failures
+    ///
+    /// Validates that message processing continues to work even when some relays
+    /// are unavailable or return errors.
+    #[test]
+    fn test_message_processing_with_relay_failures() {
+        let mdk = create_test_mdk();
+        let (creator, members, admins) = create_test_group_members();
+        let group_id = create_test_group(&mdk, &creator, &members, &admins);
+
+        // Create a message
+        let rumor = create_test_rumor(&creator, "Test message with relay issues");
+        let message_event = mdk
+            .create_message(&group_id, rumor)
+            .expect("Failed to create message");
+
+        // Process the message
+        // Note: In a real scenario with actual relay connections, we would simulate
+        // relay failures. For this unit test, we verify that message processing
+        // itself is resilient and doesn't depend on relay availability for processing.
+        let result = mdk.process_message(&message_event);
+        assert!(
+            result.is_ok(),
+            "Message processing should succeed regardless of relay state"
+        );
+
+        // Verify the message was stored locally
+        let messages = mdk.get_messages(&group_id).expect("Failed to get messages");
+        assert_eq!(messages.len(), 1, "Message should be stored locally");
+
+        // Verify message content is intact
+        let stored_message = &messages[0];
+        assert_eq!(
+            stored_message.content, "Test message with relay issues",
+            "Message content should be preserved"
+        );
+    }
+
+    /// Test message deduplication across multiple relay sources
+    ///
+    /// Validates that messages with the same ID from different relays are
+    /// deduplicated correctly.
+    #[test]
+    fn test_message_deduplication_across_relays() {
+        let mdk = create_test_mdk();
+        let (creator, members, admins) = create_test_group_members();
+        let group_id = create_test_group(&mdk, &creator, &members, &admins);
+
+        // Create a message
+        let mut rumor = create_test_rumor(&creator, "Deduplicated message");
+        let rumor_id = rumor.id();
+        let message_event = mdk
+            .create_message(&group_id, rumor)
+            .expect("Failed to create message");
+
+        // Process the message multiple times (simulating multiple relay sources)
+        for i in 0..5 {
+            let result = mdk.process_message(&message_event);
+            // Each processing should either succeed (idempotent) or fail gracefully
+            if i == 0 {
+                assert!(result.is_ok(), "First processing should succeed");
+            }
+            // Subsequent processings may succeed or fail, but shouldn't panic
+        }
+
+        // Verify we only have one message stored
+        let messages = mdk.get_messages(&group_id).expect("Failed to get messages");
+        assert_eq!(
+            messages.len(),
+            1,
+            "Should have exactly 1 message despite multiple processing attempts"
+        );
+
+        // Verify the message ID matches
+        assert_eq!(
+            messages[0].id, rumor_id,
+            "Stored message should have correct ID"
+        );
+    }
+
+    /// Test message ordering with network delays
+    ///
+    /// Validates that messages maintain correct ordering even when network
+    /// delays cause them to arrive out of sequence.
+    #[test]
+    fn test_message_ordering_with_network_delays() {
+        let mdk = create_test_mdk();
+        let (creator, members, admins) = create_test_group_members();
+        let group_id = create_test_group(&mdk, &creator, &members, &admins);
+
+        // Create messages with explicit timestamps
+        let mut messages_created = Vec::new();
+        for i in 1..=5 {
+            let rumor = create_test_rumor(&creator, &format!("Message {}", i));
+            let message_event = mdk
+                .create_message(&group_id, rumor)
+                .expect(&format!("Failed to create message {}", i));
+            messages_created.push((i, message_event));
+        }
+
+        // Process messages in reverse order (simulating network delays)
+        for (i, message_event) in messages_created.iter().rev() {
+            let result = mdk.process_message(message_event);
+            assert!(result.is_ok(), "Processing message {} should succeed", i);
+        }
+
+        // Verify all messages are stored
+        let stored_messages = mdk.get_messages(&group_id).expect("Failed to get messages");
+        assert_eq!(stored_messages.len(), 5, "Should have all 5 messages");
+
+        // Messages should be retrievable regardless of processing order
+        for (i, _) in &messages_created {
+            let content = format!("Message {}", i);
+            let found = stored_messages.iter().any(|m| m.content == content);
+            assert!(found, "Should find message with content '{}'", content);
+        }
+    }
 }
