@@ -449,10 +449,16 @@ where
 
         // Check format: single comma-separated string OR multiple separate values
         if extension_values.len() == 1 {
-            // Single string format: should contain all required extension names
+            // Single string format: split on commas and check exact matches
             let combined = extension_values[0];
+            let tokens: Vec<&str> = combined
+                .split(',')
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())
+                .collect();
+
             for legacy_name in LEGACY_EXTENSION_NAMES.iter() {
-                if !combined.contains(legacy_name) {
+                if !tokens.iter().any(|token| token == legacy_name) {
                     return Err(Error::KeyPackage(format!(
                         "Missing required extension in legacy format: {}",
                         legacy_name

@@ -31,7 +31,7 @@ mod util;
 pub mod welcomes;
 
 use self::constant::{
-    DEFAULT_CIPHERSUITE, GROUP_CONTEXT_REQUIRED_EXTENSIONS, SUPPORTED_EXTENSIONS, TAG_EXTENSIONS,
+    DEFAULT_CIPHERSUITE, GROUP_CONTEXT_REQUIRED_EXTENSIONS, SUPPORTED_EXTENSIONS,
 };
 pub use self::error::Error;
 use self::util::NostrTagFormat;
@@ -142,7 +142,7 @@ where
 
     /// Get the extensions value formatted for Nostr tags (array of hex values)
     pub(crate) fn extensions_value(&self) -> Vec<String> {
-        TAG_EXTENSIONS.iter().map(|e| e.to_nostr_tag()).collect()
+        self.extensions.iter().map(|e| e.to_nostr_tag()).collect()
     }
 
     /// Get the storage provider

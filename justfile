@@ -83,19 +83,19 @@ coverage-html:
 
 # Run the key package inspection example
 example-keypackage:
-    cargo run --example key_package_inspection
+    cargo run -p mdk-core --example key_package_inspection
 
 # Run the group inspection example (requires debug-examples feature)
 example-group:
-    cargo run --example group_inspection --features debug-examples
+    cargo run -p mdk-core --example group_inspection --features debug-examples
 
 # Run the MLS memory storage example
 example-memory:
-    cargo run --example mls_memory
+    cargo run -p mdk-core --example mls_memory
 
 # Run the MLS SQLite storage example
 example-sqlite:
-    cargo run --example mls_sqlite
+    cargo run -p mdk-core --example mls_sqlite
 
 # Run all examples
 examples:
