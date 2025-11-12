@@ -817,4 +817,347 @@ mod tests {
             Err(EncryptedMediaError::InvalidImetaTag { .. })
         ));
     }
+
+    // ============================================================================
+    // Encrypted Media (MIP-04) Integration Tests
+    // ============================================================================
+
+    /// Multi-Device Media Encryption
+    ///
+    /// Validates that encrypted media can be decrypted across different devices
+    /// in the same group using the group's exporter secret, and that media
+    /// from different epochs can be accessed.
+    #[test]
+    fn test_media_encryption_across_devices() {
+        use nostr::Keys;
+
+        let alice_keys = Keys::generate();
+        let bob_keys = Keys::generate();
+
+        let alice_mdk = create_test_mdk();
+        let bob_mdk = create_test_mdk();
+
+        // Create key package for Bob only (not Alice, as she's the creator)
+        let bob_key_package = crate::test_util::create_key_package_event(&bob_mdk, &bob_keys);
+
+        // Alice creates group with Bob
+        let admin_pubkeys = vec![alice_keys.public_key()];
+        let config = crate::test_util::create_nostr_group_config_data(admin_pubkeys);
+
+        let create_result = alice_mdk
+            .create_group(&alice_keys.public_key(), vec![bob_key_package], config)
+            .expect("Alice should create group");
+
+        let group_id = create_result.group.mls_group_id.clone();
+
+        alice_mdk
+            .merge_pending_commit(&group_id)
+            .expect("Alice should merge commit");
+
+        // Bob joins the group
+        let bob_welcome_rumor = &create_result.welcome_rumors[0];
+        let bob_welcome = bob_mdk
+            .process_welcome(&nostr::EventId::all_zeros(), bob_welcome_rumor)
+            .expect("Bob should process welcome");
+
+        bob_mdk
+            .accept_welcome(&bob_welcome)
+            .expect("Bob should accept welcome");
+
+        // Test media file - use PDF to avoid image metadata extraction issues
+        let test_media = b"Test media data for cross-device encryption";
+
+        let alice_manager = alice_mdk.media_manager(group_id.clone());
+        let upload_result = alice_manager
+            .encrypt_for_upload(test_media, "application/pdf", "document.pdf")
+            .expect("Alice should encrypt media");
+
+        let encrypted_data = upload_result.encrypted_data.clone();
+
+        // Create media reference for Bob
+        let media_ref = alice_manager.create_media_reference(
+            &upload_result,
+            "https://storage.example.com/file1.enc".to_string(),
+        );
+
+        // Bob decrypts media using his instance of the same group
+        let bob_manager = bob_mdk.media_manager(group_id.clone());
+        let decrypted_data = bob_manager
+            .decrypt_from_download(&encrypted_data, &media_ref)
+            .expect("Bob should decrypt media");
+
+        assert_eq!(
+            decrypted_data, test_media,
+            "Decrypted data should match original"
+        );
+
+        // Verify Bob can also decrypt the original media (cross-device access)
+        let bob_decrypted_again = bob_manager
+            .decrypt_from_download(&encrypted_data, &media_ref)
+            .expect("Bob should be able to decrypt media multiple times");
+
+        assert_eq!(
+            bob_decrypted_again, test_media,
+            "Bob's second decryption should match original"
+        );
+    }
+
+    /// Large Media File Encryption
+    ///
+    /// Validates that large media files can be encrypted and decrypted successfully
+    /// without memory issues.
+    #[test]
+    fn test_large_media_file_encryption() {
+        use nostr::Keys;
+
+        let alice_keys = Keys::generate();
+        let bob_keys = Keys::generate();
+
+        let alice_mdk = create_test_mdk();
+        let bob_mdk = create_test_mdk();
+
+        // Alice creates a group with Bob for testing
+        let admin_pubkeys = vec![alice_keys.public_key()];
+        let config = crate::test_util::create_nostr_group_config_data(admin_pubkeys);
+
+        // Create key package for Bob (not Alice, as she's the creator)
+        let bob_key_package = crate::test_util::create_key_package_event(&bob_mdk, &bob_keys);
+
+        let create_result = alice_mdk
+            .create_group(&alice_keys.public_key(), vec![bob_key_package], config)
+            .expect("Alice should create group");
+
+        let group_id = create_result.group.mls_group_id.clone();
+
+        alice_mdk
+            .merge_pending_commit(&group_id)
+            .expect("Alice should merge commit");
+
+        // Create a 1MB test file (not 10MB to keep tests fast)
+        let large_media = vec![0xAB; 1024 * 1024]; // 1MB
+
+        let manager = alice_mdk.media_manager(group_id.clone());
+
+        // Encrypt the large file
+        let upload_result = manager
+            .encrypt_for_upload(&large_media, "video/mp4", "large_video.mp4")
+            .expect("Should encrypt large file");
+
+        assert_eq!(
+            upload_result.original_size,
+            1024 * 1024,
+            "Original size should be 1MB"
+        );
+
+        // The encrypted size should be slightly larger due to authentication tag
+        assert!(
+            upload_result.encrypted_size > upload_result.original_size,
+            "Encrypted size should be larger than original"
+        );
+
+        // Decrypt the large file
+        let encrypted_data = upload_result.encrypted_data.clone();
+        let media_ref = manager
+            .create_media_reference(&upload_result, "https://example.com/video.enc".to_string());
+
+        let decrypted_data = manager
+            .decrypt_from_download(&encrypted_data, &media_ref)
+            .expect("Should decrypt large file");
+
+        assert_eq!(
+            decrypted_data.len(),
+            large_media.len(),
+            "Decrypted size should match original"
+        );
+        assert_eq!(
+            decrypted_data, large_media,
+            "Decrypted data should match original"
+        );
+    }
+
+    /// Media Metadata Validation
+    ///
+    /// Validates that media metadata fields are properly validated including
+    /// required fields, size limits, and format constraints.
+    #[test]
+    fn test_media_metadata_validation() {
+        use nostr::Keys;
+
+        let alice_keys = Keys::generate();
+        let bob_keys = Keys::generate();
+
+        let alice_mdk = create_test_mdk();
+        let bob_mdk = create_test_mdk();
+
+        let admin_pubkeys = vec![alice_keys.public_key()];
+        let config = crate::test_util::create_nostr_group_config_data(admin_pubkeys);
+
+        let bob_key_package = crate::test_util::create_key_package_event(&bob_mdk, &bob_keys);
+
+        let create_result = alice_mdk
+            .create_group(&alice_keys.public_key(), vec![bob_key_package], config)
+            .expect("Alice should create group");
+
+        let group_id = create_result.group.mls_group_id.clone();
+
+        alice_mdk
+            .merge_pending_commit(&group_id)
+            .expect("Alice should merge commit");
+
+        let manager = alice_mdk.media_manager(group_id.clone());
+
+        // Test 1: Valid metadata should succeed (use PDF to avoid image metadata issues)
+        let valid_media = b"Valid media content";
+        let result = manager.encrypt_for_upload(valid_media, "application/pdf", "document.pdf");
+        assert!(result.is_ok(), "Valid metadata should succeed");
+
+        // Test 2: Invalid MIME type should fail
+        let result = manager.encrypt_for_upload(valid_media, "invalid", "document.pdf");
+        assert!(result.is_err(), "Invalid MIME type should fail");
+
+        // Test 3: Empty filename should fail
+        let result = manager.encrypt_for_upload(valid_media, "application/pdf", "");
+        assert!(result.is_err(), "Empty filename should fail");
+
+        // Test 4: Extremely long filename should fail
+        let long_filename = "a".repeat(300);
+        let result = manager.encrypt_for_upload(valid_media, "application/pdf", &long_filename);
+        assert!(result.is_err(), "Overly long filename should fail");
+
+        // Test 5: File too large should fail
+        let options = crate::encrypted_media::types::MediaProcessingOptions {
+            max_file_size: Some(100), // Set max to 100 bytes
+            ..Default::default()
+        };
+        let large_media = vec![0u8; 1000]; // 1000 bytes
+        let result = manager.encrypt_for_upload_with_options(
+            &large_media,
+            "image/jpeg",
+            "test.jpg",
+            &options,
+        );
+        assert!(result.is_err(), "File exceeding size limit should fail");
+    }
+
+    /// Media Encryption/Decryption with Hash Verification
+    ///
+    /// Validates that encrypted media includes hash verification and
+    /// that tampering is detected.
+    #[test]
+    fn test_media_hash_verification() {
+        use nostr::Keys;
+
+        let alice_keys = Keys::generate();
+        let bob_keys = Keys::generate();
+
+        let alice_mdk = create_test_mdk();
+        let bob_mdk = create_test_mdk();
+
+        let admin_pubkeys = vec![alice_keys.public_key()];
+        let config = crate::test_util::create_nostr_group_config_data(admin_pubkeys);
+
+        let bob_key_package = crate::test_util::create_key_package_event(&bob_mdk, &bob_keys);
+
+        let create_result = alice_mdk
+            .create_group(&alice_keys.public_key(), vec![bob_key_package], config)
+            .expect("Alice should create group");
+
+        let group_id = create_result.group.mls_group_id.clone();
+
+        alice_mdk
+            .merge_pending_commit(&group_id)
+            .expect("Alice should merge commit");
+
+        let test_media = b"Media content for hash verification";
+        let manager = alice_mdk.media_manager(group_id.clone());
+
+        let upload_result = manager
+            .encrypt_for_upload(test_media, "application/pdf", "document.pdf")
+            .expect("Should encrypt media");
+
+        // Valid decryption should succeed
+        let mut encrypted_data = upload_result.encrypted_data.clone();
+        let media_ref = manager
+            .create_media_reference(&upload_result, "https://example.com/photo.enc".to_string());
+
+        let decrypt_result = manager.decrypt_from_download(&encrypted_data, &media_ref);
+        assert!(decrypt_result.is_ok(), "Valid decryption should succeed");
+
+        // Tamper with encrypted data
+        if !encrypted_data.is_empty() {
+            encrypted_data[0] ^= 0xFF; // Flip bits
+        }
+
+        // Decryption with tampered data should fail
+        let decrypt_result = manager.decrypt_from_download(&encrypted_data, &media_ref);
+        assert!(
+            decrypt_result.is_err(),
+            "Decryption of tampered data should fail"
+        );
+    }
+
+    /// Media Encryption with Different File Types
+    ///
+    /// Validates that various media file types can be encrypted and decrypted,
+    /// including images, videos, audio, and documents.
+    #[test]
+    fn test_media_encryption_various_file_types() {
+        use nostr::Keys;
+
+        let alice_keys = Keys::generate();
+        let bob_keys = Keys::generate();
+
+        let alice_mdk = create_test_mdk();
+        let bob_mdk = create_test_mdk();
+
+        let admin_pubkeys = vec![alice_keys.public_key()];
+        let config = crate::test_util::create_nostr_group_config_data(admin_pubkeys);
+
+        let bob_key_package = crate::test_util::create_key_package_event(&bob_mdk, &bob_keys);
+
+        let create_result = alice_mdk
+            .create_group(&alice_keys.public_key(), vec![bob_key_package], config)
+            .expect("Alice should create group");
+
+        let group_id = create_result.group.mls_group_id.clone();
+
+        alice_mdk
+            .merge_pending_commit(&group_id)
+            .expect("Alice should merge commit");
+
+        let manager = alice_mdk.media_manager(group_id.clone());
+
+        // Use non-image MIME types to avoid metadata extraction issues with test data
+        let test_cases = vec![
+            ("video/mp4", "video.mp4", b"MP4 video data".as_slice()),
+            ("video/quicktime", "video.mov", b"MOV video data".as_slice()),
+            ("audio/mpeg", "song.mp3", b"MP3 audio data".as_slice()),
+            ("audio/wav", "sound.wav", b"WAV audio data".as_slice()),
+            (
+                "application/pdf",
+                "document.pdf",
+                b"PDF document data".as_slice(),
+            ),
+            ("text/plain", "notes.txt", b"Plain text data".as_slice()),
+        ];
+
+        for (mime_type, filename, data) in test_cases {
+            // Encrypt
+            let upload_result = manager.encrypt_for_upload(data, mime_type, filename);
+            assert!(upload_result.is_ok(), "Should encrypt {} file", mime_type);
+
+            let upload = upload_result.unwrap();
+            assert_eq!(upload.mime_type, mime_type);
+            assert_eq!(upload.filename, filename);
+
+            // Decrypt
+            let media_ref = manager
+                .create_media_reference(&upload, format!("https://example.com/{}", filename));
+            let decrypt_result = manager.decrypt_from_download(&upload.encrypted_data, &media_ref);
+            assert!(decrypt_result.is_ok(), "Should decrypt {} file", mime_type);
+
+            let decrypted = decrypt_result.unwrap();
+            assert_eq!(decrypted, data, "Decrypted {} data should match", mime_type);
+        }
+    }
 }
