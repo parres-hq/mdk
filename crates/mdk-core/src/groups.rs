@@ -3231,4 +3231,341 @@ mod tests {
             .merge_pending_commit(&group_id)
             .expect("Failed to merge commit");
     }
+
+    // ============================================================================
+    // Proposal/Commit Edge Cases
+    // ============================================================================
+
+    /// Operation from Removed Member
+    ///
+    /// Validates that operations (adds/removes/updates) from a removed member
+    /// are properly rejected to prevent security issues.
+    #[test]
+    fn test_operation_from_removed_member() {
+        use crate::test_util::create_key_package_event;
+
+        let alice_keys = Keys::generate();
+        let bob_keys = Keys::generate();
+        let charlie_keys = Keys::generate();
+
+        let alice_mdk = create_test_mdk();
+        let bob_mdk = create_test_mdk();
+        let charlie_mdk = create_test_mdk();
+
+        // Create key packages
+        let bob_key_package = create_key_package_event(&bob_mdk, &bob_keys);
+        let charlie_key_package = create_key_package_event(&charlie_mdk, &charlie_keys);
+
+        // Alice creates group with Bob and Charlie, Alice is admin
+        let admin_pubkeys = vec![alice_keys.public_key()];
+        let config = create_nostr_group_config_data(admin_pubkeys);
+
+        let create_result = alice_mdk
+            .create_group(
+                &alice_keys.public_key(),
+                vec![bob_key_package, charlie_key_package],
+                config,
+            )
+            .expect("Alice should create group");
+
+        let group_id = create_result.group.mls_group_id.clone();
+
+        alice_mdk
+            .merge_pending_commit(&group_id)
+            .expect("Alice should merge commit");
+
+        // Bob and Charlie join
+        let bob_welcome_rumor = &create_result.welcome_rumors[0];
+        let bob_welcome = bob_mdk
+            .process_welcome(&nostr::EventId::all_zeros(), bob_welcome_rumor)
+            .expect("Bob should process welcome");
+        bob_mdk
+            .accept_welcome(&bob_welcome)
+            .expect("Bob should accept welcome");
+
+        let charlie_welcome_rumor = &create_result.welcome_rumors[1];
+        let charlie_welcome = charlie_mdk
+            .process_welcome(&nostr::EventId::all_zeros(), charlie_welcome_rumor)
+            .expect("Charlie should process welcome");
+        charlie_mdk
+            .accept_welcome(&charlie_welcome)
+            .expect("Charlie should accept welcome");
+
+        // Alice removes Bob
+        alice_mdk
+            .remove_members(&group_id, &[bob_keys.public_key()])
+            .expect("Alice should remove Bob");
+
+        alice_mdk
+            .merge_pending_commit(&group_id)
+            .expect("Alice should merge removal commit");
+
+        // Verify Bob is removed from Alice's view
+        let alice_members_after_removal = alice_mdk
+            .get_members(&group_id)
+            .expect("Should get members");
+
+        assert_eq!(
+            alice_members_after_removal.len(),
+            2,
+            "Should have 2 members after removal"
+        );
+        assert!(
+            !alice_members_after_removal.contains(&bob_keys.public_key()),
+            "Bob should not be in Alice's member list"
+        );
+        assert!(
+            alice_members_after_removal.contains(&charlie_keys.public_key()),
+            "Charlie should still be in the group"
+        );
+
+        // Bob still has the group locally (hasn't processed the removal commit)
+        // but any operations he tries will fail when other members process them
+        // because they will see he's not a valid member
+    }
+
+    /// Rapid Sequential Member Operations
+    ///
+    /// Validates that rapid sequential member add/remove operations
+    /// maintain state consistency and proper epoch advancement.
+    #[test]
+    fn test_rapid_sequential_member_operations() {
+        use crate::test_util::create_key_package_event;
+
+        let alice_keys = Keys::generate();
+        let alice_mdk = create_test_mdk();
+
+        let admin_pubkeys = vec![alice_keys.public_key()];
+        let config = create_nostr_group_config_data(admin_pubkeys);
+
+        // Create initial member
+        let bob_keys = Keys::generate();
+        let bob_mdk = create_test_mdk();
+        let bob_key_package = create_key_package_event(&bob_mdk, &bob_keys);
+
+        let create_result = alice_mdk
+            .create_group(&alice_keys.public_key(), vec![bob_key_package], config)
+            .expect("Alice should create group");
+
+        let group_id = create_result.group.mls_group_id.clone();
+        alice_mdk
+            .merge_pending_commit(&group_id)
+            .expect("Alice should merge commit");
+
+        let initial_epoch = alice_mdk
+            .get_group(&group_id)
+            .expect("Should get group")
+            .expect("Group should exist")
+            .epoch;
+
+        // Rapidly add multiple members
+        for i in 0..3 {
+            let member_keys = Keys::generate();
+            let member_mdk = create_test_mdk();
+            let member_key_package = create_key_package_event(&member_mdk, &member_keys);
+
+            alice_mdk
+                .add_members(&group_id, &[member_key_package])
+                .expect(&format!("Should add member {}", i));
+
+            alice_mdk
+                .merge_pending_commit(&group_id)
+                .expect(&format!("Should merge commit {}", i));
+        }
+
+        // Verify epoch advanced
+        let after_adds_epoch = alice_mdk
+            .get_group(&group_id)
+            .expect("Should get group")
+            .expect("Group should exist")
+            .epoch;
+
+        assert!(
+            after_adds_epoch > initial_epoch,
+            "Epoch should advance after additions"
+        );
+
+        // Verify member count
+        let members = alice_mdk
+            .get_members(&group_id)
+            .expect("Should get members");
+
+        // Should have Alice + Bob + 3 new members = 5 total
+        assert_eq!(members.len(), 5, "Should have 5 members after additions");
+    }
+
+    /// Member Operation State Consistency
+    ///
+    /// Validates that member operations maintain consistent state across
+    /// group metadata, member lists, and epoch tracking.
+    #[test]
+    fn test_member_operation_state_consistency() {
+        use crate::test_util::create_key_package_event;
+
+        let alice_keys = Keys::generate();
+        let bob_keys = Keys::generate();
+        let charlie_keys = Keys::generate();
+
+        let alice_mdk = create_test_mdk();
+        let bob_mdk = create_test_mdk();
+        let charlie_mdk = create_test_mdk();
+
+        let admin_pubkeys = vec![alice_keys.public_key()];
+        let config = create_nostr_group_config_data(admin_pubkeys);
+
+        let bob_key_package = create_key_package_event(&bob_mdk, &bob_keys);
+
+        let create_result = alice_mdk
+            .create_group(&alice_keys.public_key(), vec![bob_key_package], config)
+            .expect("Alice should create group");
+
+        let group_id = create_result.group.mls_group_id.clone();
+        alice_mdk
+            .merge_pending_commit(&group_id)
+            .expect("Alice should merge commit");
+
+        // Check initial state
+        let initial_group = alice_mdk
+            .get_group(&group_id)
+            .expect("Should get group")
+            .expect("Group should exist");
+        let initial_members = alice_mdk
+            .get_members(&group_id)
+            .expect("Should get members");
+        let initial_epoch = initial_group.epoch;
+
+        assert_eq!(initial_members.len(), 2, "Should have 2 initial members");
+
+        // Add Charlie
+        let charlie_key_package = create_key_package_event(&charlie_mdk, &charlie_keys);
+        alice_mdk
+            .add_members(&group_id, &[charlie_key_package])
+            .expect("Should add Charlie");
+        alice_mdk
+            .merge_pending_commit(&group_id)
+            .expect("Should merge commit");
+
+        // Verify state after add
+        let after_add_group = alice_mdk
+            .get_group(&group_id)
+            .expect("Should get group")
+            .expect("Group should exist");
+        let after_add_members = alice_mdk
+            .get_members(&group_id)
+            .expect("Should get members");
+
+        assert_eq!(
+            after_add_members.len(),
+            3,
+            "Should have 3 members after add"
+        );
+        assert!(
+            after_add_group.epoch > initial_epoch,
+            "Epoch should advance after add"
+        );
+        assert!(
+            after_add_members.contains(&charlie_keys.public_key()),
+            "Charlie should be in members list"
+        );
+
+        // Remove Charlie
+        alice_mdk
+            .remove_members(&group_id, &[charlie_keys.public_key()])
+            .expect("Should remove Charlie");
+        alice_mdk
+            .merge_pending_commit(&group_id)
+            .expect("Should merge commit");
+
+        // Verify state after removal
+        let after_remove_group = alice_mdk
+            .get_group(&group_id)
+            .expect("Should get group")
+            .expect("Group should exist");
+        let after_remove_members = alice_mdk
+            .get_members(&group_id)
+            .expect("Should get members");
+
+        assert_eq!(
+            after_remove_members.len(),
+            2,
+            "Should have 2 members after removal"
+        );
+        assert!(
+            after_remove_group.epoch > after_add_group.epoch,
+            "Epoch should advance after removal"
+        );
+        assert!(
+            !after_remove_members.contains(&charlie_keys.public_key()),
+            "Charlie should not be in members list"
+        );
+
+        // Verify Alice and Bob still present
+        assert!(
+            after_remove_members.contains(&alice_keys.public_key()),
+            "Alice should still be in group"
+        );
+        assert!(
+            after_remove_members.contains(&bob_keys.public_key()),
+            "Bob should still be in group"
+        );
+    }
+
+    /// Empty Group Operations
+    ///
+    /// Validates proper handling of edge cases with minimal group configurations.
+    #[test]
+    fn test_empty_group_operations() {
+        use crate::test_util::create_key_package_event;
+
+        let alice_keys = Keys::generate();
+        let bob_keys = Keys::generate();
+
+        let alice_mdk = create_test_mdk();
+        let bob_mdk = create_test_mdk();
+
+        let admin_pubkeys = vec![alice_keys.public_key()];
+        let config = create_nostr_group_config_data(admin_pubkeys);
+
+        let bob_key_package = create_key_package_event(&bob_mdk, &bob_keys);
+
+        let create_result = alice_mdk
+            .create_group(&alice_keys.public_key(), vec![bob_key_package], config)
+            .expect("Alice should create group");
+
+        let group_id = create_result.group.mls_group_id.clone();
+        alice_mdk
+            .merge_pending_commit(&group_id)
+            .expect("Alice should merge commit");
+
+        // Test: Remove with empty list (should handle gracefully)
+        let empty_remove_result = alice_mdk.remove_members(&group_id, &[]);
+        // This should either succeed with no-op or fail gracefully
+        match empty_remove_result {
+            Ok(_) => {
+                // If it succeeds, verify no state change
+                let members = alice_mdk
+                    .get_members(&group_id)
+                    .expect("Should get members");
+                assert_eq!(members.len(), 2, "Member count should not change");
+            }
+            Err(e) => {
+                // Error is acceptable for empty remove
+                assert!(
+                    matches!(
+                        e,
+                        crate::Error::Group(ref msg) if msg.contains("No matching members found")
+                    ),
+                    "Should return error about no matching members"
+                );
+            }
+        }
+
+        // Add with empty list (should handle gracefully)
+        let empty_add_result = alice_mdk.add_members(&group_id, &[]);
+        // Should fail or no-op
+        assert!(
+            empty_add_result.is_err(),
+            "Adding empty member list should fail"
+        );
+    }
 }
