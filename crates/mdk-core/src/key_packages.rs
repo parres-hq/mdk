@@ -171,32 +171,21 @@ where
     ///
     /// Ok(()) if validation succeeds, or an Error describing what's wrong
     fn validate_key_package_tags(&self, event: &Event) -> Result<(), Error> {
-        // Check for protocol version tag (required)
-        event
-            .tags
-            .iter()
-            .find(|tag| self.is_protocol_version_tag(tag))
-            .ok_or_else(|| {
-                Error::KeyPackage("Missing required tag: mls_protocol_version".to_string())
-            })?;
+        let require = |pred: fn(&Self, &Tag) -> bool, name: &str| {
+            event
+                .tags
+                .iter()
+                .find(|t| pred(self, t))
+                .ok_or_else(|| Error::KeyPackage(format!("Missing required tag: {}", name)))
+        };
 
-        // Check for ciphersuite tag (required) and validate
-        let ciphersuite_tag = event
-            .tags
-            .iter()
-            .find(|tag| self.is_ciphersuite_tag(tag))
-            .ok_or_else(|| {
-                Error::KeyPackage("Missing required tag: mls_ciphersuite".to_string())
-            })?;
-        self.validate_ciphersuite_tag(ciphersuite_tag)?;
+        let pv = require(Self::is_protocol_version_tag, "mls_protocol_version")?;
+        let cs = require(Self::is_ciphersuite_tag, "mls_ciphersuite")?;
+        let ext = require(Self::is_extensions_tag, "mls_extensions")?;
 
-        // Check for extensions tag (required) and validate
-        let extensions_tag = event
-            .tags
-            .iter()
-            .find(|tag| self.is_extensions_tag(tag))
-            .ok_or_else(|| Error::KeyPackage("Missing required tag: mls_extensions".to_string()))?;
-        self.validate_extensions_tag(extensions_tag)?;
+        self.validate_protocol_version_tag(pv)?;
+        self.validate_ciphersuite_tag(cs)?;
+        self.validate_extensions_tag(ext)?;
 
         Ok(())
     }
@@ -228,6 +217,28 @@ where
         // Legacy format without mls_ prefix
         // TODO: Remove legacy check after migration period (target: EOY 2025)
         (tag.as_slice().first().map(|s| s.as_str()) == Some("extensions"))
+    }
+
+    /// Validates protocol version tag format and value.
+    ///
+    /// **SPEC-COMPLIANT**: Per MIP-00, only "1.0" is currently supported.
+    fn validate_protocol_version_tag(&self, tag: &Tag) -> Result<(), Error> {
+        let values: Vec<&str> = tag.as_slice().iter().map(|s| s.as_str()).collect();
+
+        // Skip the tag name (first element) and get the value
+        let version_value = values.get(1).ok_or_else(|| {
+            Error::KeyPackage("Protocol version tag must have a value".to_string())
+        })?;
+
+        // Validate the version value
+        if *version_value != "1.0" {
+            return Err(Error::KeyPackage(format!(
+                "Unsupported protocol version: {}. Only version 1.0 is supported per MIP-00",
+                version_value
+            )));
+        }
+
+        Ok(())
     }
 
     /// Validates ciphersuite tag format and value.
@@ -1341,6 +1352,91 @@ mod tests {
                 "Should reject event without extensions tag"
             );
             assert!(result.unwrap_err().to_string().contains("mls_extensions"));
+        }
+    }
+
+    /// Test that invalid protocol version values are rejected
+    #[test]
+    fn test_validate_invalid_protocol_version() {
+        let mdk = create_test_mdk();
+        let test_pubkey =
+            PublicKey::from_hex("884704bd421671e01c13f854d2ce23ce2a5bfe9562f4f297ad2bc921ba30c3a6")
+                .unwrap();
+
+        let (key_package_hex, _) = mdk
+            .create_key_package_for_event(&test_pubkey, vec![])
+            .expect("Failed to create key package");
+
+        // Test invalid protocol version "2.0"
+        {
+            let tags = vec![
+                Tag::custom(TagKind::MlsProtocolVersion, ["2.0"]),
+                Tag::custom(TagKind::MlsCiphersuite, ["0x0001"]),
+                Tag::custom(TagKind::MlsExtensions, ["0x0003", "0x000a"]),
+            ];
+
+            let event = EventBuilder::new(Kind::MlsKeyPackage, key_package_hex.clone())
+                .tags(tags)
+                .sign_with_keys(&nostr::Keys::generate())
+                .unwrap();
+
+            let result = mdk.validate_key_package_tags(&event);
+            assert!(result.is_err(), "Should reject protocol version 2.0");
+            let error_msg = result.unwrap_err().to_string();
+            assert!(
+                error_msg.contains("Unsupported protocol version"),
+                "Error should mention unsupported protocol version, got: {}",
+                error_msg
+            );
+        }
+
+        // Test invalid protocol version "0.9"
+        {
+            let tags = vec![
+                Tag::custom(TagKind::MlsProtocolVersion, ["0.9"]),
+                Tag::custom(TagKind::MlsCiphersuite, ["0x0001"]),
+                Tag::custom(TagKind::MlsExtensions, ["0x0003", "0x000a"]),
+            ];
+
+            let event = EventBuilder::new(Kind::MlsKeyPackage, key_package_hex.clone())
+                .tags(tags)
+                .sign_with_keys(&nostr::Keys::generate())
+                .unwrap();
+
+            let result = mdk.validate_key_package_tags(&event);
+            assert!(result.is_err(), "Should reject protocol version 0.9");
+            let error_msg = result.unwrap_err().to_string();
+            assert!(
+                error_msg.contains("Unsupported protocol version"),
+                "Error should mention unsupported protocol version, got: {}",
+                error_msg
+            );
+        }
+
+        // Test protocol version tag without a value
+        {
+            let tags = vec![
+                Tag::custom(TagKind::MlsProtocolVersion, Vec::<&str>::new()), // No value
+                Tag::custom(TagKind::MlsCiphersuite, ["0x0001"]),
+                Tag::custom(TagKind::MlsExtensions, ["0x0003", "0x000a"]),
+            ];
+
+            let event = EventBuilder::new(Kind::MlsKeyPackage, key_package_hex)
+                .tags(tags)
+                .sign_with_keys(&nostr::Keys::generate())
+                .unwrap();
+
+            let result = mdk.validate_key_package_tags(&event);
+            assert!(
+                result.is_err(),
+                "Should reject protocol version tag without value"
+            );
+            let error_msg = result.unwrap_err().to_string();
+            assert!(
+                error_msg.contains("must have a value"),
+                "Error should mention missing value, got: {}",
+                error_msg
+            );
         }
     }
 
