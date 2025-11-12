@@ -26,7 +26,13 @@ where
     ///
     /// A tuple containing:
     /// * A hex-encoded string containing the serialized key package
-    /// * A tuple of tags for the Nostr event
+    /// * An array of 6 tags for the Nostr event:
+    ///   1. `mls_protocol_version` - MLS protocol version (e.g., "1.0")
+    ///   2. `mls_ciphersuite` - Ciphersuite identifier (e.g., "0x0001")
+    ///   3. `mls_extensions` - Required MLS extensions
+    ///   4. `relays` - Relay URLs for distribution
+    ///   5. `protected` - Marks the event as protected
+    ///   6. `client` - Client identifier and version
     ///
     /// # Errors
     ///
@@ -38,7 +44,7 @@ where
         &self,
         public_key: &PublicKey,
         relays: I,
-    ) -> Result<(String, [Tag; 5]), Error>
+    ) -> Result<(String, [Tag; 6]), Error>
     where
         I: IntoIterator<Item = RelayUrl>,
     {
@@ -63,6 +69,7 @@ where
             Tag::custom(TagKind::MlsCiphersuite, [self.ciphersuite_value()]),
             Tag::custom(TagKind::MlsExtensions, self.extensions_value()),
             Tag::relays(relays),
+            Tag::protected(),
             Tag::client(format!("MDK/{}", env!("CARGO_PKG_VERSION"))),
         ];
 
@@ -617,12 +624,13 @@ mod tests {
         // Verify the key package has the expected properties
         assert_eq!(key_package.ciphersuite(), DEFAULT_CIPHERSUITE);
 
-        assert_eq!(tags.len(), 5);
+        assert_eq!(tags.len(), 6);
         assert_eq!(tags[0].kind(), TagKind::MlsProtocolVersion);
         assert_eq!(tags[1].kind(), TagKind::MlsCiphersuite);
         assert_eq!(tags[2].kind(), TagKind::MlsExtensions);
         assert_eq!(tags[3].kind(), TagKind::Relays);
-        assert_eq!(tags[4].kind(), TagKind::Client);
+        assert_eq!(tags[4].kind(), TagKind::Protected);
+        assert_eq!(tags[5].kind(), TagKind::Client);
 
         assert_eq!(
             tags[3].content().unwrap(),
@@ -633,8 +641,11 @@ mod tests {
                 .join(",")
         );
 
+        // Verify protected tag is present
+        assert_eq!(tags[4].kind(), TagKind::Protected);
+
         // Verify client tag contains version
-        let client_tag = tags[4].content().unwrap();
+        let client_tag = tags[5].content().unwrap();
         assert!(
             client_tag.starts_with("MDK/"),
             "Client tag should start with MDK/"
@@ -808,8 +819,8 @@ mod tests {
             .create_key_package_for_event(&test_pubkey, relays.clone())
             .expect("Failed to create key package");
 
-        // Verify we have exactly 5 tags (4 required + client tag)
-        assert_eq!(tags.len(), 5, "Should have exactly 5 tags");
+        // Verify we have exactly 6 tags (3 MLS required + relays + protected + client)
+        assert_eq!(tags.len(), 6, "Should have exactly 6 tags");
 
         // Verify tag order matches spec example
         assert_eq!(
@@ -820,12 +831,12 @@ mod tests {
         assert_eq!(
             tags[1].kind(),
             TagKind::MlsCiphersuite,
-            "Second tag should be ciphersuite"
+            "Second tag should be mls_ciphersuite"
         );
         assert_eq!(
             tags[2].kind(),
             TagKind::MlsExtensions,
-            "Third tag should be extensions"
+            "Third tag should be mls_extensions"
         );
         assert_eq!(
             tags[3].kind(),
@@ -834,8 +845,13 @@ mod tests {
         );
         assert_eq!(
             tags[4].kind(),
+            TagKind::Protected,
+            "Fifth tag should be protected"
+        );
+        assert_eq!(
+            tags[5].kind(),
             TagKind::Client,
-            "Fifth tag should be client"
+            "Sixth tag should be client"
         );
 
         // Verify relays tag format
@@ -856,6 +872,9 @@ mod tests {
             relays_values.contains(&"wss://relay2.example.com".to_string()),
             "Should contain relay2"
         );
+
+        // Verify protected tag is present
+        assert_eq!(tags[4].kind(), TagKind::Protected);
     }
 
     #[test]
