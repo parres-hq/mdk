@@ -1,6 +1,6 @@
 [package]
 name = "mdk-core"
-version = "0.5.2"
+version = "0.5.3"
 edition = "2024"
 description = "A simplified interface to build secure messaging apps on nostr with MLS."
 authors = ["Jeff Gardner <j@jeffg.me>", "Yuki Kishimoto <yukikishimoto@protonmail.com>", "MDK Developers"]
@@ -14,6 +14,7 @@ keywords = ["nostr", "mls", "openmls"]
 [features]
 default = []
 mip04 = []
+debug-examples = []
 
 [dependencies]
 hex = { workspace = true, features = ["std"] }
@@ -53,3 +54,12 @@ path = "examples/mls_memory.rs"
 [[example]]
 name = "mls_sqlite"
 path = "examples/mls_sqlite.rs"
+
+[[example]]
+name = "key_package_inspection"
+path = "examples/key_package_inspection.rs"
+
+[[example]]
+name = "group_inspection"
+path = "examples/group_inspection.rs"
+required-features = ["debug-examples"]

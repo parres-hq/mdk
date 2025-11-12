@@ -9,7 +9,7 @@ use openmls_traits::storage::StorageProvider;
 use tls_codec::{Deserialize as TlsDeserialize, Serialize as TlsSerialize};
 
 use crate::MDK;
-use crate::constant::{DEFAULT_CIPHERSUITE, REQUIRED_EXTENSIONS};
+use crate::constant::{DEFAULT_CIPHERSUITE, TAG_EXTENSIONS};
 use crate::error::Error;
 use crate::util::NostrTagFormat;
 
@@ -38,7 +38,7 @@ where
         &self,
         public_key: &PublicKey,
         relays: I,
-    ) -> Result<(String, [Tag; 4]), Error>
+    ) -> Result<(String, [Tag; 5]), Error>
     where
         I: IntoIterator<Item = RelayUrl>,
     {
@@ -63,6 +63,7 @@ where
             Tag::custom(TagKind::MlsCiphersuite, [self.ciphersuite_value()]),
             Tag::custom(TagKind::MlsExtensions, self.extensions_value()),
             Tag::relays(relays),
+            Tag::client(format!("MDK/{}", env!("CARGO_PKG_VERSION"))),
         ];
 
         Ok((hex::encode(key_package_serialized), tags))
@@ -359,10 +360,8 @@ where
     ///
     /// **SPEC-COMPLIANT**: This is the correct format per MIP-00.
     /// Required extensions (as separate hex values):
-    /// - 0x0003 (RequiredCapabilities)
     /// - 0x000a (LastResort)
-    /// - 0x0002 (RatchetTree)
-    /// - 0xf2ee (MarmotGroupData)
+    /// - 0xf2ee (NostrGroupData)
     fn validate_extensions_mip00(&self, extension_values: &[&str]) -> Result<(), Error> {
         // Validate format of each hex value
         for (idx, ext_value) in extension_values.iter().enumerate() {
@@ -392,14 +391,12 @@ where
         let normalized_extensions: std::collections::HashSet<String> =
             extension_values.iter().map(|s| s.to_lowercase()).collect();
 
-        for required_ext in REQUIRED_EXTENSIONS.iter() {
+        for required_ext in TAG_EXTENSIONS.iter() {
             let required_hex = required_ext.to_nostr_tag();
             if !normalized_extensions.contains(&required_hex) {
                 let ext_name = match u16::from(*required_ext) {
-                    0x0003 => "RequiredCapabilities",
                     0x000a => "LastResort",
-                    0x0002 => "RatchetTree",
-                    0xf2ee => "MarmotGroupData",
+                    0xf2ee => "NostrGroupData",
                     _ => "Unknown",
                 };
                 return Err(Error::KeyPackage(format!(
@@ -603,11 +600,12 @@ mod tests {
         // Verify the key package has the expected properties
         assert_eq!(key_package.ciphersuite(), DEFAULT_CIPHERSUITE);
 
-        assert_eq!(tags.len(), 4);
+        assert_eq!(tags.len(), 5);
         assert_eq!(tags[0].kind(), TagKind::MlsProtocolVersion);
         assert_eq!(tags[1].kind(), TagKind::MlsCiphersuite);
         assert_eq!(tags[2].kind(), TagKind::MlsExtensions);
         assert_eq!(tags[3].kind(), TagKind::Relays);
+        assert_eq!(tags[4].kind(), TagKind::Client);
 
         assert_eq!(
             tags[3].content().unwrap(),
@@ -617,6 +615,11 @@ mod tests {
                 .collect::<Vec<_>>()
                 .join(",")
         );
+
+        // Verify client tag contains version
+        let client_tag = tags[4].content().unwrap();
+        assert!(client_tag.starts_with("MDK/"), "Client tag should start with MDK/");
+        assert!(client_tag.contains('.'), "Client tag should contain version number");
     }
 
     /// Test that ciphersuite tag format matches Marmot spec (MIP-00)
@@ -683,10 +686,10 @@ mod tests {
             .map(|s| s.to_string())
             .collect();
 
-        // Should have at least 5 elements: tag name + 4 extension IDs
+        // Should have at least 3 elements: tag name + 2 extension IDs (0x000a, 0xf2ee)
         assert!(
-            tag_values.len() >= 5,
-            "Expected at least 5 values (tag name + 4 extensions), got: {}",
+            tag_values.len() >= 3,
+            "Expected at least 3 values (tag name + 2 extensions), got: {}",
             tag_values.len()
         );
 
@@ -708,26 +711,32 @@ mod tests {
             );
         }
 
-        // Verify expected extension IDs are present
-        // 0x0003 = RequiredCapabilities
-        // 0x000a = LastResort
-        // 0x0002 = RatchetTree
-        // 0xf2ee = MarmotGroupData
-        assert!(
-            extension_ids.contains(&"0x0003".to_string()),
-            "Should contain RequiredCapabilities (0x0003)"
-        );
+        // Verify expected non-default extension IDs are present in tags
+        // Tags must match the KeyPackage capabilities to allow other clients to
+        // validate compatibility. Per RFC 9420 Section 7.2, only non-default
+        // extensions need to be listed in capabilities.
+        //
+        // We advertise:
+        // - 0x000a = LastResort (KeyPackage extension, required in capabilities by OpenMLS)
+        // - 0xf2ee = NostrGroupData (custom GroupContext extension)
+        //
+        // Default extensions (RequiredCapabilities, RatchetTree, etc.) are assumed
+        // supported and should NOT be listed per RFC 9420 Section 7.2.
         assert!(
             extension_ids.contains(&"0x000a".to_string()),
             "Should contain LastResort (0x000a)"
         );
         assert!(
-            extension_ids.contains(&"0x0002".to_string()),
-            "Should contain RatchetTree (0x0002)"
-        );
-        assert!(
             extension_ids.contains(&"0xf2ee".to_string()),
-            "Should contain MarmotGroupData (0xf2ee)"
+            "Should contain NostrGroupData (0xf2ee)"
+        );
+
+        // Verify we have exactly 2 non-default extensions in tags
+        assert_eq!(
+            extension_ids.len(),
+            2,
+            "Should have 2 extensions in tags (0x000a, 0xf2ee), found: {:?}",
+            extension_ids
         );
     }
 
@@ -776,8 +785,8 @@ mod tests {
             .create_key_package_for_event(&test_pubkey, relays.clone())
             .expect("Failed to create key package");
 
-        // Verify we have exactly 4 required tags
-        assert_eq!(tags.len(), 4, "Should have exactly 4 tags");
+        // Verify we have exactly 5 tags (4 required + client tag)
+        assert_eq!(tags.len(), 5, "Should have exactly 5 tags");
 
         // Verify tag order matches spec example
         assert_eq!(
@@ -799,6 +808,11 @@ mod tests {
             tags[3].kind(),
             TagKind::Relays,
             "Fourth tag should be relays"
+        );
+        assert_eq!(
+            tags[4].kind(),
+            TagKind::Client,
+            "Fifth tag should be client"
         );
 
         // Verify relays tag format
@@ -1561,33 +1575,13 @@ mod tests {
             .create_key_package_for_event(&test_pubkey, vec![])
             .expect("Failed to create key package");
 
-        // Test missing RequiredCapabilities (0x0003)
-        {
-            let tags = vec![
-                Tag::custom(TagKind::MlsProtocolVersion, ["1.0"]),
-                Tag::custom(TagKind::MlsCiphersuite, ["0x0001"]),
-                Tag::custom(TagKind::MlsExtensions, ["0x000a", "0x0002", "0xf2ee"]), // Missing 0x0003
-            ];
-
-            let event = EventBuilder::new(Kind::MlsKeyPackage, key_package_hex.clone())
-                .tags(tags)
-                .sign_with_keys(&nostr::Keys::generate())
-                .unwrap();
-
-            let result = mdk.validate_key_package_tags(&event);
-            assert!(
-                result.is_err(),
-                "Should reject event missing RequiredCapabilities"
-            );
-            assert!(result.unwrap_err().to_string().contains("0x0003"));
-        }
-
         // Test missing LastResort (0x000a)
+        // Note: Only the 2 required extensions from TAG_EXTENSIONS should be tested
         {
             let tags = vec![
                 Tag::custom(TagKind::MlsProtocolVersion, ["1.0"]),
                 Tag::custom(TagKind::MlsCiphersuite, ["0x0001"]),
-                Tag::custom(TagKind::MlsExtensions, ["0x0003", "0x0002", "0xf2ee"]), // Missing 0x000a
+                Tag::custom(TagKind::MlsExtensions, ["0xf2ee"]), // Missing 0x000a (LastResort)
             ];
 
             let event = EventBuilder::new(Kind::MlsKeyPackage, key_package_hex.clone())
@@ -1597,33 +1591,17 @@ mod tests {
 
             let result = mdk.validate_key_package_tags(&event);
             assert!(result.is_err(), "Should reject event missing LastResort");
-            assert!(result.unwrap_err().to_string().contains("0x000a"));
+            let error_msg = result.unwrap_err().to_string();
+            assert!(error_msg.contains("0x000a"), "Error should contain hex code 0x000a");
+            assert!(error_msg.contains("LastResort"), "Error should contain extension name");
         }
 
-        // Test missing RatchetTree (0x0002)
+        // Test missing NostrGroupData (0xf2ee)
         {
             let tags = vec![
                 Tag::custom(TagKind::MlsProtocolVersion, ["1.0"]),
                 Tag::custom(TagKind::MlsCiphersuite, ["0x0001"]),
-                Tag::custom(TagKind::MlsExtensions, ["0x0003", "0x000a", "0xf2ee"]), // Missing 0x0002
-            ];
-
-            let event = EventBuilder::new(Kind::MlsKeyPackage, key_package_hex.clone())
-                .tags(tags)
-                .sign_with_keys(&nostr::Keys::generate())
-                .unwrap();
-
-            let result = mdk.validate_key_package_tags(&event);
-            assert!(result.is_err(), "Should reject event missing RatchetTree");
-            assert!(result.unwrap_err().to_string().contains("0x0002"));
-        }
-
-        // Test missing MarmotGroupData (0xf2ee)
-        {
-            let tags = vec![
-                Tag::custom(TagKind::MlsProtocolVersion, ["1.0"]),
-                Tag::custom(TagKind::MlsCiphersuite, ["0x0001"]),
-                Tag::custom(TagKind::MlsExtensions, ["0x0003", "0x000a", "0x0002"]), // Missing 0xf2ee
+                Tag::custom(TagKind::MlsExtensions, ["0x000a"]), // Missing 0xf2ee (NostrGroupData)
             ];
 
             let event = EventBuilder::new(Kind::MlsKeyPackage, key_package_hex)
@@ -1634,9 +1612,11 @@ mod tests {
             let result = mdk.validate_key_package_tags(&event);
             assert!(
                 result.is_err(),
-                "Should reject event missing MarmotGroupData"
+                "Should reject event missing NostrGroupData"
             );
-            assert!(result.unwrap_err().to_string().contains("0xf2ee"));
+            let error_msg = result.unwrap_err().to_string();
+            assert!(error_msg.contains("0xf2ee"), "Error should contain hex code 0xf2ee");
+            assert!(error_msg.contains("NostrGroupData"), "Error should contain extension name");
         }
     }
 

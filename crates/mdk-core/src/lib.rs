@@ -30,7 +30,7 @@ pub mod test_util;
 mod util;
 pub mod welcomes;
 
-use self::constant::{DEFAULT_CIPHERSUITE, REQUIRED_EXTENSIONS};
+use self::constant::{DEFAULT_CIPHERSUITE, GROUP_CONTEXT_REQUIRED_EXTENSIONS, SUPPORTED_EXTENSIONS, TAG_EXTENSIONS};
 pub use self::error::Error;
 use self::util::NostrTagFormat;
 
@@ -103,7 +103,7 @@ where
     pub fn new(storage: Storage) -> Self {
         Self {
             ciphersuite: DEFAULT_CIPHERSUITE,
-            extensions: REQUIRED_EXTENSIONS.to_vec(),
+            extensions: SUPPORTED_EXTENSIONS.to_vec(),
             provider: MdkProvider {
                 crypto: RustCrypto::default(),
                 storage,
@@ -127,7 +127,7 @@ where
     #[inline]
     pub(crate) fn required_capabilities_extension(&self) -> Extension {
         Extension::RequiredCapabilities(RequiredCapabilitiesExtension::new(
-            &self.extensions,
+            &GROUP_CONTEXT_REQUIRED_EXTENSIONS,
             &[],
             &[],
         ))
@@ -140,7 +140,7 @@ where
 
     /// Get the extensions value formatted for Nostr tags (array of hex values)
     pub(crate) fn extensions_value(&self) -> Vec<String> {
-        self.extensions.iter().map(|e| e.to_nostr_tag()).collect()
+        TAG_EXTENSIONS.iter().map(|e| e.to_nostr_tag()).collect()
     }
 
     /// Get the storage provider
