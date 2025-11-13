@@ -3366,11 +3366,11 @@ mod tests {
 
             alice_mdk
                 .add_members(&group_id, &[member_key_package])
-                .expect(&format!("Should add member {}", i));
+                .unwrap_or_else(|_| panic!("Should add member {}", i));
 
             alice_mdk
                 .merge_pending_commit(&group_id)
-                .expect(&format!("Should merge commit {}", i));
+                .unwrap_or_else(|_| panic!("Should merge commit {}", i));
         }
 
         // Verify epoch advanced
