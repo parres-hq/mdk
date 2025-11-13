@@ -117,3 +117,9 @@ gen-binding-kotlin: (gen-binding "kotlin")
     cp target/aarch64-linux-android/release/libmdk_uniffi.so crates/mdk-uniffi/bindings/kotlin/libmdk_uniffi.arm64-v8a.so
     cp target/armv7-linux-androideabi/release/libmdk_uniffi.so crates/mdk-uniffi/bindings/kotlin/libmdk_uniffi.armeabi-v7a.so
     @echo "✓ Android libs copied"
+
+package-swift:
+    @bash scripts/package-swift.sh
+
+test-swift-bindings:
+    @bash scripts/run-swift-binding-test.sh
