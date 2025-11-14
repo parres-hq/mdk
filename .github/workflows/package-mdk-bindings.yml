@@ -1,0 +1,78 @@
+name: Package MDK Bindings
+
+on:
+  push:
+    branches: [ master ]
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  SWIFT_PACKAGE_REPO: "dannym/mdk-swift" # TODO: move to parres-hq/mdk-swift
+
+jobs:
+  package-swift:
+    runs-on: macos-latest
+    name: Build and Package Swift Bindings
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Setup Rust
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Cache Rust dependencies
+      uses: Swatinem/rust-cache@v2
+
+    - name: Install just
+      uses: extractions/setup-just@v2
+
+    - name: Build iOS targets
+      run: |
+        rustup target add aarch64-apple-ios aarch64-apple-ios-sim
+        just _build-uniffi-ios aarch64-apple-ios
+        just _build-uniffi-ios aarch64-apple-ios-sim
+
+    - name: Build host library
+      run: cargo build --lib -p mdk-uniffi
+
+    - name: Generate Swift bindings
+      run: just gen-binding-swift
+
+    - name: Checkout Swift package repo
+      uses: actions/checkout@v4
+      with:
+        repository: ${{ env.SWIFT_PACKAGE_REPO }}
+        path: swift-package-repo
+        token: ${{ secrets.SWIFT_PACKAGE_PAT }}
+        fetch-depth: 0
+
+    - name: Configure Git
+      run: |
+        git config --global user.name "github-actions[bot]"
+        git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+    - name: Copy Swift package to repo
+      run: |
+        # Remove all files except .git
+        find swift-package-repo -mindepth 1 -maxdepth 1 ! -name '.git' -exec rm -rf {} +
+        # Copy package contents
+        cp -R swift/MDKPackage/* swift-package-repo/
+        cd swift-package-repo
+        git add -A
+
+    - name: Commit and push
+      run: |
+        cd swift-package-repo
+        if git diff --staged --quiet; then
+          echo "No changes to commit"
+        else
+          git commit -m "Update Swift package from mdk@${GITHUB_SHA:0:7}"
+          git remote set-url origin https://x-access-token:${{ secrets.SWIFT_PACKAGE_PAT }}@github.com/${{ env.SWIFT_PACKAGE_REPO }}.git
+          git push origin HEAD
+        fi
+

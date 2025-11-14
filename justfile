@@ -74,10 +74,19 @@ check-full:
     @just check
 
 _build-uniffi:
-    @echo "Building mdk-uniffi library..."
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "Building mdk-uniffi library..."
     cargo build --lib -p mdk-uniffi
     just _build-uniffi-android aarch64-linux-android aarch64-linux-android21-clang
     just _build-uniffi-android armv7-linux-androideabi armv7a-linux-androideabi21-clang
+    if [ "{{os()}}" = "macos" ]; then
+        just _build-uniffi-ios aarch64-apple-ios
+        just _build-uniffi-ios aarch64-apple-ios-sim
+    fi
+
+_build-uniffi-ios TARGET:
+    cargo build --lib -p mdk-uniffi --target {{TARGET}} --release
 
 _build-uniffi-android TARGET CLANG_PREFIX:
     #!/usr/bin/env bash
@@ -94,7 +103,9 @@ _build-uniffi-android TARGET CLANG_PREFIX:
 
     cargo build --lib -p mdk-uniffi --target {{TARGET}} --release
 
-uniffi-bindgen: _build-uniffi (gen-binding "python") (gen-binding-kotlin) (gen-binding "swift") (gen-binding "ruby")
+uniffi-bindgen: _build-uniffi (gen-binding "python") (gen-binding-kotlin) (gen-binding "ruby")
+    @if [ "{{os()}}" = "macos" ]; then just gen-binding-swift; fi
+
 
 lib_filename := if os() == "windows" {
     "mdk_uniffi.dll"
@@ -108,7 +119,7 @@ gen-binding lang:
     @echo "Generating {{lang}} bindings..."
     cd crates/mdk-uniffi && cargo run --bin uniffi-bindgen generate \
         -l {{lang}} \
-        --library ../../target/debug/libmdk_uniffi.so \
+        --library ../../target/debug/{{lib_filename}} \
         --out-dir bindings/{{lang}}
     cp target/debug/{{lib_filename}} crates/mdk-uniffi/bindings/{{lang}}/{{lib_filename}}
     @echo "✓ Bindings generated in crates/mdk-uniffi/bindings/{{lang}}/"
@@ -118,8 +129,24 @@ gen-binding-kotlin: (gen-binding "kotlin")
     cp target/armv7-linux-androideabi/release/libmdk_uniffi.so crates/mdk-uniffi/bindings/kotlin/libmdk_uniffi.armeabi-v7a.so
     @echo "✓ Android libs copied"
 
-package-swift:
-    @bash scripts/package-swift.sh
+gen-binding-swift: (gen-binding "swift")
+    @echo "Creating iOS artifacts..."
+    mkdir -p ios-artifacts/headers
+    cp crates/mdk-uniffi/bindings/swift/mdk_uniffiFFI.h ios-artifacts/headers/
+    xcodebuild -create-xcframework \
+        -library target/aarch64-apple-ios/release/libmdk_uniffi.a -headers ios-artifacts/headers \
+        -library target/aarch64-apple-ios-sim/release/libmdk_uniffi.a -headers ios-artifacts/headers \
+        -output ios-artifacts/mdk_uniffi.xcframework
+    
+    @echo "Assembling Swift package..."
+    rm -rf swift/MDKPackage
+    mkdir -p swift/MDKPackage/Sources/{MDKBindings,mdk_uniffiFFI/include} swift/MDKPackage/Binary
+    cp crates/mdk-uniffi/bindings/swift/mdk_uniffi.swift swift/MDKPackage/Sources/MDKBindings/
+    cp crates/mdk-uniffi/bindings/swift/mdk_uniffiFFI.{h,modulemap} swift/MDKPackage/Sources/mdk_uniffiFFI/include/
+    echo '#include "mdk_uniffiFFI.h"' > swift/MDKPackage/Sources/mdk_uniffiFFI/mdk_uniffiFFI.c
+    cp -R ios-artifacts/mdk_uniffi.xcframework swift/MDKPackage/Binary/
+    cp crates/mdk-uniffi/src/swift/Package.swift swift/MDKPackage/Package.swift
+    @echo "✓ Swift package ready at swift/MDKPackage"
 
 test-swift-bindings:
     @bash scripts/run-swift-binding-test.sh
