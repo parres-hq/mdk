@@ -1042,7 +1042,6 @@ mod tests {
         );
     }
 
-
     /// Test that legacy tag format (without mls_ prefix) is still accepted for ciphersuite and extensions
     /// TODO: Remove this test after legacy format support is removed (target: EOY 2025)
     #[test]
@@ -1908,7 +1907,6 @@ mod tests {
             "Should fail to parse key package with missing required tags"
         );
         assert!(result.unwrap_err().to_string().contains("Missing required"));
-
     }
 
     /// Test KeyPackage last resort extension presence and basic lifecycle (MIP-00)
