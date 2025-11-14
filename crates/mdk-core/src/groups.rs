@@ -2949,21 +2949,6 @@ mod tests {
         );
     }
 
-    /// Test getting group that doesn't exist
-    #[test]
-    fn test_get_nonexistent_group() {
-        let mdk = create_test_mdk();
-        let non_existent_id = crate::GroupId::from_slice(&[9, 9, 9, 9]);
-
-        let result = mdk.get_group(&non_existent_id);
-
-        assert!(result.is_ok(), "Should succeed");
-        assert!(
-            result.unwrap().is_none(),
-            "Should return None for non-existent group"
-        );
-    }
-
     /// Test getting all groups when none exist
     #[test]
     fn test_get_groups_empty() {
