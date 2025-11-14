@@ -29,6 +29,20 @@
 
 ### Changed
 
+### Added
+
+### Fixed
+
+### Removed
+
+### Deprecated
+
+## [0.5.3] - 2025-11-14
+
+### Breaking changes
+
+### Changed
+
 - **Key Package Formatting**: Centralized hex formatting with new `NostrTagFormat` trait
   - All MLS types (Ciphersuite, ExtensionType) now use consistent lowercase hex format via `to_nostr_tag()` method
   - Eliminates duplicate formatting logic across the codebase
