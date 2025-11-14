@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>org.parres</groupId>
+    <artifactId>mdk</artifactId>
+    <version>0.5.2</version>
+    <packaging>aar</packaging>
+
+    <name>MDK</name>
+    <description>Kotlin/Android bindings for Marmot Development Kit - A Rust implementation of the Marmot Protocol for secure, decentralized group messaging.</description>
+    <url>https://github.com/parres-hq/mdk</url>
+
+    <licenses>
+        <license>
+            <name>MIT</name>
+            <url>https://opensource.org/licenses/MIT</url>
+        </license>
+    </licenses>
+
+    <developers>
+        <developer>
+            <name>MDK Developers</name>
+        </developer>
+    </developers>
+
+    <scm>
+        <connection>scm:git:git://github.com/parres-hq/mdk.git</connection>
+        <developerConnection>scm:git:ssh://github.com:parres-hq/mdk.git</developerConnection>
+        <url>https://github.com/parres-hq/mdk</url>
+    </scm>
+
+    <properties>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <kotlin.version>1.9.0</kotlin.version>
+    </properties>
+
+    <dependencies>
+        <dependency>
+            <groupId>net.java.dev.jna</groupId>
+            <artifactId>jna</artifactId>
+            <version>5.14.0</version>
+        </dependency>
+        <dependency>
+            <groupId>net.java.dev.jna</groupId>
+            <artifactId>jna-platform</artifactId>
+            <version>5.14.0</version>
+        </dependency>
+    </dependencies>
+</project>

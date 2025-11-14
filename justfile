@@ -130,23 +130,14 @@ gen-binding-kotlin: (gen-binding "kotlin")
     @echo "✓ Android libs copied"
 
 gen-binding-swift: (gen-binding "swift")
-    @echo "Creating iOS artifacts..."
+    @echo "Creating iOS xcframework..."
     mkdir -p ios-artifacts/headers
     cp crates/mdk-uniffi/bindings/swift/mdk_uniffiFFI.h ios-artifacts/headers/
     xcodebuild -create-xcframework \
         -library target/aarch64-apple-ios/release/libmdk_uniffi.a -headers ios-artifacts/headers \
         -library target/aarch64-apple-ios-sim/release/libmdk_uniffi.a -headers ios-artifacts/headers \
         -output ios-artifacts/mdk_uniffi.xcframework
-    
-    @echo "Assembling Swift package..."
-    rm -rf swift/MDKPackage
-    mkdir -p swift/MDKPackage/Sources/{MDKBindings,mdk_uniffiFFI/include} swift/MDKPackage/Binary
-    cp crates/mdk-uniffi/bindings/swift/mdk_uniffi.swift swift/MDKPackage/Sources/MDKBindings/
-    cp crates/mdk-uniffi/bindings/swift/mdk_uniffiFFI.{h,modulemap} swift/MDKPackage/Sources/mdk_uniffiFFI/include/
-    echo '#include "mdk_uniffiFFI.h"' > swift/MDKPackage/Sources/mdk_uniffiFFI/mdk_uniffiFFI.c
-    cp -R ios-artifacts/mdk_uniffi.xcframework swift/MDKPackage/Binary/
-    cp crates/mdk-uniffi/src/swift/Package.swift swift/MDKPackage/Package.swift
-    @echo "✓ Swift package ready at swift/MDKPackage"
+    @echo "✓ Swift bindings and xcframework ready"
 
 test-swift-bindings:
     @bash scripts/run-swift-binding-test.sh

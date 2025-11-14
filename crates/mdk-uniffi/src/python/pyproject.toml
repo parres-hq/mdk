@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mdk"
+version = "0.5.2"
+description = "Python bindings for Marmot Development Kit"
+requires-python = ">=3.8"
+license = { text = "MIT" }
+authors = [{ name = "MDK Developers" }]
+keywords = ["nostr", "mls", "openmls", "messaging", "encryption"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Security :: Cryptography",
+    "Topic :: Communications",
+]
+
+[project.urls]
+Homepage = "https://github.com/parres-hq/mdk"
+Repository = "https://github.com/parres-hq/mdk"
+Documentation = "https://github.com/parres-hq/mdk"
+
+[tool.setuptools]
+packages = ["mdk"]
+
+[tool.setuptools.package-data]
+mdk = ["libmdk_uniffi.so", "libmdk_uniffi.dylib", "mdk_uniffi.dll"]
