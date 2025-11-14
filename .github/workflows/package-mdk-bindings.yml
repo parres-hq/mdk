@@ -183,16 +183,15 @@ jobs:
     - name: Copy Python package to repo
       shell: bash
       run: |
-        PLATFORM_DIR="python-package-repo/${{ runner.os }}"
-        mkdir -p "$PLATFORM_DIR"
-        if [ -d "$PLATFORM_DIR/mdk" ]; then
+        # Preserve existing libraries from other platforms
+        if [ -d "python-package-repo/mdk" ]; then
           mkdir -p python-package/mdk
-          cp "$PLATFORM_DIR"/mdk/*.so python-package/mdk/ 2>/dev/null || true
-          cp "$PLATFORM_DIR"/mdk/*.dylib python-package/mdk/ 2>/dev/null || true
-          cp "$PLATFORM_DIR"/mdk/*.dll python-package/mdk/ 2>/dev/null || true
+          cp python-package-repo/mdk/*.so python-package/mdk/ 2>/dev/null || true
+          cp python-package-repo/mdk/*.dylib python-package/mdk/ 2>/dev/null || true
+          cp python-package-repo/mdk/*.dll python-package/mdk/ 2>/dev/null || true
         fi
-        # Copy/update all package files
-        cp -R python-package/* "$PLATFORM_DIR/"
+        # Copy/update all package files to single directory
+        cp -R python-package/* python-package-repo/
         cd python-package-repo
         git add -A
 
@@ -203,7 +202,7 @@ jobs:
         if git diff --staged --quiet; then
           echo "No changes to commit"
         else
-          git commit -m "Update Python package for ${{ runner.os }} from mdk@${GITHUB_SHA:0:7}"
+          git commit -m "Update Python package (${{ runner.os }}) from mdk@${GITHUB_SHA:0:7}"
           git remote set-url origin https://x-access-token:${{ secrets.BINDINGS_PACKAGE_PAT }}@github.com/${{ env.PYTHON_PACKAGE_REPO }}.git
           git push origin HEAD
         fi
@@ -296,15 +295,15 @@ jobs:
     - name: Copy Ruby gem to repo
       shell: bash
       run: |
-        PLATFORM_DIR="ruby-package-repo/${{ runner.os }}"
-        mkdir -p "$PLATFORM_DIR"
-        if [ -d "$PLATFORM_DIR/lib/mdk" ]; then
+        # Preserve existing libraries from other platforms
+        if [ -d "ruby-package-repo/lib/mdk" ]; then
           mkdir -p ruby-gem/lib/mdk
-          cp "$PLATFORM_DIR"/lib/mdk/*.so ruby-gem/lib/mdk/ 2>/dev/null || true
-          cp "$PLATFORM_DIR"/lib/mdk/*.dylib ruby-gem/lib/mdk/ 2>/dev/null || true
-          cp "$PLATFORM_DIR"/lib/mdk/*.dll ruby-gem/lib/mdk/ 2>/dev/null || true
+          cp ruby-package-repo/lib/mdk/*.so ruby-gem/lib/mdk/ 2>/dev/null || true
+          cp ruby-package-repo/lib/mdk/*.dylib ruby-gem/lib/mdk/ 2>/dev/null || true
+          cp ruby-package-repo/lib/mdk/*.dll ruby-gem/lib/mdk/ 2>/dev/null || true
         fi
-        cp -R ruby-gem/* "$PLATFORM_DIR/"
+        # Copy/update all package files to single directory
+        cp -R ruby-gem/* ruby-package-repo/
         cd ruby-package-repo
         git add -A
 
@@ -315,7 +314,7 @@ jobs:
         if git diff --staged --quiet; then
           echo "No changes to commit"
         else
-          git commit -m "Update Ruby gem for ${{ runner.os }} from mdk@${GITHUB_SHA:0:7}"
+          git commit -m "Update Ruby gem (${{ runner.os }}) from mdk@${GITHUB_SHA:0:7}"
           git remote set-url origin https://x-access-token:${{ secrets.BINDINGS_PACKAGE_PAT }}@github.com/${{ env.RUBY_PACKAGE_REPO }}.git
           git push origin HEAD
         fi
@@ -340,13 +339,18 @@ jobs:
       uses: extractions/setup-just@v2
 
     - name: Setup Android NDK
-      uses: android-actions/setup-android-ndk@v3
+      id: setup-ndk
+      uses: nttld/setup-ndk@v1
       with:
-        ndk-version: "26.1.10909125"
-
+        ndk-version: r26d
+        add-to-path: false
+        link-to-sdk: true
+        local-cache: true
     - name: Build Android targets
+      env: 
+        ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+        NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
       run: |
-        export NDK_HOME="$ANDROID_NDK_ROOT"
         just _build-uniffi-android aarch64-linux-android aarch64-linux-android21-clang
         just _build-uniffi-android armv7-linux-androideabi armv7a-linux-androideabi21-clang
 
