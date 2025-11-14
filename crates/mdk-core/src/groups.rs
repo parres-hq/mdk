@@ -284,6 +284,18 @@ where
     }
 
     /// Loads an MLS group from storage by its ID
+    fn load_mls_group_impl(&self, group_id: &GroupId) -> Result<Option<MlsGroup>, Error> {
+        MlsGroup::load(self.provider.storage(), group_id.inner())
+            .map_err(|e| Error::Provider(e.to_string()))
+    }
+
+    /// Loads an MLS group from storage by its ID
+    ///
+    /// This method provides access to the underlying OpenMLS `MlsGroup` object,
+    /// which can be useful for inspection, debugging, and advanced operations.
+    ///
+    /// **Note:** This method is only available with the `debug-examples` feature flag.
+    /// It is intended for debugging and example purposes only.
     ///
     /// # Arguments
     ///
@@ -294,12 +306,28 @@ where
     /// * `Ok(Some(MlsGroup))` - The loaded group if found
     /// * `Ok(None)` - If no group exists with the given ID
     /// * `Err(Error)` - If there is an error loading the group
-    pub(crate) fn load_mls_group(&self, group_id: &GroupId) -> Result<Option<MlsGroup>, Error> {
-        MlsGroup::load(self.provider.storage(), group_id.inner())
-            .map_err(|e| Error::Provider(e.to_string()))
+    #[cfg(feature = "debug-examples")]
+    pub fn load_mls_group(&self, group_id: &GroupId) -> Result<Option<MlsGroup>, Error> {
+        self.load_mls_group_impl(group_id)
     }
 
-    /// Exports the current epoch's secret key from an MLS group
+    /// Loads an MLS group from storage by its ID (internal version)
+    ///
+    /// # Arguments
+    ///
+    /// * `group_id` - The MLS group ID to load
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(Some(MlsGroup))` - The loaded group if found
+    /// * `Ok(None)` - If no group exists with the given ID
+    /// * `Err(Error)` - If there is an error loading the group
+    #[cfg(not(feature = "debug-examples"))]
+    pub(crate) fn load_mls_group(&self, group_id: &GroupId) -> Result<Option<MlsGroup>, Error> {
+        self.load_mls_group_impl(group_id)
+    }
+
+    /// Exports the current epoch's secret key from an MLS group (internal version)
     ///
     /// This secret is used for NIP-44 message encryption in Group Message Events (kind:445).
     /// The secret is cached in storage to avoid re-exporting it for each message.
@@ -836,12 +864,6 @@ where
 
         let (credential, signer) = self.generate_credential_with_key(creator_public_key)?;
 
-        tracing::debug!(
-            target: "mdk_core::groups::create_mls_group",
-            "Credential and signer created, {:?}",
-            credential
-        );
-
         let group_data = NostrGroupDataExtension::new(
             config.name,
             config.description,
@@ -852,21 +874,9 @@ where
             config.image_nonce,
         );
 
-        tracing::debug!(
-            target: "mdk_core::groups::create_mls_group",
-            "Group data created, {:?}",
-            group_data
-        );
-
         let extension = Self::get_unknown_extension_from_group_data(&group_data)?;
         let required_capabilities_extension = self.required_capabilities_extension();
         let extensions = Extensions::from_vec(vec![extension, required_capabilities_extension])?;
-
-        tracing::debug!(
-            target: "mdk_core::groups::create_mls_group",
-            "Group config extensions created, {:?}",
-            extensions
-        );
 
         // Build the group config
         let capabilities = self.capabilities();
@@ -876,12 +886,6 @@ where
             .capabilities(capabilities)
             .with_group_context_extensions(extensions)?
             .build();
-
-        tracing::debug!(
-            target: "mdk_core::groups::create_mls_group",
-            "Group config built, {:?}",
-            group_config
-        );
 
         let mut mls_group =
             MlsGroup::new(&self.provider, &signer, &group_config, credential.clone())?;
@@ -1270,6 +1274,7 @@ where
                     .tags(vec![
                         Tag::from_standardized(TagStandard::Relays(group_relays.to_vec())),
                         Tag::event(event.id),
+                        Tag::client(format!("MDK/{}", env!("CARGO_PKG_VERSION"))),
                     ])
                     .build(committer_pubkey);
 

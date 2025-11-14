@@ -364,7 +364,7 @@ mod tests {
     /// Spec requires:
     /// - Kind: 444 (MlsWelcome)
     /// - Content: hex-encoded serialized MLSMessage
-    /// - Tags: exactly 2 tags (relays + event reference)
+    /// - Tags: exactly 3 tags (relays + event reference + client)
     /// - Must be unsigned (UnsignedEvent for NIP-59 gift wrapping)
     #[test]
     fn test_welcome_event_structure_mip02_compliance() {
@@ -414,11 +414,11 @@ mod tests {
                 decoded_content.len()
             );
 
-            // 3. Verify exactly 2 tags (relays + event reference)
+            // 3. Verify exactly 3 tags (relays + event reference + client)
             assert_eq!(
                 welcome_rumor.tags.len(),
-                2,
-                "Welcome event must have exactly 2 tags per MIP-02"
+                3,
+                "Welcome event must have exactly 3 tags per MIP-02"
             );
 
             // 4. Verify first tag is relays tag
@@ -450,7 +450,21 @@ mod tests {
                 "Event reference tag must have content (KeyPackage event ID)"
             );
 
-            // 6. Verify event is unsigned (UnsignedEvent - no sig field when serialized)
+            // 6. Verify third tag is client tag
+            let client_tag = tags_vec[2];
+            assert_eq!(
+                client_tag.kind(),
+                TagKind::Client,
+                "Third tag must be 'client' tag"
+            );
+
+            // Verify client tag has content (MDK version)
+            assert!(
+                client_tag.content().is_some(),
+                "Client tag should contain MDK version"
+            );
+
+            // 7. Verify event is unsigned (UnsignedEvent - no sig field when serialized)
             // Although the type is UnsignedEvent, the NIP-59 gift-wrapping step computes
             // and attaches an ID to the rumor before sealing, so the ID is expected to be Some here.
             assert!(
@@ -577,7 +591,7 @@ mod tests {
         // Verify all welcomes have the same structure
         for welcome_rumor in &create_result.welcome_rumors {
             assert_eq!(welcome_rumor.kind, Kind::MlsWelcome);
-            assert_eq!(welcome_rumor.tags.len(), 2);
+            assert_eq!(welcome_rumor.tags.len(), 3);
             assert!(hex::decode(&welcome_rumor.content).is_ok());
         }
     }
@@ -670,7 +684,7 @@ mod tests {
             Kind::MlsWelcome,
             "Welcome should be kind 444"
         );
-        assert_eq!(welcome_rumor.tags.len(), 2, "Welcome should have 2 tags");
+        assert_eq!(welcome_rumor.tags.len(), 3, "Welcome should have 3 tags");
     }
 
     /// Test that welcome event structure remains consistent across group operations
@@ -915,7 +929,7 @@ mod tests {
 
             // Verify welcome structure
             assert_eq!(welcome.kind, Kind::MlsWelcome);
-            assert_eq!(welcome.tags.len(), 2, "Welcome should have 2 tags");
+            assert_eq!(welcome.tags.len(), 3, "Welcome should have 3 tags");
         }
 
         // Test size reporting for larger groups

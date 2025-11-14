@@ -313,12 +313,13 @@ fn apply_exif_orientation(
 
 #[cfg(test)]
 mod tests {
+    use image::{ImageBuffer, Rgb};
+
     use super::*;
 
     #[test]
     fn test_extract_metadata_from_encoded_image() {
         // Create a valid 10x10 red PNG image (1x1 causes issues with blurhash library)
-        use image::{ImageBuffer, Rgb};
         let img = ImageBuffer::from_fn(10, 10, |_, _| Rgb([255u8, 0u8, 0u8]));
         let mut png_data = Vec::new();
         img.write_to(
