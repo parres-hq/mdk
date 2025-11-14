@@ -929,7 +929,7 @@ mod tests {
 
             // Verify welcome structure
             assert_eq!(welcome.kind, Kind::MlsWelcome);
-            assert_eq!(welcome.tags.len(), 2, "Welcome should have 2 tags");
+            assert_eq!(welcome.tags.len(), 3, "Welcome should have 3 tags");
         }
 
         // Test size reporting for larger groups

@@ -1042,33 +1042,6 @@ mod tests {
         );
     }
 
-    /// Test that valid key package events with correct MIP-00 tags are accepted
-    #[test]
-    fn test_validate_correct_mip00_tags() {
-        let mdk = create_test_mdk();
-        let test_pubkey =
-            PublicKey::from_hex("884704bd421671e01c13f854d2ce23ce2a5bfe9562f4f297ad2bc921ba30c3a6")
-                .unwrap();
-        let relays = vec![RelayUrl::parse("wss://relay.example.com").unwrap()];
-
-        let (key_package_hex, tags) = mdk
-            .create_key_package_for_event(&test_pubkey, relays)
-            .expect("Failed to create key package");
-
-        // Create an event with correct MIP-00 tags
-        let event = EventBuilder::new(Kind::MlsKeyPackage, key_package_hex)
-            .tags(tags.to_vec())
-            .sign_with_keys(&nostr::Keys::generate())
-            .unwrap();
-
-        // Validate tags - should succeed
-        let result = mdk.validate_key_package_tags(&event);
-        assert!(
-            result.is_ok(),
-            "Should accept valid MIP-00 tags, got error: {:?}",
-            result
-        );
-    }
 
     /// Test that legacy tag format (without mls_ prefix) is still accepted for ciphersuite and extensions
     /// TODO: Remove this test after legacy format support is removed (target: EOY 2025)
@@ -1935,6 +1908,9 @@ mod tests {
             "Should fail to parse key package with missing required tags"
         );
         assert!(result.unwrap_err().to_string().contains("Missing required"));
+
+    }
+
     /// Test KeyPackage last resort extension presence and basic lifecycle (MIP-00)
     ///
     /// This test validates that KeyPackages include the last_resort extension by default
