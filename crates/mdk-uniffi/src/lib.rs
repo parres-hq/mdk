@@ -7,7 +7,8 @@
 #![warn(missing_docs)]
 
 use mdk_core::{
-    Error as MdkError, MDK, groups::{NostrGroupConfigData, NostrGroupDataUpdate, UpdateGroupResult},
+    Error as MdkError, MDK,
+    groups::{NostrGroupConfigData, NostrGroupDataUpdate},
     messages::MessageProcessingResult,
 };
 use mdk_sqlite_storage::MdkSqliteStorage;
@@ -393,6 +394,243 @@ impl Mdk {
 
         Ok(event_json)
     }
+
+    /// Update the current member's leaf node in an MLS group
+    pub fn self_update(&self, mls_group_id: String) -> Result<AddMembersResult, MdkUniffiError> {
+        let group_id = parse_group_id(&mls_group_id)?;
+        let mdk = self.lock();
+        let result = mdk.self_update(&group_id)?;
+
+        let evolution_event_json = serde_json::to_string(&result.evolution_event).map_err(|e| {
+            MdkUniffiError::InvalidInput(format!("Failed to serialize evolution event: {e}"))
+        })?;
+
+        let welcome_rumors_json: Option<Vec<String>> = result
+            .welcome_rumors
+            .map(|rumors| {
+                rumors
+                    .iter()
+                    .map(|rumor| {
+                        serde_json::to_string(rumor).map_err(|e| {
+                            MdkUniffiError::InvalidInput(format!(
+                                "Failed to serialize welcome rumor: {e}"
+                            ))
+                        })
+                    })
+                    .collect::<Result<Vec<_>, _>>()
+            })
+            .transpose()?;
+
+        Ok(AddMembersResult {
+            evolution_event_json,
+            welcome_rumors_json,
+            mls_group_id: hex::encode(result.mls_group_id.as_slice()),
+        })
+    }
+
+    /// Create a proposal to leave the group
+    pub fn leave_group(&self, mls_group_id: String) -> Result<AddMembersResult, MdkUniffiError> {
+        let group_id = parse_group_id(&mls_group_id)?;
+        let mdk = self.lock();
+        let result = mdk.leave_group(&group_id)?;
+
+        let evolution_event_json = serde_json::to_string(&result.evolution_event).map_err(|e| {
+            MdkUniffiError::InvalidInput(format!("Failed to serialize evolution event: {e}"))
+        })?;
+
+        let welcome_rumors_json: Option<Vec<String>> = result
+            .welcome_rumors
+            .map(|rumors| {
+                rumors
+                    .iter()
+                    .map(|rumor| {
+                        serde_json::to_string(rumor).map_err(|e| {
+                            MdkUniffiError::InvalidInput(format!(
+                                "Failed to serialize welcome rumor: {e}"
+                            ))
+                        })
+                    })
+                    .collect::<Result<Vec<_>, _>>()
+            })
+            .transpose()?;
+
+        Ok(AddMembersResult {
+            evolution_event_json,
+            welcome_rumors_json,
+            mls_group_id: hex::encode(result.mls_group_id.as_slice()),
+        })
+    }
+
+    /// Update group data (name, description, image, relays, admins)
+    pub fn update_group_data(
+        &self,
+        mls_group_id: String,
+        update: GroupDataUpdate,
+    ) -> Result<AddMembersResult, MdkUniffiError> {
+        let group_id = parse_group_id(&mls_group_id)?;
+
+        let mut group_update = NostrGroupDataUpdate::new();
+
+        if let Some(name) = update.name {
+            group_update = group_update.name(name);
+        }
+
+        if let Some(description) = update.description {
+            group_update = group_update.description(description);
+        }
+
+        if let Some(image_hash) = update.image_hash {
+            group_update = group_update.image_hash(
+                image_hash
+                    .map(|bytes| {
+                        let mut arr = [0u8; 32];
+                        if bytes.len() == 32 {
+                            arr.copy_from_slice(&bytes);
+                            Some(arr)
+                        } else {
+                            None
+                        }
+                    })
+                    .flatten(),
+            );
+        }
+
+        if let Some(image_key) = update.image_key {
+            group_update = group_update.image_key(
+                image_key
+                    .map(|bytes| {
+                        let mut arr = [0u8; 32];
+                        if bytes.len() == 32 {
+                            arr.copy_from_slice(&bytes);
+                            Some(arr)
+                        } else {
+                            None
+                        }
+                    })
+                    .flatten(),
+            );
+        }
+
+        if let Some(image_nonce) = update.image_nonce {
+            group_update = group_update.image_nonce(
+                image_nonce
+                    .map(|bytes| {
+                        let mut arr = [0u8; 12];
+                        if bytes.len() == 12 {
+                            arr.copy_from_slice(&bytes);
+                            Some(arr)
+                        } else {
+                            None
+                        }
+                    })
+                    .flatten(),
+            );
+        }
+
+        if let Some(relays) = update.relays {
+            let relay_urls = parse_relay_urls(&relays)?;
+            group_update = group_update.relays(relay_urls);
+        }
+
+        if let Some(admins) = update.admins {
+            let admin_pubkeys: Result<Vec<PublicKey>, _> =
+                admins.iter().map(|a| parse_public_key(a)).collect();
+            let admin_pubkeys = admin_pubkeys?;
+            group_update = group_update.admins(admin_pubkeys);
+        }
+
+        let mdk = self.lock();
+        let result = mdk.update_group_data(&group_id, group_update)?;
+
+        let evolution_event_json = serde_json::to_string(&result.evolution_event).map_err(|e| {
+            MdkUniffiError::InvalidInput(format!("Failed to serialize evolution event: {e}"))
+        })?;
+
+        let welcome_rumors_json: Option<Vec<String>> = result
+            .welcome_rumors
+            .map(|rumors| {
+                rumors
+                    .iter()
+                    .map(|rumor| {
+                        serde_json::to_string(rumor).map_err(|e| {
+                            MdkUniffiError::InvalidInput(format!(
+                                "Failed to serialize welcome rumor: {e}"
+                            ))
+                        })
+                    })
+                    .collect::<Result<Vec<_>, _>>()
+            })
+            .transpose()?;
+
+        Ok(AddMembersResult {
+            evolution_event_json,
+            welcome_rumors_json,
+            mls_group_id: hex::encode(result.mls_group_id.as_slice()),
+        })
+    }
+
+    /// Process an incoming MLS message
+    pub fn process_message(
+        &self,
+        event_json: String,
+    ) -> Result<ProcessMessageResult, MdkUniffiError> {
+        let event: Event = parse_json(&event_json, "event JSON")?;
+        let mdk = self.lock();
+        let result = mdk.process_message(&event)?;
+
+        Ok(match result {
+            MessageProcessingResult::ApplicationMessage(message) => {
+                ProcessMessageResult::ApplicationMessage {
+                    message: Message::from(message),
+                }
+            }
+            MessageProcessingResult::Proposal(update_result) => {
+                let evolution_event_json = serde_json::to_string(&update_result.evolution_event)
+                    .map_err(|e| {
+                        MdkUniffiError::InvalidInput(format!(
+                            "Failed to serialize evolution event: {e}"
+                        ))
+                    })?;
+
+                let welcome_rumors_json: Option<Vec<String>> = update_result
+                    .welcome_rumors
+                    .map(|rumors| {
+                        rumors
+                            .iter()
+                            .map(|rumor| {
+                                serde_json::to_string(rumor).map_err(|e| {
+                                    MdkUniffiError::InvalidInput(format!(
+                                        "Failed to serialize welcome rumor: {e}"
+                                    ))
+                                })
+                            })
+                            .collect::<Result<Vec<_>, _>>()
+                    })
+                    .transpose()?;
+
+                ProcessMessageResult::Proposal {
+                    result: AddMembersResult {
+                        evolution_event_json,
+                        welcome_rumors_json,
+                        mls_group_id: hex::encode(update_result.mls_group_id.as_slice()),
+                    },
+                }
+            }
+            MessageProcessingResult::ExternalJoinProposal { mls_group_id } => {
+                ProcessMessageResult::ExternalJoinProposal {
+                    mls_group_id: hex::encode(mls_group_id.as_slice()),
+                }
+            }
+            MessageProcessingResult::Commit { mls_group_id } => ProcessMessageResult::Commit {
+                mls_group_id: hex::encode(mls_group_id.as_slice()),
+            },
+            MessageProcessingResult::Unprocessable { mls_group_id } => {
+                ProcessMessageResult::Unprocessable {
+                    mls_group_id: hex::encode(mls_group_id.as_slice()),
+                }
+            }
+        })
+    }
 }
 
 /// Result of creating a key package
@@ -422,6 +660,55 @@ pub struct AddMembersResult {
     pub welcome_rumors_json: Option<Vec<String>>,
     /// Hex-encoded MLS group ID
     pub mls_group_id: String,
+}
+
+/// Configuration for updating group data with optional fields
+#[derive(uniffi::Record)]
+pub struct GroupDataUpdate {
+    /// Group name (optional)
+    pub name: Option<String>,
+    /// Group description (optional)
+    pub description: Option<String>,
+    /// Group image hash (optional, use Some(None) to clear)
+    pub image_hash: Option<Option<Vec<u8>>>,
+    /// Group image encryption key (optional, use Some(None) to clear)
+    pub image_key: Option<Option<Vec<u8>>>,
+    /// Group image encryption nonce (optional, use Some(None) to clear)
+    pub image_nonce: Option<Option<Vec<u8>>>,
+    /// Relays used by the group (optional)
+    pub relays: Option<Vec<String>>,
+    /// Group admins (optional)
+    pub admins: Option<Vec<String>>,
+}
+
+/// Result of processing a message
+#[derive(uniffi::Enum)]
+pub enum ProcessMessageResult {
+    /// An application message (usually a chat message)
+    ApplicationMessage {
+        /// The processed message
+        message: Message,
+    },
+    /// A proposal message (add/remove member proposal)
+    Proposal {
+        /// The proposal result containing evolution event and welcome rumors
+        result: AddMembersResult,
+    },
+    /// External join proposal
+    ExternalJoinProposal {
+        /// Hex-encoded MLS group ID this proposal belongs to
+        mls_group_id: String,
+    },
+    /// Commit message
+    Commit {
+        /// Hex-encoded MLS group ID this commit applies to
+        mls_group_id: String,
+    },
+    /// Unprocessable message
+    Unprocessable {
+        /// Hex-encoded MLS group ID of the message that could not be processed
+        mls_group_id: String,
+    },
 }
 
 /// Group representation
