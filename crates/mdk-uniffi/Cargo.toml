@@ -17,7 +17,7 @@ keywords = ["nostr", "mls", "openmls", "uniffi", "bindings"]
 
 [lib]
 name = "mdk_uniffi"
-crate-type = ["cdylib", "rlib"]
+crate-type = ["cdylib", "staticlib", "rlib"]
 
 [dependencies]
 mdk-core = { workspace = true, default-features = false }
