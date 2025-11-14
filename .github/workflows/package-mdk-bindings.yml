@@ -55,6 +55,8 @@ jobs:
         echo '#include "mdk_uniffiFFI.h"' > swift/MDKPackage/Sources/mdk_uniffiFFI/mdk_uniffiFFI.c
         cp -R ios-artifacts/mdk_uniffi.xcframework swift/MDKPackage/Binary/
         cp crates/mdk-uniffi/src/swift/Package.swift swift/MDKPackage/Package.swift
+        sed 's/{{lang}}/Swift/g' crates/mdk-uniffi/src/README.md > swift/MDKPackage/README.md
+        cp crates/mdk-uniffi/src/swift/docs.md swift/MDKPackage/docs.md
         echo "✓ Swift package assembled"
 
     - name: Checkout Swift package repo
@@ -160,6 +162,8 @@ jobs:
         
         # Copy pyproject.toml template
         cp crates/mdk-uniffi/src/python/pyproject.toml python-package/pyproject.toml
+        sed 's/{{lang}}/Python/g' crates/mdk-uniffi/src/README.md > python-package/README.md
+        cp crates/mdk-uniffi/src/python/docs.md python-package/docs.md
         
         echo "✓ Python package assembled for ${{ runner.os }}"
 
@@ -271,6 +275,8 @@ jobs:
         cp crates/mdk-uniffi/bindings/ruby/${{ steps.lib_filename.outputs.filename }} ruby-gem/lib/mdk/
         # Copy gemspec
         cp crates/mdk-uniffi/src/ruby/mdk.gemspec ruby-gem/mdk.gemspec
+        sed 's/{{lang}}/Ruby/g' crates/mdk-uniffi/src/README.md > ruby-gem/README.md
+        cp crates/mdk-uniffi/src/ruby/docs.md ruby-gem/docs.md
         
         echo "✓ Ruby gem assembled for ${{ runner.os }}"
 
@@ -365,6 +371,8 @@ jobs:
         cp crates/mdk-uniffi/bindings/kotlin/uniffi/mdk_uniffi/mdk_uniffi.kt kotlin-package/src/main/java/uniffi/mdk_uniffi/mdk_uniffi.kt
         # Copy pom.xml
         cp crates/mdk-uniffi/src/kotlin/pom.xml kotlin-package/pom.xml
+        sed 's/{{lang}}/Kotlin/g' crates/mdk-uniffi/src/README.md > kotlin-package/README.md
+        cp crates/mdk-uniffi/src/kotlin/docs.md kotlin-package/docs.md
         
         echo "✓ Kotlin package assembled"
 
