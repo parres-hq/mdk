@@ -9,7 +9,7 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  SWIFT_PACKAGE_REPO: "dannym/mdk-swift" # TODO: move to parres-hq/mdk-swift
+  SWIFT_PACKAGE_REPO: "dannym-arx/mdk-swift" # TODO: move to parres-hq/mdk-swift
 
 jobs:
   package-swift:
