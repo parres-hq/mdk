@@ -2564,7 +2564,6 @@ mod tests {
         );
     }
 
-
     /// Member self-removal verification
     ///
     /// Tests that leave_group generates valid MLS events.

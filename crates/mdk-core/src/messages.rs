@@ -2808,12 +2808,12 @@ mod tests {
         );
     }
 
-    /// Test out-of-order message processing
+    /// Single-client message idempotency
     ///
-    /// Validates that messages arriving out of chronological order are processed
-    /// correctly with deterministic ordering.
+    /// Tests that messages can be processed multiple times without duplication
+    /// and that message retrieval works correctly.
     #[test]
-    fn test_out_of_order_message_processing() {
+    fn test_single_client_message_idempotency() {
         let mdk = create_test_mdk();
         let (creator, members, admins) = create_test_group_members();
         let group_id = create_test_group(&mdk, &creator, &members, &admins);
@@ -2834,28 +2834,16 @@ mod tests {
             .create_message(&group_id, rumor3)
             .expect("Failed to create message 3");
 
-        // Create a second client (Bob) who will receive messages out of order
-        let _bob_mdk = create_test_mdk();
-        let _bob_keys = &members[0];
-
-        // Bob needs to join the group first
-        // In a real scenario, Bob would process a welcome message
-        // For this test, we'll simulate Bob having the group state
-
-        // Process messages in wrong order: 3, 1, 2
-        // Note: MLS messages must be processed in epoch order, but within an epoch,
-        // application messages can arrive out of order
-
+        // Process messages in different order: 3, 1, 2
         // All three messages are in the same epoch, so they should all process
         let result3 = mdk.process_message(&message3);
         let result1 = mdk.process_message(&message1);
         let result2 = mdk.process_message(&message2);
 
-        // All should succeed (or handle gracefully)
-        assert!(
-            result3.is_ok() || result1.is_ok() || result2.is_ok(),
-            "At least some messages should process successfully"
-        );
+        // All should succeed
+        assert!(result3.is_ok(), "Message 3 should process successfully");
+        assert!(result1.is_ok(), "Message 1 should process successfully");
+        assert!(result2.is_ok(), "Message 2 should process successfully");
 
         // Verify all messages are stored
         let messages = mdk.get_messages(&group_id).expect("Failed to get messages");
@@ -3136,7 +3124,12 @@ mod tests {
         );
 
         // Test 3: Empty content (edge case)
+        let group_id_tag = Tag::custom(
+            TagKind::Custom("mls_group_id".into()),
+            vec!["test_group_id".to_string()],
+        );
         let empty_content_event = EventBuilder::new(Kind::MlsGroupMessage, "")
+            .tags([group_id_tag])
             .sign_with_keys(&creator)
             .expect("Failed to sign event");
 
@@ -3320,12 +3313,11 @@ mod tests {
         }
     }
 
-    /// Concurrent Commit Creation
+    /// Member Addition Commit
     ///
-    /// Validates handling of commits created on different devices at nearly the same time,
-    /// ensuring proper conflict resolution and state consistency.
+    /// Tests that adding a member and advancing the epoch works correctly.
     #[test]
-    fn test_concurrent_commit_creation() {
+    fn test_member_addition_commit() {
         let alice_keys = Keys::generate();
         let bob_keys = Keys::generate();
         let charlie_keys = Keys::generate();
@@ -3471,6 +3463,39 @@ mod tests {
             .process_message(&message1)
             .expect("Bob should process message");
 
+        // Alice adds a new member (Charlie)
+        let charlie_keys = Keys::generate();
+        let charlie_mdk = create_test_mdk();
+        let charlie_key_package = create_key_package_event(&charlie_mdk, &charlie_keys);
+
+        let add_result = alice_device1
+            .add_members(&group_id, &[charlie_key_package])
+            .expect("Alice should add Charlie");
+
+        alice_device1
+            .merge_pending_commit(&group_id)
+            .expect("Alice should merge commit");
+
+        // Bob processes the member addition commit
+        bob_mdk
+            .process_message(&add_result.evolution_event)
+            .expect("Bob should process member addition");
+
+        // Verify Bob's member list is synchronized
+        let bob_updated_members = bob_mdk
+            .get_members(&group_id)
+            .expect("Bob should get updated members");
+
+        assert_eq!(
+            bob_updated_members.len(),
+            3,
+            "Bob should see Charlie was added"
+        );
+        assert!(
+            bob_updated_members.contains(&charlie_keys.public_key()),
+            "Bob should see Charlie in member list"
+        );
+
         // Verify Bob received the message
         let bob_messages = bob_mdk
             .get_messages(&group_id)
@@ -3539,9 +3564,11 @@ mod tests {
 
         // Advance epoch by adding Charlie
         let charlie_key_package = create_key_package_event(&charlie_mdk, &charlie_keys);
-        alice_mdk
+        let add_result = alice_mdk
             .add_members(&group_id, &[charlie_key_package])
             .expect("Alice should add Charlie");
+
+        let add_commit_event = add_result.evolution_event.clone();
 
         alice_mdk
             .merge_pending_commit(&group_id)
@@ -3558,30 +3585,45 @@ mod tests {
 
         // Alice sends message in epoch 1
         let rumor1 = create_test_rumor(&alice_keys, "Message in epoch 1");
-        let _message1 = alice_mdk
+        let message1 = alice_mdk
             .create_message(&group_id, rumor1)
             .expect("Alice should create message in epoch 1");
 
-        // Bob processes both messages (from different epochs)
+        // Bob processes message from epoch 0
         bob_mdk
             .process_message(&message0)
             .expect("Bob should process message from epoch 0");
 
-        // Bob would need to process the commit to advance his epoch
-        // For this test, we just verify the message from epoch 0 was processed
+        // Bob processes the commit to advance to epoch 1
+
+        bob_mdk
+            .process_message(&add_commit_event)
+            .expect("Bob should process commit to advance epoch");
+
+        // Bob processes message from epoch 1
+        bob_mdk
+            .process_message(&message1)
+            .expect("Bob should process message from epoch 1");
+
         let bob_messages = bob_mdk
             .get_messages(&group_id)
             .expect("Bob should get messages");
 
         assert!(
             !bob_messages.is_empty(),
-            "Bob should have at least the message from epoch 0"
+            "Bob should have messages from both epochs"
         );
         assert!(
             bob_messages
                 .iter()
                 .any(|m| m.content.contains("Message in epoch 0")),
             "Bob should have message from epoch 0"
+        );
+        assert!(
+            bob_messages
+                .iter()
+                .any(|m| m.content.contains("Message in epoch 1")),
+            "Bob should have message from epoch 1"
         );
     }
 }

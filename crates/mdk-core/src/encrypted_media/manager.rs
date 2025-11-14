@@ -825,8 +825,7 @@ mod tests {
     /// Multi-Device Media Encryption
     ///
     /// Validates that encrypted media can be decrypted across different devices
-    /// in the same group using the group's exporter secret, and that media
-    /// from different epochs can be accessed.
+    /// in the same group using the group's exporter secret within the same epoch.
     #[test]
     fn test_media_encryption_across_devices() {
         use nostr::Keys;
