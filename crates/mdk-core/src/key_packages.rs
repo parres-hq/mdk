@@ -114,7 +114,7 @@ where
     /// 2. Validates all required tags are present and correctly formatted per MIP-00:
     ///    - `mls_protocol_version`: Protocol version (e.g., "1.0")
     ///    - `mls_ciphersuite`: Must be "0x0001" (MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519)
-    ///    - `mls_extensions`: Must include all required extensions (0x0003, 0x000a, 0x0002, 0xf2ee)
+    ///    - `mls_extensions`: Must include all required extensions (0x000a, 0xf2ee), but not the default extensions (0x0003, 0x0002)
     /// 3. Deserializes the TLS-encoded key package from the event content
     ///
     /// # Arguments
