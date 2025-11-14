@@ -6,7 +6,10 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
-use mdk_core::{Error as MdkError, MDK, groups::NostrGroupConfigData};
+use mdk_core::{
+    Error as MdkError, MDK, groups::{NostrGroupConfigData, NostrGroupDataUpdate, UpdateGroupResult},
+    messages::MessageProcessingResult,
+};
 use mdk_sqlite_storage::MdkSqliteStorage;
 use mdk_storage_traits::{
     GroupId, groups::types as group_types, messages::types as message_types,
@@ -290,6 +293,50 @@ impl Mdk {
 
         let mdk = self.lock();
         let result = mdk.add_members(&group_id, &key_package_events)?;
+
+        let evolution_event_json = serde_json::to_string(&result.evolution_event).map_err(|e| {
+            MdkUniffiError::InvalidInput(format!("Failed to serialize evolution event: {e}"))
+        })?;
+
+        let welcome_rumors_json: Option<Vec<String>> = result
+            .welcome_rumors
+            .map(|rumors| {
+                rumors
+                    .iter()
+                    .map(|rumor| {
+                        serde_json::to_string(rumor).map_err(|e| {
+                            MdkUniffiError::InvalidInput(format!(
+                                "Failed to serialize welcome rumor: {e}"
+                            ))
+                        })
+                    })
+                    .collect::<Result<Vec<_>, _>>()
+            })
+            .transpose()?;
+
+        Ok(AddMembersResult {
+            evolution_event_json,
+            welcome_rumors_json,
+            mls_group_id: hex::encode(result.mls_group_id.as_slice()),
+        })
+    }
+
+    /// Remove members from a group
+    pub fn remove_members(
+        &self,
+        mls_group_id: String,
+        member_public_keys: Vec<String>,
+    ) -> Result<AddMembersResult, MdkUniffiError> {
+        let group_id = parse_group_id(&mls_group_id)?;
+
+        let pubkeys: Result<Vec<PublicKey>, _> = member_public_keys
+            .iter()
+            .map(|pk| parse_public_key(pk))
+            .collect();
+        let pubkeys = pubkeys?;
+
+        let mdk = self.lock();
+        let result = mdk.remove_members(&group_id, &pubkeys)?;
 
         let evolution_event_json = serde_json::to_string(&result.evolution_event).map_err(|e| {
             MdkUniffiError::InvalidInput(format!("Failed to serialize evolution event: {e}"))
