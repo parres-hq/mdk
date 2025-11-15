@@ -2836,18 +2836,47 @@ mod tests {
     /// Test that non-admins cannot add members to a group
     #[test]
     fn test_non_admin_cannot_add_members() {
+        use crate::test_util::create_key_package_event;
+
         let creator_mdk = create_test_mdk();
-        let (creator, initial_members, admins) = create_test_group_members();
-        let _creator_pk = creator.public_key();
+        let creator = Keys::generate();
+        let non_admin_keys = Keys::generate();
 
-        // Create group with only creator as admin
-        let group_id = create_test_group(&creator_mdk, &creator, &initial_members, &admins);
+        // Only creator is admin
+        let admins = vec![creator.public_key()];
 
-        // Verify member2 (initial_members[1]) is not an admin
-        let non_admin_keys = &initial_members[1];
+        // Non-admin creates their own MDK and key package
+        let non_admin_mdk = create_test_mdk();
+        let non_admin_key_package = create_key_package_event(&non_admin_mdk, &non_admin_keys);
+
+        // Creator creates group with non-admin as member
+        let create_result = creator_mdk
+            .create_group(
+                &creator.public_key(),
+                vec![non_admin_key_package],
+                create_nostr_group_config_data(admins.clone()),
+            )
+            .expect("Failed to create group");
+
+        let group_id = create_result.group.mls_group_id.clone();
+
+        creator_mdk
+            .merge_pending_commit(&group_id)
+            .expect("Failed to merge commit");
+
+        // Non-admin joins the group
+        let non_admin_welcome_rumor = &create_result.welcome_rumors[0];
+        let non_admin_welcome = non_admin_mdk
+            .process_welcome(&nostr::EventId::all_zeros(), non_admin_welcome_rumor)
+            .expect("Non-admin should process welcome");
+        non_admin_mdk
+            .accept_welcome(&non_admin_welcome)
+            .expect("Non-admin should accept welcome");
+
+        // Verify non-admin is not an admin
         assert!(
             !admins.contains(&non_admin_keys.public_key()),
-            "member2 should not be in the admin list"
+            "Non-admin should not be in admin list"
         );
 
         // Get initial member count
@@ -2856,18 +2885,21 @@ mod tests {
             .expect("Failed to get members")
             .len();
 
-        // Create a non-admin member's MDK instance
-        let non_admin_mdk = create_test_mdk();
-
         // Try to have the non-admin add a new member
         let new_member_keys = Keys::generate();
         let new_member_key_package = create_key_package_event(&non_admin_mdk, &new_member_keys);
 
         let result = non_admin_mdk.add_members(&group_id, &[new_member_key_package]);
 
+        // Should fail with permission error, not GroupNotFound
         assert!(
             result.is_err(),
             "Non-admin should not be able to add members"
+        );
+        assert!(
+            matches!(result, Err(crate::Error::Group(ref msg)) if msg.contains("Only group admins can add members")),
+            "Should fail with admin permission error, got: {:?}",
+            result
         );
 
         // Verify that the members list did not change
@@ -2884,28 +2916,65 @@ mod tests {
     /// Test that non-admins cannot remove members from a group
     #[test]
     fn test_non_admin_cannot_remove_members() {
+        use crate::test_util::create_key_package_event;
+
         let creator_mdk = create_test_mdk();
-        let (creator, initial_members, admins) = create_test_group_members();
+        let creator = Keys::generate();
+        let non_admin_keys = Keys::generate();
+        let other_member_keys = Keys::generate();
 
-        // Create group
-        let group_id = create_test_group(&creator_mdk, &creator, &initial_members, &admins);
+        // Only creator is admin
+        let admins = vec![creator.public_key()];
 
-        // Get initial members list
-        let initial_members_list = creator_mdk
-            .get_members(&group_id)
-            .expect("Failed to get members");
-        let initial_member_count = initial_members_list.len();
-
-        // Create a non-admin member's MDK instance
+        // Create MDKs and key packages for members
         let non_admin_mdk = create_test_mdk();
+        let other_member_mdk = create_test_mdk();
+        let non_admin_key_package = create_key_package_event(&non_admin_mdk, &non_admin_keys);
+        let other_member_key_package =
+            create_key_package_event(&other_member_mdk, &other_member_keys);
 
-        // Try to have the non-admin remove a member
-        let member_to_remove = initial_members[0].public_key();
-        let result = non_admin_mdk.remove_members(&group_id, &[member_to_remove]);
+        // Creator creates group with non-admin and other member
+        let create_result = creator_mdk
+            .create_group(
+                &creator.public_key(),
+                vec![non_admin_key_package, other_member_key_package],
+                create_nostr_group_config_data(admins),
+            )
+            .expect("Failed to create group");
 
+        let group_id = create_result.group.mls_group_id.clone();
+
+        creator_mdk
+            .merge_pending_commit(&group_id)
+            .expect("Failed to merge commit");
+
+        // Non-admin joins the group
+        let non_admin_welcome_rumor = &create_result.welcome_rumors[0];
+        let non_admin_welcome = non_admin_mdk
+            .process_welcome(&nostr::EventId::all_zeros(), non_admin_welcome_rumor)
+            .expect("Non-admin should process welcome");
+        non_admin_mdk
+            .accept_welcome(&non_admin_welcome)
+            .expect("Non-admin should accept welcome");
+
+        // Get initial member count
+        let initial_member_count = creator_mdk
+            .get_members(&group_id)
+            .expect("Failed to get members")
+            .len();
+
+        // Try to have the non-admin remove another member
+        let result = non_admin_mdk.remove_members(&group_id, &[other_member_keys.public_key()]);
+
+        // Should fail with permission error, not GroupNotFound
         assert!(
             result.is_err(),
             "Non-admin should not be able to remove members"
+        );
+        assert!(
+            matches!(result, Err(crate::Error::Group(ref msg)) if msg.contains("Only group admins can remove members")),
+            "Should fail with admin permission error, got: {:?}",
+            result
         );
 
         // Verify that the members list did not change
@@ -2921,7 +2990,9 @@ mod tests {
 
         // Verify the specific member is still present
         assert!(
-            final_members_list.iter().any(|m| m == &member_to_remove),
+            final_members_list
+                .iter()
+                .any(|m| m == &other_member_keys.public_key()),
             "Target member should still be in the group"
         );
     }
@@ -2929,11 +3000,42 @@ mod tests {
     /// Test that non-admins cannot update group extensions
     #[test]
     fn test_non_admin_cannot_update_group_extensions() {
-        let creator_mdk = create_test_mdk();
-        let (creator, initial_members, admins) = create_test_group_members();
+        use crate::test_util::create_key_package_event;
 
-        // Create group
-        let group_id = create_test_group(&creator_mdk, &creator, &initial_members, &admins);
+        let creator_mdk = create_test_mdk();
+        let creator = Keys::generate();
+        let non_admin_keys = Keys::generate();
+
+        // Only creator is admin
+        let admins = vec![creator.public_key()];
+
+        // Non-admin creates their own MDK and key package
+        let non_admin_mdk = create_test_mdk();
+        let non_admin_key_package = create_key_package_event(&non_admin_mdk, &non_admin_keys);
+
+        // Creator creates group with non-admin as member
+        let create_result = creator_mdk
+            .create_group(
+                &creator.public_key(),
+                vec![non_admin_key_package],
+                create_nostr_group_config_data(admins),
+            )
+            .expect("Failed to create group");
+
+        let group_id = create_result.group.mls_group_id.clone();
+
+        creator_mdk
+            .merge_pending_commit(&group_id)
+            .expect("Failed to merge commit");
+
+        // Non-admin joins the group
+        let non_admin_welcome_rumor = &create_result.welcome_rumors[0];
+        let non_admin_welcome = non_admin_mdk
+            .process_welcome(&nostr::EventId::all_zeros(), non_admin_welcome_rumor)
+            .expect("Non-admin should process welcome");
+        non_admin_mdk
+            .accept_welcome(&non_admin_welcome)
+            .expect("Non-admin should accept welcome");
 
         // Get initial group metadata
         let initial_group = creator_mdk
@@ -2943,16 +3045,19 @@ mod tests {
         let initial_name = initial_group.name.clone();
         let initial_description = initial_group.description.clone();
 
-        // Create a non-admin member's MDK instance
-        let non_admin_mdk = create_test_mdk();
-
         // Try to have the non-admin update group name
         let update = NostrGroupDataUpdate::new().name("Hacked Name".to_string());
         let result = non_admin_mdk.update_group_data(&group_id, update);
 
+        // Should fail with permission error, not GroupNotFound
         assert!(
             result.is_err(),
             "Non-admin should not be able to update group extensions"
+        );
+        assert!(
+            matches!(result, Err(crate::Error::Group(ref msg)) if msg.contains("Only group admins")),
+            "Should fail with admin permission error, got: {:?}",
+            result
         );
 
         // Verify that the group metadata did not change
