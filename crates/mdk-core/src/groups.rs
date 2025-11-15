@@ -2564,13 +2564,16 @@ mod tests {
         );
     }
 
-    /// Member self-removal verification
+    /// Member self-removal proposal
     ///
-    /// Tests that leave_group generates valid MLS events.
+    /// Tests that leave_group creates a valid leave proposal.
+    /// Note: A member cannot unilaterally leave - they create a proposal
+    /// that must be committed by another member (typically an admin).
     ///
     /// Requirements tested:
-    /// - leave_group creates valid MLS evolution events
+    /// - leave_group creates valid MLS proposal events
     /// - leave_group works for group members
+    /// - The proposal can be processed by other members
     #[test]
     fn test_member_self_removal() {
         use crate::test_util::create_key_package_event;
@@ -3128,8 +3131,36 @@ mod tests {
         );
 
         // Bob still has the group locally (hasn't processed the removal commit)
-        // but any operations he tries will fail when other members process them
-        // because they will see he's not a valid member
+        // Try to have Bob perform an operation - it should either fail locally
+        // or be rejected when other members process it
+        let dave_keys = Keys::generate();
+        let dave_mdk = create_test_mdk();
+        let dave_key_package = create_key_package_event(&dave_mdk, &dave_keys);
+
+        // Bob attempts to add a new member
+        let bob_add_attempt = bob_mdk.add_members(&group_id, &[dave_key_package]);
+
+        // Either Bob's operation fails locally, or if it succeeds,
+        // Alice/Charlie should reject it when they process it
+        if let Ok(bob_add_result) = bob_add_attempt {
+            // Bob was able to create a commit locally, but Alice should reject it
+            let alice_process_result = alice_mdk.process_message(&bob_add_result.evolution_event);
+
+            assert!(
+                alice_process_result.is_err(),
+                "Alice should reject operations from removed member Bob"
+            );
+
+            // Charlie should also reject it
+            let charlie_process_result =
+                charlie_mdk.process_message(&bob_add_result.evolution_event);
+
+            assert!(
+                charlie_process_result.is_err(),
+                "Charlie should reject operations from removed member Bob"
+            );
+        }
+        // If bob_add_attempt failed, that's also acceptable - the operation was rejected
     }
 
     /// Rapid Sequential Member Operations
