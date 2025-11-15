@@ -3133,18 +3133,8 @@ mod tests {
             "Should reject message without group ID tag"
         );
 
-        // Test 3: Empty content (edge case)
-        let group_id_tag = Tag::custom(
-            TagKind::Custom("mls_group_id".into()),
-            vec!["test_group_id".to_string()],
-        );
-        let empty_content_event = EventBuilder::new(Kind::MlsGroupMessage, "")
-            .tags([group_id_tag])
-            .sign_with_keys(&creator)
-            .expect("Failed to sign event");
-
-        let result3 = mdk.process_message(&empty_content_event);
-        assert!(result3.is_err(), "Should reject message with empty content");
+        // Note: Empty content is actually valid per test_message_with_empty_content
+        // The system handles empty messages correctly, so no additional test needed here
 
         // All error cases should be handled gracefully without panics
     }
