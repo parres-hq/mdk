@@ -1093,6 +1093,31 @@ mod tests {
             decrypt_result.is_err(),
             "Decryption of tampered data should fail"
         );
+
+        // Test hash verification by tampering with the hash in media_ref
+        let encrypted_data_valid = upload_result.encrypted_data.clone();
+        let mut tampered_media_ref = media_ref.clone();
+        // Replace hash with an incorrect one (all zeros)
+        tampered_media_ref.original_hash = [0u8; 32];
+
+        let hash_verify_result =
+            manager.decrypt_from_download(&encrypted_data_valid, &tampered_media_ref);
+        assert!(
+            hash_verify_result.is_err(),
+            "Decryption with incorrect hash should fail"
+        );
+
+        // Verify it's specifically a hash verification error
+        if let Err(e) = hash_verify_result {
+            let error_msg = format!("{:?}", e);
+            assert!(
+                error_msg.contains("hash")
+                    || error_msg.contains("Hash")
+                    || error_msg.contains("verification"),
+                "Error should indicate hash verification failure: {:?}",
+                e
+            );
+        }
     }
 
     /// Media Encryption with Different File Types
