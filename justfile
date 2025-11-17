@@ -93,13 +93,14 @@ _build-uniffi-android TARGET CLANG_PREFIX:
     set -euo pipefail
     NDK_HOST=$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m)
     NDK_PREBUILT="${NDK_HOME:-/opt/android-ndk}/toolchains/llvm/prebuilt/${NDK_HOST}"
+    LLVM_BIN="${NDK_PREBUILT}/bin"
 
     TARGET_UPPER=$(echo "{{TARGET}}" | tr '[:lower:]-' '[:upper:]_')
     TARGET_UNDER=$(echo "{{TARGET}}" | tr '-' '_')
 
-    export CC_${TARGET_UNDER}="${NDK_PREBUILT}/bin/{{CLANG_PREFIX}}"
-    export AR_${TARGET_UNDER}=llvm-ar
-    export CARGO_TARGET_${TARGET_UPPER}_LINKER="${NDK_PREBUILT}/bin/{{CLANG_PREFIX}}"
+    export CC_${TARGET_UNDER}="${LLVM_BIN}/{{CLANG_PREFIX}}"
+    export AR_${TARGET_UNDER}="${LLVM_BIN}/llvm-ar"
+    export CARGO_TARGET_${TARGET_UPPER}_LINKER="${LLVM_BIN}/{{CLANG_PREFIX}}"
 
     cargo build --lib -p mdk-uniffi --target {{TARGET}} --release
 
