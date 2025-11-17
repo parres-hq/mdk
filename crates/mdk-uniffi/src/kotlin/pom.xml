@@ -35,9 +35,15 @@
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <kotlin.version>1.9.0</kotlin.version>
+        <android.platform>34</android.platform>
     </properties>
 
     <dependencies>
+        <dependency>
+            <groupId>org.jetbrains.kotlin</groupId>
+            <artifactId>kotlin-stdlib</artifactId>
+            <version>${kotlin.version}</version>
+        </dependency>
         <dependency>
             <groupId>net.java.dev.jna</groupId>
             <artifactId>jna</artifactId>
@@ -50,19 +56,45 @@
         </dependency>
     </dependencies>
 
-   <build>
-     <plugins>
-       <plugin>
-         <groupId>com.simpligility.maven.plugins</groupId>
-         <artifactId>android-maven-plugin</artifactId>
-         <version>4.6.0</version>
-         <extensions>true</extensions>
-         <configuration>
-           <sdk>
-             <platform>34</platform>
-           </sdk>
-         </configuration>
-       </plugin>
-     </plugins>
-   </build>
+    <build>
+        <sourceDirectory>${project.basedir}/src/main/kotlin</sourceDirectory>
+        <plugins>
+            <plugin>
+                <groupId>org.jetbrains.kotlin</groupId>
+                <artifactId>kotlin-maven-plugin</artifactId>
+                <version>${kotlin.version}</version>
+                <executions>
+                    <execution>
+                        <id>compile</id>
+                        <phase>compile</phase>
+                        <goals>
+                            <goal>compile</goal>
+                        </goals>
+                        <configuration>
+                            <sourceDirs>
+                                <sourceDir>${project.basedir}/src/main/kotlin</sourceDir>
+                            </sourceDirs>
+                            <jvmTarget>1.8</jvmTarget>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>com.simpligility.maven.plugins</groupId>
+                <artifactId>android-maven-plugin</artifactId>
+                <version>4.6.0</version>
+                <extensions>true</extensions>
+                <configuration>
+                    <sdk>
+                        <platform>${android.platform}</platform>
+                        <path>${env.ANDROID_HOME}</path>
+                    </sdk>
+                    <androidManifestFile>${project.basedir}/src/main/AndroidManifest.xml</androidManifestFile>
+                    <resourceDirectory>${project.basedir}/src/main/res</resourceDirectory>
+                    <nativeLibrariesDirectory>${project.basedir}/src/main/jniLibs</nativeLibrariesDirectory>
+                    <undeployBeforeDeploy>true</undeployBeforeDeploy>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
 </project>

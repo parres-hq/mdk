@@ -372,11 +372,8 @@ jobs:
     - name: Assemble Kotlin package
       shell: bash
       run: |
-        mkdir -p kotlin-package/src/main/java/uniffi/mdk_uniffi
-        # Copy Kotlin bindings
-        cp crates/mdk-uniffi/bindings/kotlin/uniffi/mdk_uniffi/mdk_uniffi.kt kotlin-package/src/main/java/uniffi/mdk_uniffi/mdk_uniffi.kt
-        # Copy pom.xml
-        cp crates/mdk-uniffi/src/kotlin/pom.xml kotlin-package/pom.xml
+        mkdir -p kotlin-package/src/main/kotlin/uniffi/mdk_uniffi
+        cp crates/mdk-uniffi/bindings/kotlin/uniffi/mdk_uniffi/mdk_uniffi.kt kotlin-package/src/main/kotlin/uniffi/mdk_uniffi/mdk_uniffi.kt
         sed 's/{{lang}}/Kotlin/g' crates/mdk-uniffi/src/README.md > kotlin-package/README.md
         rsync -av crates/mdk-uniffi/src/kotlin/ kotlin-package
         
