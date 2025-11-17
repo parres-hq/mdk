@@ -863,12 +863,12 @@ mod tests {
             .accept_welcome(&bob_welcome)
             .expect("Bob should accept welcome");
 
-        // Test media file - use PDF to avoid image metadata extraction issues
+        // Test media file - use text/plain for simple test data
         let test_media = b"Test media data for cross-device encryption";
 
         let alice_manager = alice_mdk.media_manager(group_id.clone());
         let upload_result = alice_manager
-            .encrypt_for_upload(test_media, "application/pdf", "document.pdf")
+            .encrypt_for_upload(test_media, "text/plain", "document.txt")
             .expect("Alice should encrypt media");
 
         let encrypted_data = upload_result.encrypted_data.clone();
@@ -1019,7 +1019,8 @@ mod tests {
         assert!(result.is_err(), "Empty filename should fail");
 
         // Test 4: Extremely long filename should fail
-        let long_filename = "a".repeat(300);
+        use crate::encrypted_media::MAX_FILENAME_LENGTH;
+        let long_filename = "a".repeat(MAX_FILENAME_LENGTH + 1);
         let result = manager.encrypt_for_upload(valid_media, "application/pdf", &long_filename);
         assert!(result.is_err(), "Overly long filename should fail");
 

@@ -2625,14 +2625,11 @@ mod tests {
         // - SQLite returns error for non-existent group
         // - Memory storage returns Ok(empty vec)
         // Both are acceptable - just verify it doesn't panic
-        match result {
-            Ok(messages) => assert!(
+        if let Ok(messages) = result {
+            assert!(
                 messages.is_empty(),
                 "Should return empty list for non-existent group"
-            ),
-            Err(_) => {
-                // Also acceptable - storage can return error for non-existent group
-            }
+            );
         }
     }
 
