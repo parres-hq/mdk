@@ -49,4 +49,20 @@
             <version>5.14.0</version>
         </dependency>
     </dependencies>
+
+   <build>
+     <plugins>
+       <plugin>
+         <groupId>com.simpligility.maven.plugins</groupId>
+         <artifactId>android-maven-plugin</artifactId>
+         <version>4.6.0</version>
+         <extensions>true</extensions>
+         <configuration>
+           <sdk>
+             <platform>34</platform>
+           </sdk>
+         </configuration>
+       </plugin>
+     </plugins>
+   </build>
 </project>
