@@ -53,7 +53,12 @@ impl GroupStorage for MdkMemoryStorage {
 
     fn messages(&self, mls_group_id: &GroupId) -> Result<Vec<Message>, GroupError> {
         // Check if the group exists first
-        self.find_group_by_mls_group_id(mls_group_id)?;
+        if self.find_group_by_mls_group_id(mls_group_id)?.is_none() {
+            return Err(GroupError::InvalidParameters(format!(
+                "Group with MLS ID {:?} not found",
+                mls_group_id
+            )));
+        }
 
         let cache = self.messages_by_group_cache.read();
         match cache.peek(mls_group_id).cloned() {

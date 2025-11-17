@@ -1005,9 +1005,9 @@ mod tests {
 
         let manager = alice_mdk.media_manager(group_id.clone());
 
-        // Test 1: Valid metadata should succeed (use PDF to avoid image metadata issues)
+        // Test 1: Valid metadata should succeed (use text/plain to match test data)
         let valid_media = b"Valid media content";
-        let result = manager.encrypt_for_upload(valid_media, "application/pdf", "document.pdf");
+        let result = manager.encrypt_for_upload(valid_media, "text/plain", "document.txt");
         assert!(result.is_ok(), "Valid metadata should succeed");
 
         // Test 2: Invalid MIME type should fail
@@ -1015,13 +1015,13 @@ mod tests {
         assert!(result.is_err(), "Invalid MIME type should fail");
 
         // Test 3: Empty filename should fail
-        let result = manager.encrypt_for_upload(valid_media, "application/pdf", "");
+        let result = manager.encrypt_for_upload(valid_media, "text/plain", "");
         assert!(result.is_err(), "Empty filename should fail");
 
         // Test 4: Extremely long filename should fail
         use crate::encrypted_media::MAX_FILENAME_LENGTH;
         let long_filename = "a".repeat(MAX_FILENAME_LENGTH + 1);
-        let result = manager.encrypt_for_upload(valid_media, "application/pdf", &long_filename);
+        let result = manager.encrypt_for_upload(valid_media, "text/plain", &long_filename);
         assert!(result.is_err(), "Overly long filename should fail");
 
         // Test 5: File too large should fail
@@ -1072,7 +1072,7 @@ mod tests {
         let manager = alice_mdk.media_manager(group_id.clone());
 
         let upload_result = manager
-            .encrypt_for_upload(test_media, "application/pdf", "document.pdf")
+            .encrypt_for_upload(test_media, "text/plain", "document.txt")
             .expect("Should encrypt media");
 
         // Valid decryption should succeed

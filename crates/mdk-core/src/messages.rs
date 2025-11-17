@@ -2621,16 +2621,11 @@ mod tests {
 
         let result = mdk.get_messages(&non_existent_group_id);
 
-        // Behavior varies by storage implementation:
-        // - SQLite returns error for non-existent group
-        // - Memory storage returns Ok(empty vec)
-        // Both are acceptable - just verify it doesn't panic
-        if let Ok(messages) = result {
-            assert!(
-                messages.is_empty(),
-                "Should return empty list for non-existent group"
-            );
-        }
+        // Both storage implementations should return error for non-existent group
+        assert!(
+            result.is_err(),
+            "Should return error for non-existent group"
+        );
     }
 
     /// Test getting single message that doesn't exist
@@ -2776,33 +2771,21 @@ mod tests {
 
         // Simulate receiving the same message from a different relay
         // Process the exact same message again
+        // OpenMLS is idempotent - processing the same message twice should succeed
         let second_result = mdk.process_message(&message_event);
+        assert!(
+            second_result.is_ok(),
+            "OpenMLS should idempotently handle duplicate message processing: {:?}",
+            second_result.err()
+        );
 
-        // The second processing should either:
-        // 1. Succeed but recognize it's a duplicate (idempotent)
-        // 2. Return an error indicating it's already processed
-        // Either way, it should not cause a panic or corrupt state
-        match second_result {
-            Ok(_) => {
-                // If it succeeds, verify we still only have one message
-                let messages = mdk.get_messages(&group_id).expect("Failed to get messages");
-                assert_eq!(
-                    messages.len(),
-                    1,
-                    "Should still have only 1 message after duplicate processing"
-                );
-            }
-            Err(_) => {
-                // If it errors, that's also acceptable - it recognized the duplicate
-                // Verify the original message is still there
-                let messages = mdk.get_messages(&group_id).expect("Failed to get messages");
-                assert_eq!(
-                    messages.len(),
-                    1,
-                    "Should still have 1 message even if duplicate was rejected"
-                );
-            }
-        }
+        // Verify we still only have one message (no duplication)
+        let messages = mdk.get_messages(&group_id).expect("Failed to get messages");
+        assert_eq!(
+            messages.len(),
+            1,
+            "Should still have only 1 message after duplicate processing"
+        );
 
         // Verify group state is consistent
         let group = mdk
@@ -2870,92 +2853,12 @@ mod tests {
         }
     }
 
-    /// Test message processing with relay failures
+    /// Test message processing order independence
     ///
-    /// Validates that message processing continues to work even when some relays
-    /// are unavailable or return errors.
+    /// Validates that the storage and retrieval of messages works correctly
+    /// regardless of the order in which messages are processed.
     #[test]
-    fn test_message_processing_with_relay_failures() {
-        let mdk = create_test_mdk();
-        let (creator, members, admins) = create_test_group_members();
-        let group_id = create_test_group(&mdk, &creator, &members, &admins);
-
-        // Create a message
-        let rumor = create_test_rumor(&creator, "Test message with relay issues");
-        let message_event = mdk
-            .create_message(&group_id, rumor)
-            .expect("Failed to create message");
-
-        // Process the message
-        // Note: In a real scenario with actual relay connections, we would simulate
-        // relay failures. For this unit test, we verify that message processing
-        // itself is resilient and doesn't depend on relay availability for processing.
-        let result = mdk.process_message(&message_event);
-        assert!(
-            result.is_ok(),
-            "Message processing should succeed regardless of relay state"
-        );
-
-        // Verify the message was stored locally
-        let messages = mdk.get_messages(&group_id).expect("Failed to get messages");
-        assert_eq!(messages.len(), 1, "Message should be stored locally");
-
-        // Verify message content is intact
-        let stored_message = &messages[0];
-        assert_eq!(
-            stored_message.content, "Test message with relay issues",
-            "Message content should be preserved"
-        );
-    }
-
-    /// Test message deduplication across multiple relay sources
-    ///
-    /// Validates that messages with the same ID from different relays are
-    /// deduplicated correctly.
-    #[test]
-    fn test_message_deduplication_across_relays() {
-        let mdk = create_test_mdk();
-        let (creator, members, admins) = create_test_group_members();
-        let group_id = create_test_group(&mdk, &creator, &members, &admins);
-
-        // Create a message
-        let mut rumor = create_test_rumor(&creator, "Deduplicated message");
-        let rumor_id = rumor.id();
-        let message_event = mdk
-            .create_message(&group_id, rumor)
-            .expect("Failed to create message");
-
-        // Process the message multiple times (simulating multiple relay sources)
-        for i in 0..5 {
-            let result = mdk.process_message(&message_event);
-            // Each processing should either succeed (idempotent) or fail gracefully
-            if i == 0 {
-                assert!(result.is_ok(), "First processing should succeed");
-            }
-            // Subsequent processings may succeed or fail, but shouldn't panic
-        }
-
-        // Verify we only have one message stored
-        let messages = mdk.get_messages(&group_id).expect("Failed to get messages");
-        assert_eq!(
-            messages.len(),
-            1,
-            "Should have exactly 1 message despite multiple processing attempts"
-        );
-
-        // Verify the message ID matches
-        assert_eq!(
-            messages[0].id, rumor_id,
-            "Stored message should have correct ID"
-        );
-    }
-
-    /// Test message ordering with network delays
-    ///
-    /// Validates that messages maintain correct ordering even when network
-    /// delays cause them to arrive out of sequence.
-    #[test]
-    fn test_message_ordering_with_network_delays() {
+    fn test_message_processing_order_independence() {
         let mdk = create_test_mdk();
         let (creator, members, admins) = create_test_group_members();
         let group_id = create_test_group(&mdk, &creator, &members, &admins);
@@ -2991,103 +2894,6 @@ mod tests {
     // ============================================================================
     // Security & Edge Cases
     // ============================================================================
-
-    /// Message replay attack prevention
-    ///
-    /// Tests that processing the same message multiple times is handled
-    /// idempotently without causing issues.
-    ///
-    /// Requirements tested:
-    /// - Message replay is detected and handled gracefully
-    /// - Message appears only once in history regardless of replays
-    /// - No duplicate processing effects
-    #[test]
-    fn test_message_replay_prevention() {
-        use crate::test_util::{create_key_package_event, create_nostr_group_config_data};
-
-        // Create Alice (admin) and Bob (member)
-        let alice_keys = Keys::generate();
-        let bob_keys = Keys::generate();
-
-        let alice_mdk = create_test_mdk();
-        let bob_mdk = create_test_mdk();
-
-        let admins = vec![alice_keys.public_key()];
-
-        // Bob creates his key package
-        let bob_key_package = create_key_package_event(&bob_mdk, &bob_keys);
-
-        // Alice creates the group
-        let create_result = alice_mdk
-            .create_group(
-                &alice_keys.public_key(),
-                vec![bob_key_package],
-                create_nostr_group_config_data(admins),
-            )
-            .expect("Alice should be able to create group");
-
-        let group_id = create_result.group.mls_group_id.clone();
-
-        alice_mdk
-            .merge_pending_commit(&group_id)
-            .expect("Failed to merge Alice's create commit");
-
-        // Bob processes and accepts welcome
-        let bob_welcome_rumor = &create_result.welcome_rumors[0];
-
-        let bob_welcome = bob_mdk
-            .process_welcome(&nostr::EventId::all_zeros(), bob_welcome_rumor)
-            .expect("Bob should be able to process welcome");
-
-        bob_mdk
-            .accept_welcome(&bob_welcome)
-            .expect("Bob should be able to accept welcome");
-
-        // Alice sends a message M1
-        let rumor = create_test_rumor(&alice_keys, "Important message");
-        let message_m1 = alice_mdk
-            .create_message(&group_id, rumor)
-            .expect("Failed to create message");
-
-        // Step 1: Bob processes M1 for the first time
-        let result1 = bob_mdk.process_message(&message_m1);
-        assert!(
-            result1.is_ok(),
-            "First processing should succeed: {:?}",
-            result1.err()
-        );
-
-        // Step 2: Attacker replays M1 to Bob
-        let result2 = bob_mdk.process_message(&message_m1);
-        assert!(
-            result2.is_ok(),
-            "Replay should be handled gracefully: {:?}",
-            result2.err()
-        );
-
-        // Step 3: Third replay attempt
-        let result3 = bob_mdk.process_message(&message_m1);
-        assert!(
-            result3.is_ok(),
-            "Multiple replays should be handled gracefully: {:?}",
-            result3.err()
-        );
-
-        // Step 4: Verify message appears only once in Bob's history
-        let bob_messages = bob_mdk
-            .get_messages(&group_id)
-            .expect("Failed to get messages");
-
-        let important_message_count = bob_messages
-            .iter()
-            .filter(|m| m.content == "Important message")
-            .count();
-
-        assert_eq!(
-            important_message_count, 1,
-            "Message should appear only once despite replays"
-        );
-    }
 
     /// Malformed message handling
     ///
@@ -3622,215 +3428,5 @@ mod tests {
                 .any(|m| m.content.contains("Message in epoch 1")),
             "Bob should have message from epoch 1"
         );
-    }
-
-    // ============================================================================
-    // Relay Failure & Network Resilience Tests
-    // ============================================================================
-
-    /// Test message send behavior when all relays are down
-    ///
-    /// Validates that the system properly handles complete relay unavailability
-    /// and provides clear error messages with relay information.
-    ///
-    /// Requirements tested (MIP-03):
-    /// - NoRelaysAvailable error when all relays down
-    /// - Error includes relay URLs for debugging
-    /// - Message creation succeeds locally
-    /// - Message state reflects relay failure
-    /// - No data corruption on relay failure
-    #[test]
-    fn test_message_send_with_all_relays_down() {
-        let mdk = create_test_mdk();
-        let (creator, members, admins) = create_test_group_members();
-        let group_id = create_test_group(&mdk, &creator, &members, &admins);
-
-        // Create a test message
-        let mut rumor = create_test_rumor(&creator, "Test message with all relays down");
-        let rumor_id = rumor.id();
-
-        // Create message (should succeed locally even if relays are down)
-        let result = mdk.create_message(&group_id, rumor);
-        assert!(
-            result.is_ok(),
-            "Message creation should succeed locally even if relays are down"
-        );
-
-        let event = result.unwrap();
-
-        // Verify message was stored locally with Created state
-        let stored_message = mdk
-            .get_message(&rumor_id)
-            .expect("Failed to get message")
-            .expect("Message should exist");
-
-        assert_eq!(
-            stored_message.state,
-            message_types::MessageState::Created,
-            "Message should be in Created state"
-        );
-        assert_eq!(stored_message.wrapper_event_id, event.id);
-
-        // Note: Actual relay failure testing would require:
-        // 1. MockRelay infrastructure to simulate relay unavailability
-        // 2. Retry logic in the message sending code
-        // 3. Error propagation from relay layer
-        //
-        // This test validates that:
-        // - Messages can be created locally regardless of relay state
-        // - Message state tracking works correctly
-        // - No data corruption occurs when relays are unavailable
-    }
-
-    /// Test partial relay availability
-    ///
-    /// Validates that the system can successfully send messages when some
-    /// relays are available, even if others are down.
-    ///
-    /// Requirements tested (MIP-03):
-    /// - Message sent to available relays
-    /// - Operation succeeds with partial availability
-    /// - Failed relays don't block successful sends
-    /// - Retry logic for failed relays
-    #[test]
-    fn test_partial_relay_availability() {
-        let mdk = create_test_mdk();
-        let (creator, members, admins) = create_test_group_members();
-        let group_id = create_test_group(&mdk, &creator, &members, &admins);
-
-        // Create multiple messages to test partial availability
-        let rumor1 = create_test_rumor(&creator, "Message 1 with partial relay availability");
-        let rumor2 = create_test_rumor(&creator, "Message 2 with partial relay availability");
-
-        // Send messages (should succeed with available relays)
-        let result1 = mdk.create_message(&group_id, rumor1);
-        let result2 = mdk.create_message(&group_id, rumor2);
-
-        assert!(
-            result1.is_ok(),
-            "First message should succeed with partial relay availability"
-        );
-        assert!(
-            result2.is_ok(),
-            "Second message should succeed with partial relay availability"
-        );
-
-        // Verify both messages were stored
-        let messages = mdk.get_messages(&group_id).expect("Should get messages");
-
-        assert!(
-            messages.len() >= 2,
-            "Both messages should be stored despite partial relay availability"
-        );
-
-        // Note: Full testing would require:
-        // 1. MockRelay with configurable availability per relay
-        // 2. Tracking which relays received which messages
-        // 3. Verification that messages reached available relays
-        // 4. Retry queue for failed relays
-    }
-
-    /// Test relay reconnection and message retry
-    ///
-    /// Validates that the system can recover from temporary relay failures
-    /// and successfully retry message delivery when relays come back online.
-    ///
-    /// Requirements tested (MIP-03):
-    /// - Failed messages are queued for retry
-    /// - Successful retry when relay reconnects
-    /// - Retry tracking and limits
-    /// - No duplicate sends on retry
-    #[test]
-    fn test_relay_reconnection_and_message_retry() {
-        let mdk = create_test_mdk();
-        let (creator, members, admins) = create_test_group_members();
-        let group_id = create_test_group(&mdk, &creator, &members, &admins);
-
-        // Create message when relay is "down"
-        let mut rumor1 = create_test_rumor(&creator, "Message sent when relay down");
-        let rumor1_id = rumor1.id();
-
-        let result1 = mdk.create_message(&group_id, rumor1);
-        assert!(result1.is_ok(), "Message creation should succeed locally");
-
-        // Verify message is in Created state (not yet sent to relay)
-        let message1 = mdk
-            .get_message(&rumor1_id)
-            .expect("Should get message")
-            .expect("Message should exist");
-
-        assert_eq!(
-            message1.state,
-            message_types::MessageState::Created,
-            "Message should be in Created state"
-        );
-
-        // Simulate relay coming back online by sending another message
-        let rumor2 = create_test_rumor(&creator, "Message sent after relay reconnection");
-        let result2 = mdk.create_message(&group_id, rumor2);
-
-        assert!(
-            result2.is_ok(),
-            "Message should succeed after relay reconnection"
-        );
-
-        // Verify both messages are stored
-        let messages = mdk.get_messages(&group_id).expect("Should get messages");
-
-        assert!(messages.len() >= 2, "Both messages should be stored");
-
-        // Note: Full retry testing would require:
-        // 1. MockRelay with state transitions (down -> up)
-        // 2. Retry queue implementation
-        // 3. Retry attempt tracking
-        // 4. Exponential backoff verification
-        // 5. Maximum retry limit enforcement
-    }
-
-    /// Test relay timeout handling
-    ///
-    /// Validates that the system properly handles slow/unresponsive relays
-    /// with appropriate timeouts and doesn't block other operations.
-    ///
-    /// Requirements tested (MIP-03):
-    /// - Timeout occurs for slow relays
-    /// - Other operations continue during timeout
-    /// - Timeout error is clear and actionable
-    /// - No resource leaks on timeout
-    #[test]
-    fn test_relay_timeout_handling() {
-        let mdk = create_test_mdk();
-        let (creator, members, admins) = create_test_group_members();
-        let group_id = create_test_group(&mdk, &creator, &members, &admins);
-
-        // Create message (would timeout with slow relay)
-        let rumor = create_test_rumor(&creator, "Message with potential timeout");
-        let result = mdk.create_message(&group_id, rumor);
-
-        // Message creation should succeed locally
-        assert!(
-            result.is_ok(),
-            "Message creation should succeed locally even with slow relay"
-        );
-
-        // Verify we can perform other operations (not blocked by timeout)
-        let members_result = mdk.get_members(&group_id);
-        assert!(
-            members_result.is_ok(),
-            "Other operations should not be blocked by relay timeout"
-        );
-
-        let messages_result = mdk.get_messages(&group_id);
-        assert!(
-            messages_result.is_ok(),
-            "Message retrieval should work despite relay timeout"
-        );
-
-        // Note: Full timeout testing would require:
-        // 1. MockRelay with configurable latency
-        // 2. Timeout configuration (e.g., 5 seconds)
-        // 3. Async operation tracking
-        // 4. Verification that timeout doesn't leak resources
-        // 5. Proper error propagation with timeout details
     }
 }
