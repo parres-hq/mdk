@@ -353,9 +353,7 @@ jobs:
       run: |
         LLVM_BIN="${NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin"
         export AR_aarch64_linux_android="${LLVM_BIN}/llvm-ar"
-        export AR_aarch64-linux-android="${LLVM_BIN}/llvm-ar"
         export AR_armv7_linux_androideabi="${LLVM_BIN}/llvm-ar"
-        export AR_armv7-linux-androideabi="${LLVM_BIN}/llvm-ar"
         rustup target add aarch64-linux-android
         rustup target add armv7-linux-androideabi
         just _build-uniffi-android aarch64-linux-android aarch64-linux-android21-clang
