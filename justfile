@@ -104,7 +104,7 @@ _build-uniffi-android TARGET CLANG_PREFIX:
 
     cargo build --lib -p mdk-uniffi --target {{TARGET}} --release
 
-uniffi-bindgen: _build-uniffi (gen-binding "python") (gen-binding-kotlin) (gen-binding "ruby")
+uniffi-bindgen: _build-uniffi (gen-binding "python") (gen-binding-kotlin) (gen-binding-ruby)
     @if [ "{{os()}}" = "macos" ]; then just gen-binding-swift; fi
 
 
@@ -140,5 +140,18 @@ gen-binding-swift: (gen-binding "swift")
         -output ios-artifacts/mdk_uniffi.xcframework
     @echo "✓ Swift bindings and xcframework ready"
 
-test-swift-bindings:
-    @bash scripts/run-swift-binding-test.sh
+gen-binding-ruby: (gen-binding "ruby")
+    #!/usr/bin/env bash
+    set -euo pipefail
+    RUBY_BINDING="$(pwd)/crates/mdk-uniffi/bindings/ruby/mdk_uniffi.rb"
+    if [ ! -f "$RUBY_BINDING" ]; then
+        echo "Ruby binding not found at $RUBY_BINDING" >&2
+        exit 1
+    fi
+    sed -i '/^module MdkUniffiError$/,/^end$/c\
+    module MdkUniffiError\
+      class Storage < StandardError; end\
+      class Mdk < StandardError; end\
+      class InvalidInput < StandardError; end\
+    end' "$RUBY_BINDING"
+    echo "✓ Ruby binding patched (MdkUniffiError classes)"

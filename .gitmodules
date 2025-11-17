@@ -5,3 +5,7 @@
 [submodule "crates/mdk-uniffi/examples/kotlin"]
 	path = crates/mdk-uniffi/examples/kotlin
 	url = https://github.com/dannym-arx/mdk-kotlin-example.git
+
+[submodule "crates/mdk-uniffi/examples/ruby"]
+	path = crates/mdk-uniffi/examples/ruby
+	url = https://github.com/dannym-arx/mdk-ruby-example.git
