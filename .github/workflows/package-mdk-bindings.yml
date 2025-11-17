@@ -378,7 +378,7 @@ jobs:
         # Copy pom.xml
         cp crates/mdk-uniffi/src/kotlin/pom.xml kotlin-package/pom.xml
         sed 's/{{lang}}/Kotlin/g' crates/mdk-uniffi/src/README.md > kotlin-package/README.md
-        cp crates/mdk-uniffi/src/kotlin/docs.md kotlin-package/docs.md
+        rsync -av crates/mdk-uniffi/src/kotlin/ kotlin-package
         
         echo "✓ Kotlin package assembled"
 
