@@ -2029,8 +2029,4 @@ mod tests {
         // protocol level, but the current test validates the extension is present and basic
         // lifecycle works correctly.
     }
-
-    // ============================================================================
-    // KeyPackage Lifecycle Tests
-    // ============================================================================
 }
