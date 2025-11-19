@@ -244,6 +244,73 @@ impl Default for RaceConditionSimulator {
     }
 }
 
+// ============================================================================
+// Test Infrastructure (MockRelay, CorruptionSimulator, TimeController)
+// ============================================================================
+
+/// Helper to create a group and simulate restart
+///
+/// This function creates a group, then drops the MDK instance and creates
+/// a new one with the same storage to simulate an application restart.
+pub fn create_group_and_restart<S>(storage: S) -> (MDK<S>, GroupId, Keys, Vec<Keys>)
+where
+    S: MdkStorageProvider + Clone,
+{
+    // Create initial MDK and group
+    let mdk = MDK::new(storage.clone());
+    let (creator, members, admins) = create_test_group_members();
+    let group_id = create_test_group(&mdk, &creator, &members, &admins);
+
+    // Drop the MDK to simulate shutdown
+    drop(mdk);
+
+    // Create new MDK with same storage (simulating restart)
+    let new_mdk = MDK::new(storage);
+
+    (new_mdk, group_id, creator, members)
+}
+
+/// Assert that two group states are equal
+///
+/// This helper provides detailed error messages when group states don't match,
+/// making it easier to debug test failures.
+pub fn assert_group_state_equal(
+    group1: &mdk_storage_traits::groups::types::Group,
+    group2: &mdk_storage_traits::groups::types::Group,
+    message: &str,
+) {
+    assert_eq!(
+        group1.mls_group_id, group2.mls_group_id,
+        "{}: Group IDs don't match",
+        message
+    );
+    assert_eq!(
+        group1.nostr_group_id, group2.nostr_group_id,
+        "{}: Nostr Group IDs don't match",
+        message
+    );
+    assert_eq!(
+        group1.name, group2.name,
+        "{}: Group names don't match",
+        message
+    );
+    assert_eq!(
+        group1.description, group2.description,
+        "{}: Group descriptions don't match",
+        message
+    );
+    assert_eq!(
+        group1.epoch, group2.epoch,
+        "{}: Epochs don't match",
+        message
+    );
+    assert_eq!(
+        group1.admin_pubkeys, group2.admin_pubkeys,
+        "{}: Admin lists don't match",
+        message
+    );
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
