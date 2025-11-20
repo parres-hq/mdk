@@ -7,3 +7,7 @@
 -keep class * extends com.sun.jna.** { *; }
 -keep class org.parres.mdk.** { *; }
 
+# Ensure JNA native libraries are kept if minified
+-keepresourcexmlelements **
+-keepresources string/**
+
