@@ -8,6 +8,11 @@
 
 use mdk_core::{
     Error as MdkError, MDK,
+    extension::group_image::{
+        decrypt_group_image as core_decrypt_group_image,
+        derive_upload_keypair as core_derive_upload_keypair,
+        prepare_group_image_for_upload as core_prepare_group_image_for_upload,
+    },
     groups::{NostrGroupConfigData, NostrGroupDataUpdate},
     messages::MessageProcessingResult,
 };
@@ -187,6 +192,12 @@ impl Mdk {
             .into_iter()
             .map(Welcome::from)
             .collect())
+    }
+
+    /// Get a welcome by event ID
+    pub fn get_welcome(&self, event_id: String) -> Result<Option<Welcome>, MdkUniffiError> {
+        let event_id = parse_event_id(&event_id)?;
+        Ok(self.lock().get_welcome(&event_id)?.map(Welcome::from))
     }
 
     /// Process a welcome message
@@ -373,6 +384,13 @@ impl Mdk {
         Ok(())
     }
 
+    /// Sync group metadata from MLS
+    pub fn sync_group_metadata_from_mls(&self, mls_group_id: String) -> Result<(), MdkUniffiError> {
+        let group_id = parse_group_id(&mls_group_id)?;
+        self.lock().sync_group_metadata_from_mls(&group_id)?;
+        Ok(())
+    }
+
     /// Create a message in a group
     pub fn create_message(
         &self,
@@ -480,51 +498,39 @@ impl Mdk {
         }
 
         if let Some(image_hash) = update.image_hash {
-            group_update = group_update.image_hash(
-                image_hash
-                    .map(|bytes| {
-                        let mut arr = [0u8; 32];
-                        if bytes.len() == 32 {
-                            arr.copy_from_slice(&bytes);
-                            Some(arr)
-                        } else {
-                            None
-                        }
-                    })
-                    .flatten(),
-            );
+            group_update = group_update.image_hash(image_hash.and_then(|bytes| {
+                let mut arr = [0u8; 32];
+                if bytes.len() == 32 {
+                    arr.copy_from_slice(&bytes);
+                    Some(arr)
+                } else {
+                    None
+                }
+            }));
         }
 
         if let Some(image_key) = update.image_key {
-            group_update = group_update.image_key(
-                image_key
-                    .map(|bytes| {
-                        let mut arr = [0u8; 32];
-                        if bytes.len() == 32 {
-                            arr.copy_from_slice(&bytes);
-                            Some(arr)
-                        } else {
-                            None
-                        }
-                    })
-                    .flatten(),
-            );
+            group_update = group_update.image_key(image_key.and_then(|bytes| {
+                let mut arr = [0u8; 32];
+                if bytes.len() == 32 {
+                    arr.copy_from_slice(&bytes);
+                    Some(arr)
+                } else {
+                    None
+                }
+            }));
         }
 
         if let Some(image_nonce) = update.image_nonce {
-            group_update = group_update.image_nonce(
-                image_nonce
-                    .map(|bytes| {
-                        let mut arr = [0u8; 12];
-                        if bytes.len() == 12 {
-                            arr.copy_from_slice(&bytes);
-                            Some(arr)
-                        } else {
-                            None
-                        }
-                    })
-                    .flatten(),
-            );
+            group_update = group_update.image_nonce(image_nonce.and_then(|bytes| {
+                let mut arr = [0u8; 12];
+                if bytes.len() == 12 {
+                    arr.copy_from_slice(&bytes);
+                    Some(arr)
+                } else {
+                    None
+                }
+            }));
         }
 
         if let Some(relays) = update.relays {
@@ -770,10 +776,14 @@ pub struct Message {
     pub nostr_group_id: String,
     /// Event ID (hex-encoded)
     pub event_id: String,
+    /// Sender public key (hex-encoded)
+    pub sender_pubkey: String,
     /// JSON representation of the event
     pub event_json: String,
     /// Timestamp when message was processed (Unix timestamp)
     pub processed_at: u64,
+    /// Message kind
+    pub kind: u16,
     /// Message state (e.g., "processed", "pending")
     pub state: String,
 }
@@ -796,8 +806,10 @@ impl From<message_types::Message> for Message {
             mls_group_id: hex::encode(m.mls_group_id.as_slice()),
             nostr_group_id,
             event_id: m.wrapper_event_id.to_hex(),
+            sender_pubkey: m.pubkey.to_hex(),
             event_json,
             processed_at: m.created_at.as_u64(),
+            kind: m.kind.as_u16(),
             state: m.state.as_str().to_string(),
         }
     }
@@ -864,4 +876,96 @@ impl From<welcome_types::Welcome> for Welcome {
             wrapper_event_id: w.wrapper_event_id.to_hex(),
         }
     }
+}
+
+/// Prepared group image data ready for upload to Blossom
+#[derive(uniffi::Record)]
+pub struct GroupImageUpload {
+    /// Encrypted image data (ready to upload to Blossom)
+    pub encrypted_data: Vec<u8>,
+    /// SHA256 hash of encrypted data (verify against Blossom response)
+    pub encrypted_hash: Vec<u8>,
+    /// Encryption key (store in extension)
+    pub image_key: Vec<u8>,
+    /// Encryption nonce (store in extension)
+    pub image_nonce: Vec<u8>,
+    /// Derived keypair secret for Blossom authentication (hex encoded)
+    pub upload_secret_key: String,
+    /// Original image size before encryption
+    pub original_size: u64,
+    /// Size after encryption
+    pub encrypted_size: u64,
+    /// Validated and canonical MIME type
+    pub mime_type: String,
+    /// Image dimensions (width, height) if available
+    pub dimensions: Option<ImageDimensions>,
+    /// Blurhash for preview if generated
+    pub blurhash: Option<String>,
+}
+
+/// Image dimensions
+#[derive(uniffi::Record)]
+pub struct ImageDimensions {
+    /// Width in pixels
+    pub width: u32,
+    /// Height in pixels
+    pub height: u32,
+}
+
+/// Prepare group image for upload
+#[uniffi::export]
+pub fn prepare_group_image_for_upload(
+    image_data: Vec<u8>,
+    mime_type: String,
+) -> Result<GroupImageUpload, MdkUniffiError> {
+    let prepared = core_prepare_group_image_for_upload(&image_data, &mime_type)
+        .map_err(|e| MdkUniffiError::Mdk(e.to_string()))?;
+
+    Ok(GroupImageUpload {
+        encrypted_data: prepared.encrypted_data,
+        encrypted_hash: prepared.encrypted_hash.to_vec(),
+        image_key: prepared.image_key.to_vec(),
+        image_nonce: prepared.image_nonce.to_vec(),
+        upload_secret_key: prepared.upload_keypair.secret_key().to_secret_hex(),
+        original_size: prepared.original_size as u64,
+        encrypted_size: prepared.encrypted_size as u64,
+        mime_type: prepared.mime_type,
+        dimensions: prepared.dimensions.map(|(w, h)| ImageDimensions {
+            width: w,
+            height: h,
+        }),
+        blurhash: prepared.blurhash,
+    })
+}
+
+/// Decrypt group image
+#[uniffi::export]
+pub fn decrypt_group_image(
+    encrypted_data: Vec<u8>,
+    image_key: Vec<u8>,
+    image_nonce: Vec<u8>,
+) -> Result<Vec<u8>, MdkUniffiError> {
+    let key_arr: [u8; 32] = image_key
+        .try_into()
+        .map_err(|_| MdkUniffiError::InvalidInput("Image key must be 32 bytes".to_string()))?;
+
+    let nonce_arr: [u8; 12] = image_nonce
+        .try_into()
+        .map_err(|_| MdkUniffiError::InvalidInput("Image nonce must be 12 bytes".to_string()))?;
+
+    core_decrypt_group_image(&encrypted_data, &key_arr, &nonce_arr)
+        .map_err(|e| MdkUniffiError::Mdk(e.to_string()))
+}
+
+/// Derive upload keypair for group image
+#[uniffi::export]
+pub fn derive_upload_keypair(image_key: Vec<u8>) -> Result<String, MdkUniffiError> {
+    let key_arr: [u8; 32] = image_key
+        .try_into()
+        .map_err(|_| MdkUniffiError::InvalidInput("Image key must be 32 bytes".to_string()))?;
+
+    let keys =
+        core_derive_upload_keypair(&key_arr).map_err(|e| MdkUniffiError::Mdk(e.to_string()))?;
+
+    Ok(keys.secret_key().to_secret_hex())
 }
