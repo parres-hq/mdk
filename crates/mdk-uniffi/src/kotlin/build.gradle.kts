@@ -54,6 +54,34 @@ dependencies {
     androidTestImplementation("androidx.test.espresso:espresso-core:3.5.1")
 }
 
+val extractJna = tasks.register("extractJna") {
+    val jnaJar = configurations.getByName("runtimeClasspath").files.first { it.name.contains("jna") }
+
+    val archMap = mapOf(
+        "android-aarch64" to "arm64-v8a",
+        "android-arm"     to "armeabi-v7a"
+    )
+
+    doLast {
+        archMap.forEach { (jnaArch, androidArch) ->
+            copy {
+                from(zipTree(jnaJar))
+                into("src/main/jniLibs/$androidArch")
+                include("com/sun/jna/$jnaArch/libjnidispatch.so")
+                eachFile { 
+                    path = "libjnidispatch.so" 
+                }
+                includeEmptyDirs = false
+            }
+        }
+    }
+}
+
+tasks.named("preBuild") {
+    dependsOn(extractJna)
+}
+
+
 publishing {
     publications {
         register<MavenPublication>("release") {
