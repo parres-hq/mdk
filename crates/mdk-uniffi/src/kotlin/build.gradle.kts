@@ -29,6 +29,12 @@ android {
         jvmTarget = "1.8"
     }
 
+    packaging {
+        jniLibs {
+            pickFirst("**/libjnidispatch.so")
+        }
+    }
+
     publishing {
         singleVariant("release") {
             withSourcesJar()
