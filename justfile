@@ -104,7 +104,7 @@ _build-uniffi-android TARGET CLANG_PREFIX:
 
     cargo build --release --lib -p mdk-uniffi --target {{TARGET}}
 
-uniffi-bindgen: _build-uniffi (gen-binding "python") gen-binding-kotlin gen-binding-ruby
+uniffi-bindgen: (gen-binding "python") gen-binding-kotlin gen-binding-ruby
     @if [ "{{os()}}" = "macos" ]; then just gen-binding-swift; fi
 
 
@@ -116,7 +116,7 @@ lib_filename := if os() == "windows" {
     "libmdk_uniffi.so"
 }
 
-gen-binding lang:
+gen-binding lang: _build-uniffi
     @echo "Generating {{lang}} bindings..."
     cd crates/mdk-uniffi && cargo run --bin uniffi-bindgen generate \
         -l {{lang}} \
