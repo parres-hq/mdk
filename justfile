@@ -73,13 +73,15 @@ precommit:
 check-full:
     @just check
 
-_build-uniffi:
+_build-uniffi needs_android="false":
     #!/usr/bin/env bash
     set -euo pipefail
     echo "Building mdk-uniffi library..."
     cargo build --release --lib -p mdk-uniffi
-    just _build-uniffi-android aarch64-linux-android aarch64-linux-android21-clang
-    just _build-uniffi-android armv7-linux-androideabi armv7a-linux-androideabi21-clang
+    if [ "{{needs_android}}" = "true" ]; then
+        just _build-uniffi-android aarch64-linux-android aarch64-linux-android21-clang
+        just _build-uniffi-android armv7-linux-androideabi armv7a-linux-androideabi21-clang
+    fi
     if [ "{{os()}}" = "macos" ]; then
         just _build-uniffi-ios aarch64-apple-ios
         just _build-uniffi-ios aarch64-apple-ios-sim
@@ -125,7 +127,7 @@ gen-binding lang: _build-uniffi
     cp target/release/{{lib_filename}} crates/mdk-uniffi/bindings/{{lang}}/{{lib_filename}}
     @echo "✓ Bindings generated in crates/mdk-uniffi/bindings/{{lang}}/"
 
-gen-binding-kotlin: (gen-binding "kotlin")
+gen-binding-kotlin: (_build-uniffi "true") (gen-binding "kotlin")
     #!/usr/bin/env bash
     set -euo pipefail
     BINDINGS_DIR="crates/mdk-uniffi/bindings/kotlin"
