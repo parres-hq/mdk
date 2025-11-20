@@ -77,7 +77,7 @@ _build-uniffi:
     #!/usr/bin/env bash
     set -euo pipefail
     echo "Building mdk-uniffi library..."
-    cargo build --lib -p mdk-uniffi
+    cargo build --release --lib -p mdk-uniffi
     just _build-uniffi-android aarch64-linux-android aarch64-linux-android21-clang
     just _build-uniffi-android armv7-linux-androideabi armv7a-linux-androideabi21-clang
     if [ "{{os()}}" = "macos" ]; then
@@ -86,7 +86,7 @@ _build-uniffi:
     fi
 
 _build-uniffi-ios TARGET:
-    cargo build --lib -p mdk-uniffi --target {{TARGET}} --release
+    cargo build --release --lib -p mdk-uniffi --target {{TARGET}}
 
 _build-uniffi-android TARGET CLANG_PREFIX:
     #!/usr/bin/env bash
@@ -102,9 +102,9 @@ _build-uniffi-android TARGET CLANG_PREFIX:
     export AR_${TARGET_UNDER}="${LLVM_BIN}/llvm-ar"
     export CARGO_TARGET_${TARGET_UPPER}_LINKER="${LLVM_BIN}/{{CLANG_PREFIX}}"
 
-    cargo build --lib -p mdk-uniffi --target {{TARGET}} --release
+    cargo build --release --lib -p mdk-uniffi --target {{TARGET}}
 
-uniffi-bindgen: _build-uniffi (gen-binding "python") (gen-binding-kotlin) (gen-binding-ruby)
+uniffi-bindgen: _build-uniffi (gen-binding "python") gen-binding-kotlin gen-binding-ruby
     @if [ "{{os()}}" = "macos" ]; then just gen-binding-swift; fi
 
 
@@ -120,15 +120,36 @@ gen-binding lang:
     @echo "Generating {{lang}} bindings..."
     cd crates/mdk-uniffi && cargo run --bin uniffi-bindgen generate \
         -l {{lang}} \
-        --library ../../target/debug/{{lib_filename}} \
+        --library ../../target/release/{{lib_filename}} \
         --out-dir bindings/{{lang}}
-    cp target/debug/{{lib_filename}} crates/mdk-uniffi/bindings/{{lang}}/{{lib_filename}}
+    cp target/release/{{lib_filename}} crates/mdk-uniffi/bindings/{{lang}}/{{lib_filename}}
     @echo "✓ Bindings generated in crates/mdk-uniffi/bindings/{{lang}}/"
 
 gen-binding-kotlin: (gen-binding "kotlin")
-    cp target/aarch64-linux-android/release/libmdk_uniffi.so crates/mdk-uniffi/bindings/kotlin/libmdk_uniffi.arm64-v8a.so
-    cp target/armv7-linux-androideabi/release/libmdk_uniffi.so crates/mdk-uniffi/bindings/kotlin/libmdk_uniffi.armeabi-v7a.so
-    @echo "✓ Android libs copied"
+    #!/usr/bin/env bash
+    set -euo pipefail
+    BINDINGS_DIR="crates/mdk-uniffi/bindings/kotlin"
+    PROJECT_DIR="crates/mdk-uniffi/src/kotlin"
+    
+    sed -i 's/package uniffi.mdk_uniffi/package org.parres.mdk/g' "$BINDINGS_DIR/uniffi/mdk_uniffi/mdk_uniffi.kt"
+    
+    mkdir -pv "$PROJECT_DIR/src/main/kotlin/org/parres/mdk"
+    mkdir -pv "$PROJECT_DIR/src/main/jniLibs/arm64-v8a"
+    mkdir -pv "$PROJECT_DIR/src/main/jniLibs/armeabi-v7a"
+    
+    mv "$BINDINGS_DIR/uniffi/mdk_uniffi/mdk_uniffi.kt" "$PROJECT_DIR/src/main/kotlin/org/parres/mdk/mdk.kt"
+    
+    rm -rf "$BINDINGS_DIR/uniffi"
+    
+    cp target/aarch64-linux-android/release/libmdk_uniffi.so "$PROJECT_DIR/src/main/jniLibs/arm64-v8a/libmdk_uniffi.so"
+    cp target/armv7-linux-androideabi/release/libmdk_uniffi.so "$PROJECT_DIR/src/main/jniLibs/armeabi-v7a/libmdk_uniffi.so"
+    rm -f "$BINDINGS_DIR/libmdk_uniffi.so"
+    echo "✓ Kotlin bindings generated and moved to Android project"
+
+build-android-lib: gen-binding-kotlin
+    @echo "Building Android AAR..."
+    cd crates/mdk-uniffi/src/kotlin && ./gradlew build
+    @echo "✓ Android library built"
 
 gen-binding-swift: (gen-binding "swift")
     @echo "Creating iOS xcframework..."

@@ -1,7 +1,7 @@
 > [!NOTE]  
 > This is a generic documentation, to read {{lang}} specific docs [click here](docs.md).
 
-# MDK Bindings
+# MDK Bindings for {{lang}}
 
 Language bindings for the *Marmot Development Kit* - bringing decentralized, encrypted group messaging to your favorite language. 
 

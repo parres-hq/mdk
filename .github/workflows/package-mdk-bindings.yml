@@ -338,6 +338,15 @@ jobs:
     - name: Install just
       uses: extractions/setup-just@v2
 
+    - name: Setup Java
+      uses: actions/setup-java@v4
+      with:
+        distribution: 'temurin'
+        java-version: '17'
+
+    - name: Setup Android SDK
+      uses: android-actions/setup-android@v3
+
     - name: Setup Android NDK
       id: setup-ndk
       uses: nttld/setup-ndk@v1
@@ -346,6 +355,7 @@ jobs:
         add-to-path: false
         link-to-sdk: true
         local-cache: true
+
     - name: Build Android targets
       env: 
         ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
@@ -357,27 +367,25 @@ jobs:
         just _build-uniffi-android armv7-linux-androideabi armv7a-linux-androideabi21-clang
 
     - name: Build host library (debug for bindgen)
-      run: cargo build --lib -p mdk-uniffi
+      run: cargo build --lib -p mdk-uniffi --release
 
     - name: Generate Kotlin bindings
-      run: just gen-binding "kotlin"
+      run: just gen-binding-kotlin
 
-    - name: Copy Android libraries
-      shell: bash
+    - name: Configure Android SDK
       run: |
-        mkdir -p kotlin-package/src/main/jniLibs/{arm64-v8a,armeabi-v7a}
-        cp target/aarch64-linux-android/release/libmdk_uniffi.so kotlin-package/src/main/jniLibs/arm64-v8a/libmdk_uniffi.so
-        cp target/armv7-linux-androideabi/release/libmdk_uniffi.so kotlin-package/src/main/jniLibs/armeabi-v7a/libmdk_uniffi.so
+        yes | sdkmanager --licenses
+        sdkmanager "platforms;android-34" "build-tools;34.0.0"
 
-    - name: Assemble Kotlin package
-      shell: bash
+    - name: Verify Gradle Build
+      env:
+        ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+        NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
       run: |
-        mkdir -p kotlin-package/src/main/kotlin/uniffi/mdk_uniffi
-        cp crates/mdk-uniffi/bindings/kotlin/uniffi/mdk_uniffi/mdk_uniffi.kt kotlin-package/src/main/kotlin/uniffi/mdk_uniffi/mdk_uniffi.kt
-        sed 's/{{lang}}/Kotlin/g' crates/mdk-uniffi/src/README.md > kotlin-package/README.md
-        rsync -av crates/mdk-uniffi/src/kotlin/ kotlin-package
-        
-        echo "✓ Kotlin package assembled"
+        cd crates/mdk-uniffi/src/kotlin
+        echo "sdk.dir=$ANDROID_HOME" > local.properties
+        chmod +x gradlew
+        ./gradlew build
 
     - name: Checkout Kotlin package repo
       uses: actions/checkout@v4
@@ -395,10 +403,15 @@ jobs:
     - name: Copy Kotlin package to repo
       shell: bash
       run: |
-        # Copy package contents
-        cp -R kotlin-package/* kotlin-package-repo/
+        # Clean existing repo content (except .git)
+        find kotlin-package-repo -mindepth 1 -maxdepth 1 ! -name '.git' -exec rm -rf {} +
+        
+        # Copy Android project content
+        # Exclude build artifacts to keep repo clean
+        rsync -av --exclude='build' --exclude='.gradle' --exclude='local.properties' crates/mdk-uniffi/src/kotlin/ kotlin-package-repo/
+        
         cd kotlin-package-repo
-        git add . -f
+        git add -A
 
     - name: Commit and push
       shell: bash

@@ -1,20 +1,32 @@
 # MDK Kotlin/Android Bindings Documentation
 
+## Building the AAR
+
+1. Ensure the native libraries produced by `just _build-uniffi-android …` are copied into `src/main/jniLibs/<abi>/libmdk_uniffi.so`.
+   (The `just gen-binding-kotlin` command handles this for you).
+2. From `crates/mdk-uniffi/src/kotlin` run:
+
+```bash
+./gradlew build
+```
+
+The resulting AAR can be found in `build/outputs/aar/mdk-release.aar` (assuming you ran a release build).
+
+## Publishing
+
+To publish to a local Maven repository (useful for testing integration):
+
+```bash
+./gradlew publishReleasePublicationToMavenLocal
+```
+
 ## Installation
 
-Add to your `build.gradle.kts`:
+Once published (e.g. via JitPack or local maven) reference it in your Android project:
 
 ```kotlin
 dependencies {
     implementation("org.parres:mdk:0.5.2")
-}
-```
-
-Or if using the package directly:
-
-```kotlin
-dependencies {
-    implementation(files("path/to/mdk-package"))
 }
 ```
 
@@ -23,7 +35,7 @@ dependencies {
 ### Import and Initialize
 
 ```kotlin
-import uniffi.mdk_uniffi.*
+import org.parres.mdk.*
 
 // Create an MDK instance with a SQLite database path
 val dbPath = context.filesDir.resolve("mdk.db").absolutePath
@@ -45,6 +57,42 @@ val result = mdk.createKeyPackageForEvent(
 // result.tags contains Nostr event tags (List<List<String>>)
 // Publish as a Nostr event (kind 443) to your relays
 ```
+
+#### Build and Publish a Kind 443 Event
+
+`KeyPackageResult` already contains the payload (`keyPackage`) and all tags that
+need to go on the Nostr event. You only need to wrap it in your preferred Nostr
+event type, sign it, and push it to the relays you want to advertise on:
+
+```kotlin
+data class UnsignedEvent(
+    val pubkey: String,
+    val created_at: Long,
+    val kind: Int,
+    val tags: List<List<String>>,
+    val content: String
+)
+
+val keyPackageResult = mdk.createKeyPackageForEvent(
+    publicKey = myPublicKey,
+    relays = listOf("wss://relay.example.com")
+)
+
+val unsigned = UnsignedEvent(
+    pubkey = myPublicKey,
+    created_at = System.currentTimeMillis() / 1000,
+    kind = 443,
+    tags = keyPackageResult.tags,
+    content = keyPackageResult.keyPackage
+)
+
+val signedEventJson = nostrSigner.signAndSerialize(unsigned)
+relays.forEach { relay -> nostrClient.publish(relay, signedEventJson) }
+```
+
+Use whatever signer/client you already have; the key point is that the MDK
+gives you the correct content and tags for the key package, which you then
+embed in a standard Nostr event.
 
 ### Parse Key Packages
 
@@ -317,6 +365,7 @@ data class Welcome(
     val groupName: String,
     val groupDescription: String,
     val senderPublicKey: String    // Hex-encoded
+    val createdAt: ULong
 )
 ```
 
@@ -350,6 +399,7 @@ Place the `.so` files in your `src/main/jniLibs/` directory structure, or use th
 
 ```kotlin
 import kotlinx.coroutines.*
+import org.parres.mdk.*
 
 class MdkManager(private val context: Context) {
     private val mdk = newMdk(context.filesDir.resolve("mdk.db").absolutePath)
@@ -375,7 +425,7 @@ class MdkManager(private val context: Context) {
 ## Example: Complete Workflow
 
 ```kotlin
-import uniffi.mdk_uniffi.*
+import org.parres.mdk.*
 
 // 1. Initialize
 val dbPath = "/path/to/mdk.db"
@@ -422,6 +472,7 @@ import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import org.parres.mdk.*
 
 class GroupViewModel(private val mdk: MdkInterface) : ViewModel() {
     private val _groups = MutableStateFlow<List<Group>>(emptyList())
@@ -458,4 +509,3 @@ class GroupViewModel(private val mdk: MdkInterface) : ViewModel() {
     }
 }
 ```
-
