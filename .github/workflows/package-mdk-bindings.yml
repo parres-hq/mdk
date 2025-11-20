@@ -41,7 +41,7 @@ jobs:
         just _build-uniffi-ios aarch64-apple-ios-sim
 
     - name: Build host library
-      run: cargo build --lib -p mdk-uniffi
+      run: cargo build --release --lib -p mdk-uniffi
 
     - name: Generate Swift bindings
       run: just gen-binding-swift
@@ -147,7 +147,7 @@ jobs:
     - name: Copy release library
       shell: bash
       run: |
-        cp target/release/${{ steps.lib_filename.outputs.filename }} crates/mdk-uniffi/bindings/python/
+        cp target/**/release/${{ steps.lib_filename.outputs.filename }} crates/mdk-uniffi/bindings/python/
 
     - name: Assemble Python package
       shell: bash
@@ -259,7 +259,7 @@ jobs:
     - name: Copy release library
       shell: bash
       run: |
-        cp target/release/${{ steps.lib_filename.outputs.filename }} crates/mdk-uniffi/bindings/ruby/
+        cp target/**/release/${{ steps.lib_filename.outputs.filename }} crates/mdk-uniffi/bindings/ruby/
 
     - name: Assemble Ruby gem
       shell: bash
