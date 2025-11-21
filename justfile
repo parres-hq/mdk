@@ -104,7 +104,7 @@ _build-uniffi-android TARGET CLANG_PREFIX:
     export AR_${TARGET_UNDER}="${LLVM_BIN}/llvm-ar"
     export CARGO_TARGET_${TARGET_UPPER}_LINKER="${LLVM_BIN}/{{CLANG_PREFIX}}"
 
-    cargo build --release --lib -p mdk-uniffi --target {{TARGET}}
+    cargo build --lib -p mdk-uniffi --target {{TARGET}}
 
 uniffi-bindgen: (gen-binding "python") gen-binding-kotlin gen-binding-ruby
     @if [ "{{os()}}" = "macos" ]; then just gen-binding-swift; fi
@@ -143,8 +143,8 @@ gen-binding-kotlin: (_build-uniffi "true") (gen-binding "kotlin")
     
     rm -rf "$BINDINGS_DIR/uniffi"
     
-    cp target/aarch64-linux-android/release/libmdk_uniffi.so "$PROJECT_DIR/src/main/jniLibs/arm64-v8a/libmdk_uniffi.so"
-    cp target/armv7-linux-androideabi/release/libmdk_uniffi.so "$PROJECT_DIR/src/main/jniLibs/armeabi-v7a/libmdk_uniffi.so"
+    cp target/aarch64-linux-android/debug/libmdk_uniffi.so "$PROJECT_DIR/src/main/jniLibs/arm64-v8a/libmdk_uniffi.so"
+    cp target/armv7-linux-androideabi/debug/libmdk_uniffi.so "$PROJECT_DIR/src/main/jniLibs/armeabi-v7a/libmdk_uniffi.so"
     rm -f "$BINDINGS_DIR/libmdk_uniffi.so"
     echo "✓ Kotlin bindings generated and moved to Android project"
 

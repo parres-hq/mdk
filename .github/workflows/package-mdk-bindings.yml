@@ -351,7 +351,7 @@ jobs:
       id: setup-ndk
       uses: nttld/setup-ndk@v1
       with:
-        ndk-version: r26d
+        ndk-version: r27d
         add-to-path: false
         link-to-sdk: true
         local-cache: true
@@ -366,10 +366,10 @@ jobs:
         just _build-uniffi-android aarch64-linux-android aarch64-linux-android21-clang
         just _build-uniffi-android armv7-linux-androideabi armv7a-linux-androideabi21-clang
 
-    - name: Build host library (debug for bindgen)
-      run: cargo build --lib -p mdk-uniffi --release
-
     - name: Generate Kotlin bindings
+      env: 
+        ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+        NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
       run: just gen-binding-kotlin
 
     - name: Configure Android SDK

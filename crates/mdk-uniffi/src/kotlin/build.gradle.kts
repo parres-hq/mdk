@@ -32,6 +32,7 @@ android {
     packaging {
         jniLibs {
             pickFirst("**/libjnidispatch.so")
+            pickFirst("**/libmdk_uniffi.so")
         }
     }
 
@@ -47,40 +48,13 @@ dependencies {
     // Use api() for JNA so it's exposed to consumers of this library
     // This ensures consumers get the JNA dependency transitively
     api("net.java.dev.jna:jna:5.14.0@aar")
+    implementation("net.java.dev.jna:jna:5.14.0") // Also include JAR for compile time resolution if needed
     
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.7.3")
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.1.5")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.5.1")
 }
-
-val extractJna = tasks.register("extractJna") {
-    val jnaJar = configurations.getByName("runtimeClasspath").files.first { it.name.contains("jna") }
-
-    val archMap = mapOf(
-        "android-aarch64" to "arm64-v8a",
-        "android-arm"     to "armeabi-v7a"
-    )
-
-    doLast {
-        archMap.forEach { (jnaArch, androidArch) ->
-            copy {
-                from(zipTree(jnaJar))
-                into("src/main/jniLibs/$androidArch")
-                include("com/sun/jna/$jnaArch/libjnidispatch.so")
-                eachFile { 
-                    path = "libjnidispatch.so" 
-                }
-                includeEmptyDirs = false
-            }
-        }
-    }
-}
-
-tasks.named("preBuild") {
-    dependsOn(extractJna)
-}
-
 
 publishing {
     publications {
