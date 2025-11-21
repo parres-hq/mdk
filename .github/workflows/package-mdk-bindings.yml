@@ -394,6 +394,7 @@ jobs:
         path: kotlin-package-repo
         token: ${{ secrets.BINDINGS_PACKAGE_PAT }}
         fetch-depth: 0
+        lfs: 'true'
 
     - name: Configure Git
       run: |
