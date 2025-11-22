@@ -388,13 +388,12 @@ jobs:
         ./gradlew build
 
     - name: Checkout Kotlin package repo
-      uses: actions/checkout@v4
+      uses: actions/checkout@v6
       with:
         repository: ${{ env.KOTLIN_PACKAGE_REPO }}
         path: kotlin-package-repo
         token: ${{ secrets.BINDINGS_PACKAGE_PAT }}
-        fetch-depth: 0
-        lfs: 'true'
+        lfs: true
 
     - name: Configure Git
       run: |
