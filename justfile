@@ -81,6 +81,7 @@ _build-uniffi needs_android="false":
     if [ "{{needs_android}}" = "true" ]; then
         just _build-uniffi-android aarch64-linux-android aarch64-linux-android21-clang
         just _build-uniffi-android armv7-linux-androideabi armv7a-linux-androideabi21-clang
+        just _build-uniffi-android x86_64-linux-android x86_64-linux-android21-clang
     fi
     if [ "{{os()}}" = "macos" ]; then
         just _build-uniffi-ios aarch64-apple-ios
@@ -138,6 +139,7 @@ gen-binding-kotlin: (_build-uniffi "true") (gen-binding "kotlin")
     mkdir -pv "$PROJECT_DIR/src/main/kotlin/org/parres/mdk"
     mkdir -pv "$PROJECT_DIR/src/main/jniLibs/arm64-v8a"
     mkdir -pv "$PROJECT_DIR/src/main/jniLibs/armeabi-v7a"
+    mkdir -pv "$PROJECT_DIR/src/main/jniLibs/x86_64"
     
     mv "$BINDINGS_DIR/uniffi/mdk_uniffi/mdk_uniffi.kt" "$PROJECT_DIR/src/main/kotlin/org/parres/mdk/mdk.kt"
     
@@ -145,6 +147,7 @@ gen-binding-kotlin: (_build-uniffi "true") (gen-binding "kotlin")
     
     cp target/aarch64-linux-android/debug/libmdk_uniffi.so "$PROJECT_DIR/src/main/jniLibs/arm64-v8a/libmdk_uniffi.so"
     cp target/armv7-linux-androideabi/debug/libmdk_uniffi.so "$PROJECT_DIR/src/main/jniLibs/armeabi-v7a/libmdk_uniffi.so"
+    cp target/x86_64-linux-android/debug/libmdk_uniffi.so "$PROJECT_DIR/src/main/jniLibs/x86_64/libmdk_uniffi.so"
     rm -f "$BINDINGS_DIR/libmdk_uniffi.so"
     echo "✓ Kotlin bindings generated and moved to Android project"
 
