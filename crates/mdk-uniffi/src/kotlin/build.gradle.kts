@@ -48,7 +48,7 @@ dependencies {
     // Use api() for JNA so it's exposed to consumers of this library
     // This ensures consumers get the JNA dependency transitively
     api("net.java.dev.jna:jna:5.14.0@aar")
-    implementation("net.java.dev.jna:jna:5.14.0") // Also include JAR for compile time resolution if needed
+    implementation("net.java.dev.jna:jna:5.14.0@aar")
     
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.7.3")
     testImplementation("junit:junit:4.13.2")
