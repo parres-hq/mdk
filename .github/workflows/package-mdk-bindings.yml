@@ -111,7 +111,9 @@ jobs:
     
     - name: Add aarch64-apple-ios target if matrix.os is macos-latest
       if: matrix.os == 'macos-latest'
-      run: rustup target add aarch64-apple-ios
+      run: |
+        rustup target add aarch64-apple-ios
+        rustup target add aarch64-apple-ios-sim
 
     - name: Cache Rust dependencies
       uses: Swatinem/rust-cache@v2
@@ -230,7 +232,9 @@ jobs:
 
     - name: Add aarch64-apple-ios target if matrix.os is macos-latest
       if: matrix.os == 'macos-latest'
-      run: rustup target add aarch64-apple-ios
+      run: |
+        rustup target add aarch64-apple-ios
+        rustup target add aarch64-apple-ios-sim
 
     - name: Cache Rust dependencies
       uses: Swatinem/rust-cache@v2
@@ -363,6 +367,10 @@ jobs:
         add-to-path: false
         link-to-sdk: true
         local-cache: true
+
+    - name: Clean Github Actions cache to save space
+      run: |
+        rm -rf /opt/hostedtoolcache
 
     - name: Build Android targets
       env: 
