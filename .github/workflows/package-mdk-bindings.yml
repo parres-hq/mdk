@@ -388,19 +388,12 @@ jobs:
         ./gradlew build
 
     - name: Checkout Kotlin package repo
-      uses: actions/checkout@v4
+      uses: actions/checkout@v6
       with:
         repository: ${{ env.KOTLIN_PACKAGE_REPO }}
         path: kotlin-package-repo
         token: ${{ secrets.BINDINGS_PACKAGE_PAT }}
         lfs: false
-
-    # attempt to get around the issue where LFS fails
-    - name: Setup LFS for Push
-      run: |
-        cd kotlin-package-repo
-        git lfs install
-        git lfs track "*.so"
 
     - name: Configure Git
       run: |
@@ -418,6 +411,12 @@ jobs:
         rsync -av --exclude='build' --exclude='.gradle' --exclude='local.properties' crates/mdk-uniffi/src/kotlin/ kotlin-package-repo/
         
         cd kotlin-package-repo
+        
+        # Setup LFS and ensure tracking is set before adding files
+        git lfs install
+        git lfs track "*.so"
+        git add .gitattributes
+        
         git add -A
 
     - name: Commit and push
