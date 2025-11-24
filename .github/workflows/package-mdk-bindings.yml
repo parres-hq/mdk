@@ -400,6 +400,7 @@ jobs:
       run: |
         cd kotlin-package-repo
         git lfs install
+        git lfs track "*.so"
 
     - name: Configure Git
       run: |
