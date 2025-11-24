@@ -108,6 +108,10 @@ jobs:
 
     - name: Setup Rust
       uses: dtolnay/rust-toolchain@stable
+    
+    - name: Add aarch64-apple-ios target if matrix.os is macos-latest
+      if: matrix.os == 'macos-latest'
+      run: rustup target add aarch64-apple-ios
 
     - name: Cache Rust dependencies
       uses: Swatinem/rust-cache@v2
@@ -223,6 +227,10 @@ jobs:
 
     - name: Setup Rust
       uses: dtolnay/rust-toolchain@stable
+
+    - name: Add aarch64-apple-ios target if matrix.os is macos-latest
+      if: matrix.os == 'macos-latest'
+      run: rustup target add aarch64-apple-ios
 
     - name: Cache Rust dependencies
       uses: Swatinem/rust-cache@v2
