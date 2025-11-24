@@ -65,7 +65,7 @@ jobs:
         repository: ${{ env.SWIFT_PACKAGE_REPO }}
         path: swift-package-repo
         token: ${{ secrets.BINDINGS_PACKAGE_PAT }}
-        fetch-depth: 0
+        lfs: true
 
     - name: Configure Git
       run: |
@@ -173,7 +173,7 @@ jobs:
         repository: ${{ env.PYTHON_PACKAGE_REPO }}
         path: python-package-repo
         token: ${{ secrets.BINDINGS_PACKAGE_PAT }}
-        fetch-depth: 0
+        lfs: true
 
     - name: Configure Git
       run: |
@@ -285,7 +285,7 @@ jobs:
         repository: ${{ env.RUBY_PACKAGE_REPO }}
         path: ruby-package-repo
         token: ${{ secrets.BINDINGS_PACKAGE_PAT }}
-        fetch-depth: 0
+        lfs: true
 
     - name: Configure Git
       run: |
@@ -388,12 +388,18 @@ jobs:
         ./gradlew build
 
     - name: Checkout Kotlin package repo
-      uses: actions/checkout@v6
+      uses: actions/checkout@v4
       with:
         repository: ${{ env.KOTLIN_PACKAGE_REPO }}
         path: kotlin-package-repo
         token: ${{ secrets.BINDINGS_PACKAGE_PAT }}
-        lfs: true
+        lfs: false
+
+    # attempt to get around the issue where LFS fails
+    - name: Setup LFS for Push
+      run: |
+        cd kotlin-package-repo
+        git lfs install
 
     - name: Configure Git
       run: |
