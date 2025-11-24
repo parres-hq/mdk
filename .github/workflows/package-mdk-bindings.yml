@@ -427,7 +427,7 @@ jobs:
         # Copy Android project content
         # Exclude build artifacts to keep repo clean
         rsync -av --exclude='build' --exclude='.gradle' --exclude='local.properties' crates/mdk-uniffi/src/kotlin/ kotlin-package-repo/
-        
+
         cd kotlin-package-repo
 
         wget https://github.com/java-native-access/jna/raw/refs/heads/master/dist/android-x86-64.jar
@@ -440,11 +440,11 @@ jobs:
         mv android-armv7.jar tmp/
 
         unzip tmp/android-x86-64.jar -d tmp/
-        mv tmp/libjnidispatch.so kotlin-package-repo/src/main/jniLibs/x86_64/
+        mv tmp/libjnidispatch.so src/main/jniLibs/x86-64/
         unzip tmp/android-aarch64.jar -d tmp/
-        mv tmp/libjnidispatch.so kotlin-package-repo/src/main/jniLibs/arm64-v8a/
+        mv tmp/libjnidispatch.so src/main/jniLibs/arm64-v8a/
         unzip tmp/android-armv7.jar -d tmp/
-        mv tmp/libjnidispatch.so kotlin-package-repo/src/main/jniLibs/armeabi-v7a/
+        mv tmp/libjnidispatch.so src/main/jniLibs/armeabi-v7a/
 
         rm -rf tmp
         
