@@ -451,6 +451,8 @@ jobs:
         unzip tmp/android-armv7.jar -d tmp/
         mv tmp/libjnidispatch.so src/main/jniLibs/armeabi-v7a/
         rm -rf tmp
+
+        ln -s src/main/jniLibs/arm64-v8a src/main/jniLibs/android-aarch64
         
         # Setup LFS and ensure tracking is set before adding files
         git lfs install
