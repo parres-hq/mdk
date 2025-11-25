@@ -434,18 +434,22 @@ jobs:
         wget https://github.com/java-native-access/jna/raw/refs/heads/master/dist/android-aarch64.jar
         wget https://github.com/java-native-access/jna/raw/refs/heads/master/dist/android-armv7.jar
 
-        mkdir tmp
+        # mkdir tmp
         # mv android-x86-64.jar tmp/
-        mv android-aarch64.jar tmp/
-        mv android-armv7.jar tmp/
-
         # unzip tmp/android-x86-64.jar -d tmp/
         # mv tmp/libjnidispatch.so src/main/jniLibs/x86-64/
+        # rm -rf tmp
+
+        mkdir tmp
+        mv android-aarch64.jar tmp/
         unzip tmp/android-aarch64.jar -d tmp/
         mv tmp/libjnidispatch.so src/main/jniLibs/arm64-v8a/
+        rm -rf tmp
+
+        mkdir tmp
+        mv android-armv7.jar tmp/
         unzip tmp/android-armv7.jar -d tmp/
         mv tmp/libjnidispatch.so src/main/jniLibs/armeabi-v7a/
-
         rm -rf tmp
         
         # Setup LFS and ensure tracking is set before adding files
