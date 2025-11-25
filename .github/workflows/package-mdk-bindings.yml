@@ -430,17 +430,17 @@ jobs:
 
         cd kotlin-package-repo
 
-        wget https://github.com/java-native-access/jna/raw/refs/heads/master/dist/android-x86-64.jar
+        # wget https://github.com/java-native-access/jna/raw/refs/heads/master/dist/android-x86-64.jar
         wget https://github.com/java-native-access/jna/raw/refs/heads/master/dist/android-aarch64.jar
         wget https://github.com/java-native-access/jna/raw/refs/heads/master/dist/android-armv7.jar
 
         mkdir tmp
-        mv android-x86-64.jar tmp/
+        # mv android-x86-64.jar tmp/
         mv android-aarch64.jar tmp/
         mv android-armv7.jar tmp/
 
-        unzip tmp/android-x86-64.jar -d tmp/
-        mv tmp/libjnidispatch.so src/main/jniLibs/x86-64/
+        # unzip tmp/android-x86-64.jar -d tmp/
+        # mv tmp/libjnidispatch.so src/main/jniLibs/x86-64/
         unzip tmp/android-aarch64.jar -d tmp/
         mv tmp/libjnidispatch.so src/main/jniLibs/arm64-v8a/
         unzip tmp/android-armv7.jar -d tmp/
