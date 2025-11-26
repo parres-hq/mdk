@@ -181,7 +181,7 @@ mdk.decline_welcome(welcome_json=welcome.welcome_json)
 mls_group_id = "hex_group_id"
 sender_public_key = "your_hex_public_key"
 content = "Hello, group!"
-kind = 1  # Message kind
+kind = 9  # Message kind
 
 event_json = mdk.create_message(
     mls_group_id=mls_group_id,
@@ -346,7 +346,7 @@ message_event = mdk.create_message(
     mls_group_id=group_result.group.mls_group_id,
     sender_public_key=my_public_key,
     content="Hello!",
-    kind=1
+    kind=9
 )
 # Publish message_event to Nostr relays
 

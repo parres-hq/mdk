@@ -151,7 +151,7 @@ for welcome in welcomes {
 let mlsGroupId = "hex_group_id"
 let senderPublicKey = "your_hex_public_key"
 let content = "Hello, group!"
-let kind: UInt16 = 1 // Message kind
+let kind: UInt16 = 9 // Message kind
 
 let eventJson = try mdk.createMessage(
     mlsGroupId: mlsGroupId,
@@ -310,7 +310,7 @@ let messageEvent = try mdk.createMessage(
     mlsGroupId: group.group.mlsGroupId,
     senderPublicKey: myPublicKey,
     content: "Hello!",
-    kind: 1
+    kind: 9
 )
 // Publish messageEvent to Nostr relays
 

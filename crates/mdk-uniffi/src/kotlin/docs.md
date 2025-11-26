@@ -3,26 +3,17 @@
 ## Building the AAR
 
 1. Ensure the native libraries produced by `just _build-uniffi-android …` are copied into `src/main/jniLibs/<abi>/libmdk_uniffi.so`.
-   (The `just gen-binding-kotlin` command handles this for you).
 2. From `crates/mdk-uniffi/src/kotlin` run:
 
 ```bash
-./gradlew build
+./mvnw clean package -DskipTests
 ```
 
-The resulting AAR can be found in `build/outputs/aar/mdk-release.aar` (assuming you ran a release build).
-
-## Publishing
-
-To publish to a local Maven repository (useful for testing integration):
-
-```bash
-./gradlew publishReleasePublicationToMavenLocal
-```
+The resulting AAR can be found in `target/mdk-0.5.2.aar`.
 
 ## Installation
 
-Once published (e.g. via JitPack or local maven) reference it in your Android project:
+Once published (e.g. via JitPack) reference it in your Android project:
 
 ```kotlin
 dependencies {
@@ -35,7 +26,7 @@ dependencies {
 ### Import and Initialize
 
 ```kotlin
-import org.parres.mdk.*
+import uniffi.mdk_uniffi.*
 
 // Create an MDK instance with a SQLite database path
 val dbPath = context.filesDir.resolve("mdk.db").absolutePath
@@ -365,7 +356,6 @@ data class Welcome(
     val groupName: String,
     val groupDescription: String,
     val senderPublicKey: String    // Hex-encoded
-    val createdAt: ULong
 )
 ```
 
@@ -399,7 +389,6 @@ Place the `.so` files in your `src/main/jniLibs/` directory structure, or use th
 
 ```kotlin
 import kotlinx.coroutines.*
-import org.parres.mdk.*
 
 class MdkManager(private val context: Context) {
     private val mdk = newMdk(context.filesDir.resolve("mdk.db").absolutePath)
@@ -416,7 +405,7 @@ class MdkManager(private val context: Context) {
             mlsGroupId = groupId,
             senderPublicKey = myPublicKey,
             content = content,
-            kind = 1u
+            kind = 9u
         )
     }
 }
@@ -425,7 +414,7 @@ class MdkManager(private val context: Context) {
 ## Example: Complete Workflow
 
 ```kotlin
-import org.parres.mdk.*
+import uniffi.mdk_uniffi.*
 
 // 1. Initialize
 val dbPath = "/path/to/mdk.db"
@@ -453,7 +442,7 @@ val messageEvent = mdk.createMessage(
     mlsGroupId = groupResult.group.mlsGroupId,
     senderPublicKey = myPublicKey,
     content = "Hello!",
-    kind = 1u
+    kind = 9u
 )
 // Publish messageEvent to Nostr relays
 
@@ -472,7 +461,6 @@ import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
-import org.parres.mdk.*
 
 class GroupViewModel(private val mdk: MdkInterface) : ViewModel() {
     private val _groups = MutableStateFlow<List<Group>>(emptyList())
@@ -499,7 +487,7 @@ class GroupViewModel(private val mdk: MdkInterface) : ViewModel() {
                     mlsGroupId = groupId,
                     senderPublicKey = myPublicKey,
                     content = content,
-                    kind = 1u
+                    kind = 9u
                 )
                 // Publish to Nostr
             } catch (e: Exception) {
@@ -509,3 +497,4 @@ class GroupViewModel(private val mdk: MdkInterface) : ViewModel() {
     }
 }
 ```
+
