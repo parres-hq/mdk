@@ -1,0 +1,4 @@
+[bindings.kotlin]
+package_name = "org.parres.mdk"
+cdylib_name = "mdk"
+android = true

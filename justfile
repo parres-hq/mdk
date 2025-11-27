@@ -134,17 +134,6 @@ gen-binding-kotlin: (_build-uniffi "true") (gen-binding "kotlin")
     BINDINGS_DIR="crates/mdk-uniffi/bindings/kotlin"
     PROJECT_DIR="crates/mdk-uniffi/src/kotlin"
     
-    sed -i 's/package uniffi.mdk_uniffi/package org.parres.mdk/g' "$BINDINGS_DIR/uniffi/mdk_uniffi/mdk_uniffi.kt"
-    
-    mkdir -pv "$PROJECT_DIR/src/main/kotlin/org/parres/mdk"
-    mkdir -pv "$PROJECT_DIR/src/main/jniLibs/arm64-v8a"
-    mkdir -pv "$PROJECT_DIR/src/main/jniLibs/armeabi-v7a"
-    # mkdir -pv "$PROJECT_DIR/src/main/jniLibs/x86-64"
-    
-    mv "$BINDINGS_DIR/uniffi/mdk_uniffi/mdk_uniffi.kt" "$PROJECT_DIR/src/main/kotlin/org/parres/mdk/mdk.kt"
-    
-    rm -rf "$BINDINGS_DIR/uniffi"
-    
     cp target/aarch64-linux-android/debug/libmdk_uniffi.so "$PROJECT_DIR/src/main/jniLibs/arm64-v8a/libmdk_uniffi.so"
     cp target/armv7-linux-androideabi/debug/libmdk_uniffi.so "$PROJECT_DIR/src/main/jniLibs/armeabi-v7a/libmdk_uniffi.so"
     # cp target/x86_64-linux-android/debug/libmdk_uniffi.so "$PROJECT_DIR/src/main/jniLibs/x86-64/libmdk_uniffi.so"
