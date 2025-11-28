@@ -452,8 +452,6 @@ jobs:
         mv tmp/libjnidispatch.so src/main/jniLibs/armeabi-v7a/
         rm -rf tmp
 
-        cp -R src/main/jniLibs/arm64-v8a src/main/jniLibs/android-aarch64
-        
         # Setup LFS and ensure tracking is set before adding files
         git lfs install
         git lfs track "*.so"
