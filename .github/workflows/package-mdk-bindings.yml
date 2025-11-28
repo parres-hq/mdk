@@ -430,6 +430,11 @@ jobs:
 
         cd kotlin-package-repo
 
+        # Ensure jniLibs directories exist
+        mkdir -p src/main/jniLibs/arm64-v8a
+        mkdir -p src/main/jniLibs/armeabi-v7a
+        # mkdir -p src/main/jniLibs/x86-64
+
         # wget https://github.com/java-native-access/jna/raw/refs/heads/master/dist/android-x86-64.jar
         wget https://github.com/java-native-access/jna/raw/refs/heads/master/dist/android-aarch64.jar
         wget https://github.com/java-native-access/jna/raw/refs/heads/master/dist/android-armv7.jar
@@ -451,6 +456,10 @@ jobs:
         unzip tmp/android-armv7.jar -d tmp/
         mv tmp/libjnidispatch.so src/main/jniLibs/armeabi-v7a/
         rm -rf tmp
+
+        # Clean up any old directory structure that might exist
+        rm -rf src/main/jniLibs/android-aarch64 || true
+        rm -rf src/main/jniLibs/android-armv7 || true
 
         # Setup LFS and ensure tracking is set before adding files
         git lfs install
