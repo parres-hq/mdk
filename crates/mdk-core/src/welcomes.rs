@@ -1154,4 +1154,36 @@ mod tests {
         assert!(result.is_ok(), "Valid hex should decode successfully");
         assert_eq!(result.unwrap(), vec![0, 0, 0, 0]);
     }
+
+    #[test]
+    fn test_decode_welcome_base64_with_special_chars() {
+        let mdk = create_test_mdk();
+
+        // Test base64 string with characters not in hex alphabet
+        // This should skip hex decode entirely and go straight to base64
+        let base64_str = "SGVsbG8="; // "Hello" in base64 (contains non-hex chars 'S', 'G', 'l', '=')
+        let result = mdk.decode_welcome_content(base64_str);
+
+        assert!(result.is_ok(), "Should decode valid base64");
+        let decoded = result.unwrap();
+        assert_eq!(decoded, b"Hello");
+    }
+
+    #[test]
+    fn test_decode_welcome_base64_with_padding() {
+        let mdk = create_test_mdk();
+
+        // Test various base64 strings with padding
+        let test_cases = vec![
+            ("dGVzdA==", b"test".as_slice()), // "test" in base64
+            ("aGk=", b"hi".as_slice()),       // "hi" in base64
+            ("YQ==", b"a".as_slice()),        // "a" in base64
+        ];
+
+        for (input, expected) in test_cases {
+            let result = mdk.decode_welcome_content(input);
+            assert!(result.is_ok(), "Should decode {}", input);
+            assert_eq!(result.unwrap(), expected, "Mismatch for {}", input);
+        }
+    }
 }
