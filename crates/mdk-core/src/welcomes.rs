@@ -287,40 +287,40 @@ where
     ///
     /// # Errors
     ///
+    /// Returns an error if both hex and base64 decoding fail.
+    ///
     /// Decodes welcome content from either base64 or hex encoding.
     ///
     /// Detects the format based on character set:
     /// - Hex uses only: 0-9, a-f, A-F
     /// - Base64 uses: A-Z, a-z, 0-9, +, /, =
     ///
-    /// If the string contains only hex characters, it's decoded as hex (legacy format).
-    /// Otherwise, it's decoded as base64 (new format).
+    /// If the string contains only hex characters, it attempts hex decoding first (legacy format).
+    /// If hex decoding fails or if the string contains non-hex characters, it attempts base64 decoding.
+    /// This provides maximum robustness against edge cases.
     fn decode_welcome_content(&self, content: &str) -> Result<Vec<u8>, Error> {
         // Detect format based on character set
-        // If string contains only hex chars [0-9a-fA-F], it's hex
-        // Otherwise (contains g-z, G-Z, +, /, =), it's base64
+        // If string contains only hex chars [0-9a-fA-F], try hex first
+        // Otherwise (contains g-z, G-Z, +, /, =), it's definitely base64
         let is_hex_only = content.chars().all(|c| c.is_ascii_hexdigit());
 
         if is_hex_only {
-            // Decode as hex (legacy format)
-            match hex::decode(content) {
-                Ok(bytes) => {
-                    tracing::debug!(
-                        target: "mdk_core::welcomes",
-                        "Decoded welcome using hex (legacy format)"
-                    );
-                    return Ok(bytes);
-                }
-                Err(e) => {
-                    return Err(Error::Welcome(format!(
-                        "Failed to decode welcome as hex: {}",
-                        e
-                    )));
-                }
+            // Try hex decode first (legacy format)
+            if let Ok(bytes) = hex::decode(content) {
+                tracing::debug!(
+                    target: "mdk_core::welcomes",
+                    "Decoded welcome using hex (legacy format)"
+                );
+                return Ok(bytes);
             }
+            // If hex decode failed, fall through to try base64
+            tracing::debug!(
+                target: "mdk_core::welcomes",
+                "Hex decode failed for hex-only string, attempting base64"
+            );
         }
 
-        // Decode as base64 (new format)
+        // Decode as base64 (new format or fallback)
         match BASE64.decode(content) {
             Ok(bytes) => {
                 tracing::debug!(
@@ -330,7 +330,7 @@ where
                 Ok(bytes)
             }
             Err(e) => Err(Error::Welcome(format!(
-                "Failed to decode welcome as base64: {}",
+                "Failed to decode welcome as both hex and base64: {}",
                 e
             ))),
         }

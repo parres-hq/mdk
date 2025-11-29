@@ -21,13 +21,17 @@ where
 {
     /// Creates a key package for a Nostr event.
     ///
-    /// This function generates a hex-encoded key package that is used as the content field of a kind:443 Nostr event.
+    /// This function generates an encoded key package that is used as the content field of a kind:443 Nostr event.
+    /// The encoding format (hex or base64) is determined by `MdkConfig::use_base64_encoding`:
+    /// - When `false` (default): uses hex encoding (legacy format)
+    /// - When `true`: uses base64 encoding (new format, ~33% smaller)
+    ///
     /// The key package contains the user's credential and capabilities required for MLS operations.
     ///
     /// # Returns
     ///
     /// A tuple containing:
-    /// * A hex-encoded string containing the serialized key package
+    /// * An encoded string (hex or base64) containing the serialized key package
     /// * An array of 6 tags for the Nostr event:
     ///   1. `mls_protocol_version` - MLS protocol version (e.g., "1.0")
     ///   2. `mls_ciphersuite` - Ciphersuite identifier (e.g., "0x0001")
@@ -99,8 +103,9 @@ where
     /// - Hex uses only: 0-9, a-f, A-F
     /// - Base64 uses: A-Z, a-z, 0-9, +, /, =
     ///
-    /// If the string contains only hex characters, it's decoded as hex (legacy format).
-    /// Otherwise, it's decoded as base64 (new format).
+    /// If the string contains only hex characters, it attempts hex decoding first (legacy format).
+    /// If hex decoding fails or if the string contains non-hex characters, it attempts base64 decoding.
+    /// This provides maximum robustness against edge cases.
     ///
     /// # Arguments
     ///
@@ -108,33 +113,30 @@ where
     ///
     /// # Returns
     ///
-    /// The decoded bytes on success, or an Error if decoding fails.
+    /// The decoded bytes on success, or an Error if both decoding attempts fail.
     fn decode_key_package_content(&self, content: &str) -> Result<Vec<u8>, Error> {
         // Detect format based on character set
-        // If string contains only hex chars [0-9a-fA-F], it's hex
-        // Otherwise (contains g-z, G-Z, +, /, =), it's base64
+        // If string contains only hex chars [0-9a-fA-F], try hex first
+        // Otherwise (contains g-z, G-Z, +, /, =), it's definitely base64
         let is_hex_only = content.chars().all(|c| c.is_ascii_hexdigit());
 
         if is_hex_only {
-            // Decode as hex (legacy format)
-            match hex::decode(content) {
-                Ok(bytes) => {
-                    tracing::debug!(
-                        target: "mdk_core::key_packages",
-                        "Decoded key package using hex (legacy format)"
-                    );
-                    return Ok(bytes);
-                }
-                Err(e) => {
-                    return Err(Error::KeyPackage(format!(
-                        "Failed to decode key package as hex: {}",
-                        e
-                    )));
-                }
+            // Try hex decode first (legacy format)
+            if let Ok(bytes) = hex::decode(content) {
+                tracing::debug!(
+                    target: "mdk_core::key_packages",
+                    "Decoded key package using hex (legacy format)"
+                );
+                return Ok(bytes);
             }
+            // If hex decode failed, fall through to try base64
+            tracing::debug!(
+                target: "mdk_core::key_packages",
+                "Hex decode failed for hex-only string, attempting base64"
+            );
         }
 
-        // Decode as base64 (new format)
+        // Decode as base64 (new format or fallback)
         match BASE64.decode(content) {
             Ok(bytes) => {
                 tracing::debug!(
@@ -144,7 +146,7 @@ where
                 Ok(bytes)
             }
             Err(e) => Err(Error::KeyPackage(format!(
-                "Failed to decode key package as base64: {}",
+                "Failed to decode key package as both hex and base64: {}",
                 e
             ))),
         }
