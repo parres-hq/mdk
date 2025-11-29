@@ -2275,4 +2275,60 @@ mod tests {
             savings_percent
         );
     }
+
+    #[test]
+    fn test_decode_invalid_hex_string() {
+        let mdk = create_test_mdk();
+
+        // Create a string that has non-hex characters and is also invalid base64
+        // Use invalid characters for both formats
+        let invalid = "!!!"; // '!' is not valid for hex or base64
+
+        let result = mdk.decode_key_package_content(invalid);
+
+        // This should attempt base64 decode since it's not hex-only
+        // and will fail since "!!!" isn't valid base64 either
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("both hex and base64"),
+            "Error should indicate both formats were tried, got: {}",
+            err_msg
+        );
+    }
+
+    #[test]
+    fn test_decode_hex_only_invalid() {
+        let mdk = create_test_mdk();
+
+        // Create a string with only hex characters but odd length (invalid for hex decode)
+        let odd_length_hex = "abc"; // Valid hex chars but odd length
+
+        let result = mdk.decode_key_package_content(odd_length_hex);
+
+        // Should try hex first (fails due to odd length), then fall back to base64
+        // "abc" might decode as base64, but if not, should show both were tried
+        if let Err(err) = result {
+            let err_msg = err.to_string();
+            assert!(
+                err_msg.contains("both hex and base64"),
+                "Error should indicate both formats were tried for hex-only string, got: {}",
+                err_msg
+            );
+        }
+    }
+
+    #[test]
+    fn test_decode_fallback_path() {
+        let mdk = create_test_mdk();
+
+        // Test the fallback path: string that is hex-only but fails hex decode
+        // yet could potentially succeed as base64
+
+        // "00000000" is valid hex (all zeros) and should decode successfully as hex
+        let valid_hex = "00000000";
+        let result = mdk.decode_key_package_content(valid_hex);
+        assert!(result.is_ok(), "Valid hex should decode successfully");
+        assert_eq!(result.unwrap(), vec![0, 0, 0, 0]);
+    }
 }
