@@ -3,8 +3,6 @@
 use mdk_storage_traits::MdkStorageProvider;
 use mdk_storage_traits::groups::types as group_types;
 use mdk_storage_traits::welcomes::types as welcome_types;
-use nostr::base64::Engine;
-use nostr::base64::engine::general_purpose::STANDARD as BASE64;
 use nostr::{EventId, Timestamp, UnsignedEvent};
 use openmls::prelude::*;
 use tls_codec::Deserialize as TlsDeserialize;
@@ -12,6 +10,7 @@ use tls_codec::Deserialize as TlsDeserialize;
 use crate::MDK;
 use crate::error::Error;
 use crate::extension::NostrGroupDataExtension;
+use crate::util::decode_dual_format;
 
 /// Welcome preview
 #[derive(Debug)]
@@ -299,41 +298,14 @@ where
     /// If hex decoding fails or if the string contains non-hex characters, it attempts base64 decoding.
     /// This provides maximum robustness against edge cases.
     fn decode_welcome_content(&self, content: &str) -> Result<Vec<u8>, Error> {
-        // Detect format based on character set
-        // If string contains only hex chars [0-9a-fA-F], try hex first
-        // Otherwise (contains g-z, G-Z, +, /, =), it's definitely base64
-        let is_hex_only = content.chars().all(|c| c.is_ascii_hexdigit());
+        let (bytes, format) = decode_dual_format(content, "welcome").map_err(Error::Welcome)?;
 
-        if is_hex_only {
-            // Try hex decode first (legacy format)
-            if let Ok(bytes) = hex::decode(content) {
-                tracing::debug!(
-                    target: "mdk_core::welcomes",
-                    "Decoded welcome using hex (legacy format)"
-                );
-                return Ok(bytes);
-            }
-            // If hex decode failed, fall through to try base64
-            tracing::debug!(
-                target: "mdk_core::welcomes",
-                "Hex decode failed for hex-only string, attempting base64"
-            );
-        }
+        tracing::debug!(
+            target: "mdk_core::welcomes",
+            "Decoded welcome using {}", format
+        );
 
-        // Decode as base64 (new format or fallback)
-        match BASE64.decode(content) {
-            Ok(bytes) => {
-                tracing::debug!(
-                    target: "mdk_core::welcomes",
-                    "Decoded welcome using base64 (new format)"
-                );
-                Ok(bytes)
-            }
-            Err(e) => Err(Error::Welcome(format!(
-                "Failed to decode welcome as both hex and base64: {}",
-                e
-            ))),
-        }
+        Ok(bytes)
     }
 
     fn preview_welcome(
@@ -1117,8 +1089,8 @@ mod tests {
         assert!(result.is_err());
         let err_msg = result.unwrap_err().to_string();
         assert!(
-            err_msg.contains("both hex and base64"),
-            "Error should indicate both formats were tried, got: {}",
+            err_msg.contains("as base64"),
+            "Error should indicate base64 was tried (not hex since it's not hex-only), got: {}",
             err_msg
         );
     }
@@ -1137,7 +1109,7 @@ mod tests {
         if let Err(err) = result {
             let err_msg = err.to_string();
             assert!(
-                err_msg.contains("both hex and base64"),
+                err_msg.contains("attempted hex and base64"),
                 "Error should indicate both formats were tried for hex-only string, got: {}",
                 err_msg
             );

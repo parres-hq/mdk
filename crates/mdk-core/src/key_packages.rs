@@ -13,7 +13,7 @@ use tls_codec::{Deserialize as TlsDeserialize, Serialize as TlsSerialize};
 use crate::MDK;
 use crate::constant::{DEFAULT_CIPHERSUITE, TAG_EXTENSIONS};
 use crate::error::Error;
-use crate::util::NostrTagFormat;
+use crate::util::{NostrTagFormat, decode_dual_format};
 
 impl<Storage> MDK<Storage>
 where
@@ -113,43 +113,17 @@ where
     ///
     /// # Returns
     ///
-    /// The decoded bytes on success, or an Error if both decoding attempts fail.
+    /// The decoded bytes on success, or an Error if decoding fails.
     fn decode_key_package_content(&self, content: &str) -> Result<Vec<u8>, Error> {
-        // Detect format based on character set
-        // If string contains only hex chars [0-9a-fA-F], try hex first
-        // Otherwise (contains g-z, G-Z, +, /, =), it's definitely base64
-        let is_hex_only = content.chars().all(|c| c.is_ascii_hexdigit());
+        let (bytes, format) =
+            decode_dual_format(content, "key package").map_err(Error::KeyPackage)?;
 
-        if is_hex_only {
-            // Try hex decode first (legacy format)
-            if let Ok(bytes) = hex::decode(content) {
-                tracing::debug!(
-                    target: "mdk_core::key_packages",
-                    "Decoded key package using hex (legacy format)"
-                );
-                return Ok(bytes);
-            }
-            // If hex decode failed, fall through to try base64
-            tracing::debug!(
-                target: "mdk_core::key_packages",
-                "Hex decode failed for hex-only string, attempting base64"
-            );
-        }
+        tracing::debug!(
+            target: "mdk_core::key_packages",
+            "Decoded key package using {}", format
+        );
 
-        // Decode as base64 (new format or fallback)
-        match BASE64.decode(content) {
-            Ok(bytes) => {
-                tracing::debug!(
-                    target: "mdk_core::key_packages",
-                    "Decoded key package using base64 (new format)"
-                );
-                Ok(bytes)
-            }
-            Err(e) => Err(Error::KeyPackage(format!(
-                "Failed to decode key package as both hex and base64: {}",
-                e
-            ))),
-        }
+        Ok(bytes)
     }
 
     /// Parses and validates a key package from either hex or base64 encoding.
@@ -2291,8 +2265,8 @@ mod tests {
         assert!(result.is_err());
         let err_msg = result.unwrap_err().to_string();
         assert!(
-            err_msg.contains("both hex and base64"),
-            "Error should indicate both formats were tried, got: {}",
+            err_msg.contains("as base64"),
+            "Error should indicate base64 was tried (not hex since it's not hex-only), got: {}",
             err_msg
         );
     }
@@ -2311,7 +2285,7 @@ mod tests {
         if let Err(err) = result {
             let err_msg = err.to_string();
             assert!(
-                err_msg.contains("both hex and base64"),
+                err_msg.contains("attempted hex and base64"),
                 "Error should indicate both formats were tried for hex-only string, got: {}",
                 err_msg
             );
