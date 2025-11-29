@@ -3,6 +3,8 @@
 use mdk_storage_traits::MdkStorageProvider;
 use mdk_storage_traits::groups::types as group_types;
 use mdk_storage_traits::welcomes::types as welcome_types;
+use nostr::base64::Engine;
+use nostr::base64::engine::general_purpose::STANDARD as BASE64;
 use nostr::{EventId, Timestamp, UnsignedEvent};
 use openmls::prelude::*;
 use tls_codec::Deserialize as TlsDeserialize;
@@ -285,15 +287,61 @@ where
     ///
     /// # Errors
     ///
-    /// Returns a `WelcomeError` if:
-    /// - The welcome message cannot be parsed
-    /// - The welcome message is invalid
+    /// Decodes welcome content from either base64 or hex encoding.
+    ///
+    /// Detects the format based on character set:
+    /// - Hex uses only: 0-9, a-f, A-F
+    /// - Base64 uses: A-Z, a-z, 0-9, +, /, =
+    ///
+    /// If the string contains only hex characters, it's decoded as hex (legacy format).
+    /// Otherwise, it's decoded as base64 (new format).
+    fn decode_welcome_content(&self, content: &str) -> Result<Vec<u8>, Error> {
+        // Detect format based on character set
+        // If string contains only hex chars [0-9a-fA-F], it's hex
+        // Otherwise (contains g-z, G-Z, +, /, =), it's base64
+        let is_hex_only = content.chars().all(|c| c.is_ascii_hexdigit());
+
+        if is_hex_only {
+            // Decode as hex (legacy format)
+            match hex::decode(content) {
+                Ok(bytes) => {
+                    tracing::debug!(
+                        target: "mdk_core::welcomes",
+                        "Decoded welcome using hex (legacy format)"
+                    );
+                    return Ok(bytes);
+                }
+                Err(e) => {
+                    return Err(Error::Welcome(format!(
+                        "Failed to decode welcome as hex: {}",
+                        e
+                    )));
+                }
+            }
+        }
+
+        // Decode as base64 (new format)
+        match BASE64.decode(content) {
+            Ok(bytes) => {
+                tracing::debug!(
+                    target: "mdk_core::welcomes",
+                    "Decoded welcome using base64 (new format)"
+                );
+                Ok(bytes)
+            }
+            Err(e) => Err(Error::Welcome(format!(
+                "Failed to decode welcome as base64: {}",
+                e
+            ))),
+        }
+    }
+
     fn preview_welcome(
         &self,
         wrapper_event_id: &EventId,
         welcome_event: &UnsignedEvent,
     ) -> Result<WelcomePreview, Error> {
-        let hex_content = match hex::decode(&welcome_event.content) {
+        let hex_content = match self.decode_welcome_content(&welcome_event.content) {
             Ok(content) => content,
             Err(e) => {
                 let error_string = format!("Error hex decoding welcome event: {:?}", e);

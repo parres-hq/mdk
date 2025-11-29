@@ -17,6 +17,8 @@ use mdk_storage_traits::GroupId;
 use mdk_storage_traits::MdkStorageProvider;
 use mdk_storage_traits::groups::types as group_types;
 use mdk_storage_traits::messages::types as message_types;
+use nostr::base64::Engine;
+use nostr::base64::engine::general_purpose::STANDARD as BASE64;
 use nostr::prelude::*;
 use openmls::prelude::*;
 use openmls_basic_credential::SignatureKeyPair;
@@ -1272,15 +1274,29 @@ where
         let mut welcome_rumors_vec = Vec::new();
 
         for event in key_package_events {
+            // Encode based on configuration
+            let encoded_welcome = if self.config.use_base64_encoding {
+                tracing::debug!(
+                    target: "mdk_core::groups",
+                    "Encoding welcome using base64 (new format)"
+                );
+                BASE64.encode(&serialized_welcome)
+            } else {
+                tracing::debug!(
+                    target: "mdk_core::groups",
+                    "Encoding welcome using hex (legacy format)"
+                );
+                hex::encode(&serialized_welcome)
+            };
+
             // Build welcome event rumors for each new user
-            let welcome_rumor =
-                EventBuilder::new(Kind::MlsWelcome, hex::encode(&serialized_welcome))
-                    .tags(vec![
-                        Tag::from_standardized(TagStandard::Relays(group_relays.to_vec())),
-                        Tag::event(event.id),
-                        Tag::client(format!("MDK/{}", env!("CARGO_PKG_VERSION"))),
-                    ])
-                    .build(committer_pubkey);
+            let welcome_rumor = EventBuilder::new(Kind::MlsWelcome, encoded_welcome)
+                .tags(vec![
+                    Tag::from_standardized(TagStandard::Relays(group_relays.to_vec())),
+                    Tag::event(event.id),
+                    Tag::client(format!("MDK/{}", env!("CARGO_PKG_VERSION"))),
+                ])
+                .build(committer_pubkey);
 
             welcome_rumors_vec.push(welcome_rumor);
         }
