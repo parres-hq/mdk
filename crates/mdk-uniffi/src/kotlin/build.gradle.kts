@@ -40,7 +40,7 @@ android {
 dependencies {
     api("net.java.dev.jna:jna:5.14.0@aar")
     implementation("net.java.dev.jna:jna:5.14.0@aar")
-
+    implementation("androidx.annotation:annotation:1.7.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.7.3")
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.1.5")
