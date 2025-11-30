@@ -1109,15 +1109,15 @@ mod tests {
         let result = mdk.decode_welcome_content(odd_length_hex);
 
         // Should try hex first (fails due to odd length), then fall back to base64
-        // "abc" might decode as base64, but if not, should show both were tried
-        if let Err(err) = result {
-            let err_msg = err.to_string();
-            assert!(
-                err_msg.contains("attempted hex and base64"),
-                "Error should indicate both formats were tried for hex-only string, got: {}",
-                err_msg
-            );
-        }
+        // This should fail with an error indicating both formats were tried
+        assert!(result.is_err(), "Expected error but got Ok");
+        let err = result.unwrap_err();
+        let err_msg = err.to_string();
+        assert!(
+            err_msg.contains("attempted hex and base64"),
+            "Error should indicate both formats were tried for hex-only string, got: {}",
+            err_msg
+        );
     }
 
     #[test]
