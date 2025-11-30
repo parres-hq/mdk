@@ -98,7 +98,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
-    name: Build and Package Python Bindings (${{ matrix.os }})
+    name: Build Python Bindings (${{ matrix.os }})
 
     steps:
     - name: Checkout code
@@ -150,28 +150,65 @@ jobs:
           echo "libs=libmdk_uniffi.so" >> $GITHUB_OUTPUT
         fi
 
-    - name: Copy release library
+    - name: Prepare Python artifacts
       shell: bash
       run: |
-        cp target/release/${{ steps.lib_filename.outputs.filename }} crates/mdk-uniffi/bindings/python/
+        mkdir -p python-artifacts/mdk
+        # Copy Python bindings
+        cp crates/mdk-uniffi/bindings/python/mdk_uniffi.py python-artifacts/mdk_uniffi.py
+        # Copy current platform's library
+        cp target/release/${{ steps.lib_filename.outputs.filename }} python-artifacts/mdk/${{ steps.lib_filename.outputs.filename }}
+        echo "✓ Python artifacts prepared for ${{ runner.os }}"
 
-    - name: Assemble Python package
+    - name: Upload Python artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: python-artifacts-${{ matrix.os }}
+        path: python-artifacts/
+        retention-days: 1
+
+  publish-python:
+    needs: package-python
+    runs-on: ubuntu-latest
+    name: Publish Python Package
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Download all Python artifacts
+      uses: actions/download-artifact@v4
+      with:
+        path: python-artifacts-all
+        pattern: python-artifacts-*
+        merge-multiple: false
+
+    - name: Assemble complete Python package
       shell: bash
       run: |
         mkdir -p python-package/mdk
-        # Copy the main __init__.py that does the import magic
-        cp crates/mdk-uniffi/src/python/__init__.py python-package/mdk/__init__.py
-        # Copy Python bindings directly to mdk package
-        cp crates/mdk-uniffi/bindings/python/mdk_uniffi.py python-package/mdk/mdk_uniffi.py
-        # Copy current platform's library
-        cp crates/mdk-uniffi/bindings/python/${{ steps.lib_filename.outputs.filename }} python-package/mdk/
         
-        # Copy pyproject.toml template
+        # Copy package metadata files (same for all platforms)
+        cp crates/mdk-uniffi/src/python/__init__.py python-package/mdk/__init__.py
         cp crates/mdk-uniffi/src/python/pyproject.toml python-package/pyproject.toml
         sed 's/{{lang}}/Python/g' crates/mdk-uniffi/src/README.md > python-package/README.md
         cp crates/mdk-uniffi/src/python/docs.md python-package/docs.md
         
-        echo "✓ Python package assembled for ${{ runner.os }}"
+        # Copy Python bindings (same for all platforms, use from any artifact)
+        cp python-artifacts-all/python-artifacts-ubuntu-latest/mdk_uniffi.py python-package/mdk/mdk_uniffi.py
+        
+        # Copy all platform libraries
+        for artifact_dir in python-artifacts-all/python-artifacts-*/; do
+          if [ -d "$artifact_dir/mdk" ]; then
+            cp "$artifact_dir/mdk"/*.so python-package/mdk/ 2>/dev/null || true
+            cp "$artifact_dir/mdk"/*.dylib python-package/mdk/ 2>/dev/null || true
+            cp "$artifact_dir/mdk"/*.dll python-package/mdk/ 2>/dev/null || true
+          fi
+        done
+        
+        echo "✓ Complete Python package assembled with all platform libraries"
 
     - name: Checkout Python package repo
       uses: actions/checkout@v4
@@ -189,14 +226,6 @@ jobs:
     - name: Copy Python package to repo
       shell: bash
       run: |
-        # Preserve existing libraries from other platforms
-        if [ -d "python-package-repo/mdk" ]; then
-          mkdir -p python-package/mdk
-          cp python-package-repo/mdk/*.so python-package/mdk/ 2>/dev/null || true
-          cp python-package-repo/mdk/*.dylib python-package/mdk/ 2>/dev/null || true
-          cp python-package-repo/mdk/*.dll python-package/mdk/ 2>/dev/null || true
-        fi
-        # Copy/update all package files to single directory
         cp -R python-package/* python-package-repo/
         cd python-package-repo
         git add -A
@@ -208,7 +237,7 @@ jobs:
         if git diff --staged --quiet; then
           echo "No changes to commit"
         else
-          git commit -m "Update Python package (${{ runner.os }}) from mdk@${GITHUB_SHA:0:7}"
+          git commit -m "Update Python package from mdk@${GITHUB_SHA:0:7}"
           git remote set-url origin https://x-access-token:${{ secrets.BINDINGS_PACKAGE_PAT }}@github.com/${{ env.PYTHON_PACKAGE_REPO }}.git
           git push origin HEAD
         fi
@@ -219,7 +248,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
-    name: Build and Package Ruby Bindings (${{ matrix.os }})
+    name: Build Ruby Bindings (${{ matrix.os }})
 
     steps:
     - name: Checkout code
@@ -268,28 +297,66 @@ jobs:
           echo "filename=libmdk_uniffi.so" >> $GITHUB_OUTPUT
         fi
 
-    - name: Copy release library
+    - name: Prepare Ruby artifacts
       shell: bash
       run: |
-        cp target/release/${{ steps.lib_filename.outputs.filename }} crates/mdk-uniffi/bindings/ruby/
+        mkdir -p ruby-artifacts/lib/mdk
+        # Copy Ruby bindings
+        cp crates/mdk-uniffi/bindings/ruby/mdk_uniffi.rb ruby-artifacts/lib/mdk/mdk_uniffi.rb
+        # Copy current platform's library
+        cp target/release/${{ steps.lib_filename.outputs.filename }} ruby-artifacts/lib/mdk/${{ steps.lib_filename.outputs.filename }}
+        echo "✓ Ruby artifacts prepared for ${{ runner.os }}"
 
-    - name: Assemble Ruby gem
+    - name: Upload Ruby artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: ruby-artifacts-${{ matrix.os }}
+        path: ruby-artifacts/
+        retention-days: 1
+
+  publish-ruby:
+    needs: package-ruby
+    runs-on: ubuntu-latest
+    name: Publish Ruby Package
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Download all Ruby artifacts
+      uses: actions/download-artifact@v4
+      with:
+        path: ruby-artifacts-all
+        pattern: ruby-artifacts-*
+        merge-multiple: false
+
+    - name: Assemble complete Ruby gem
       shell: bash
       run: |
         mkdir -p ruby-gem/lib/mdk
-        # Copy gem structure
+        
+        # Copy gem structure (same for all platforms)
         cp crates/mdk-uniffi/src/ruby/lib/mdk.rb ruby-gem/lib/
         cp crates/mdk-uniffi/src/ruby/lib/mdk/version.rb ruby-gem/lib/mdk/
-        # Copy Ruby bindings
-        cp crates/mdk-uniffi/bindings/ruby/mdk_uniffi.rb ruby-gem/lib/mdk/mdk_uniffi.rb
-        # Copy current platform's library
-        cp crates/mdk-uniffi/bindings/ruby/${{ steps.lib_filename.outputs.filename }} ruby-gem/lib/mdk/
-        # Copy gemspec
         cp crates/mdk-uniffi/src/ruby/mdk.gemspec ruby-gem/mdk.gemspec
         sed 's/{{lang}}/Ruby/g' crates/mdk-uniffi/src/README.md > ruby-gem/README.md
         cp crates/mdk-uniffi/src/ruby/docs.md ruby-gem/docs.md
         
-        echo "✓ Ruby gem assembled for ${{ runner.os }}"
+        # Copy Ruby bindings (same for all platforms, use from any artifact)
+        cp ruby-artifacts-all/ruby-artifacts-ubuntu-latest/lib/mdk/mdk_uniffi.rb ruby-gem/lib/mdk/mdk_uniffi.rb
+        
+        # Copy all platform libraries
+        for artifact_dir in ruby-artifacts-all/ruby-artifacts-*/; do
+          if [ -d "$artifact_dir/lib/mdk" ]; then
+            cp "$artifact_dir/lib/mdk"/*.so ruby-gem/lib/mdk/ 2>/dev/null || true
+            cp "$artifact_dir/lib/mdk"/*.dylib ruby-gem/lib/mdk/ 2>/dev/null || true
+            cp "$artifact_dir/lib/mdk"/*.dll ruby-gem/lib/mdk/ 2>/dev/null || true
+          fi
+        done
+        
+        echo "✓ Complete Ruby gem assembled with all platform libraries"
 
     - name: Checkout Ruby package repo
       uses: actions/checkout@v4
@@ -307,14 +374,6 @@ jobs:
     - name: Copy Ruby gem to repo
       shell: bash
       run: |
-        # Preserve existing libraries from other platforms
-        if [ -d "ruby-package-repo/lib/mdk" ]; then
-          mkdir -p ruby-gem/lib/mdk
-          cp ruby-package-repo/lib/mdk/*.so ruby-gem/lib/mdk/ 2>/dev/null || true
-          cp ruby-package-repo/lib/mdk/*.dylib ruby-gem/lib/mdk/ 2>/dev/null || true
-          cp ruby-package-repo/lib/mdk/*.dll ruby-gem/lib/mdk/ 2>/dev/null || true
-        fi
-        # Copy/update all package files to single directory
         cp -R ruby-gem/* ruby-package-repo/
         cd ruby-package-repo
         git add -A
@@ -326,7 +385,7 @@ jobs:
         if git diff --staged --quiet; then
           echo "No changes to commit"
         else
-          git commit -m "Update Ruby gem (${{ runner.os }}) from mdk@${GITHUB_SHA:0:7}"
+          git commit -m "Update Ruby gem from mdk@${GITHUB_SHA:0:7}"
           git remote set-url origin https://x-access-token:${{ secrets.BINDINGS_PACKAGE_PAT }}@github.com/${{ env.RUBY_PACKAGE_REPO }}.git
           git push origin HEAD
         fi
