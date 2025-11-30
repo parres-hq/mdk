@@ -17,8 +17,6 @@ use mdk_storage_traits::GroupId;
 use mdk_storage_traits::MdkStorageProvider;
 use mdk_storage_traits::groups::types as group_types;
 use mdk_storage_traits::messages::types as message_types;
-use nostr::base64::Engine;
-use nostr::base64::engine::general_purpose::STANDARD as BASE64;
 use nostr::prelude::*;
 use openmls::prelude::*;
 use openmls_basic_credential::SignatureKeyPair;
@@ -27,6 +25,7 @@ use tls_codec::Serialize as TlsSerialize;
 use super::MDK;
 use super::extension::NostrGroupDataExtension;
 use crate::error::Error;
+use crate::util::encode_content;
 
 /// Result of creating a new MLS group
 #[derive(Debug)]
@@ -1274,20 +1273,15 @@ where
         let mut welcome_rumors_vec = Vec::new();
 
         for event in key_package_events {
-            // Encode based on configuration
-            let encoded_welcome = if self.config.use_base64_encoding {
-                tracing::debug!(
-                    target: "mdk_core::groups",
-                    "Encoding welcome using base64 (new format)"
-                );
-                BASE64.encode(&serialized_welcome)
-            } else {
-                tracing::debug!(
-                    target: "mdk_core::groups",
-                    "Encoding welcome using hex (legacy format)"
-                );
-                hex::encode(&serialized_welcome)
-            };
+            // Encode based on configuration (with version tag for base64)
+            let encoded_welcome =
+                encode_content(&serialized_welcome, self.config.use_base64_encoding);
+
+            tracing::debug!(
+                target: "mdk_core::groups",
+                "Encoded welcome using {} format",
+                if self.config.use_base64_encoding { "base64 (v1)" } else { "hex (legacy)" }
+            );
 
             // Build welcome event rumors for each new user
             let welcome_rumor = EventBuilder::new(Kind::MlsWelcome, encoded_welcome)

@@ -47,64 +47,57 @@ pub(crate) fn decrypt_with_exporter_secret(
     Ok(message_bytes)
 }
 
-/// Checks if a string contains only hexadecimal characters
+/// Encodes content using base64 with version tag, or hex without version tag
 ///
 /// # Arguments
 ///
-/// * `content` - The string to check
+/// * `bytes` - The bytes to encode
+/// * `use_base64` - If true, encode as base64 with "v1:" prefix; otherwise encode as hex
 ///
 /// # Returns
 ///
-/// `true` if the string contains only hex characters [0-9a-fA-F], `false` otherwise
-#[inline]
-pub(crate) fn is_hex_only(content: &str) -> bool {
-    content.chars().all(|c| c.is_ascii_hexdigit())
+/// The encoded string
+pub(crate) fn encode_content(bytes: &[u8], use_base64: bool) -> String {
+    if use_base64 {
+        format!("v1:{}", BASE64.encode(bytes))
+    } else {
+        hex::encode(bytes)
+    }
 }
 
-/// Decodes content from either base64 or hex encoding with accurate error reporting
+/// Decodes content from versioned base64 or legacy hex encoding
 ///
-/// Detects the format based on character set:
-/// - Hex uses only: 0-9, a-f, A-F
-/// - Base64 uses: A-Z, a-z, 0-9, +, /, =
+/// Supports two formats:
+/// - **Version 1 (base64)**: Prefix "v1:" followed by base64-encoded content
+/// - **Legacy (hex)**: No prefix, hex-encoded content
 ///
-/// If the string contains only hex characters, it attempts hex decoding first (legacy format).
-/// If hex decoding fails or if the string contains non-hex characters, it attempts base64 decoding.
+/// This version-based approach eliminates ambiguity when hex-only strings could be valid
+/// in both formats (e.g., "deadbeef" is valid hex and valid base64, but decodes to
+/// completely different bytes in each format).
 ///
 /// # Arguments
 ///
-/// * `content` - The encoded string (base64 or hex)
+/// * `content` - The encoded string (either "v1:base64data" or "hexdata")
 /// * `label` - A label for the content type (e.g., "key package", "welcome") used in error messages
 ///
 /// # Returns
 ///
-/// A tuple of (decoded bytes, format description) on success, or an error message string
-/// describing which decode attempts were made.
+/// A tuple of (decoded bytes, format description) on success, or an error message string.
 pub(crate) fn decode_dual_format(
     content: &str,
     label: &str,
 ) -> Result<(Vec<u8>, &'static str), String> {
-    let hex_only = is_hex_only(content);
-
-    if hex_only {
-        // Try hex decode first (legacy format)
-        if let Ok(bytes) = hex::decode(content) {
-            return Ok((bytes, "hex (legacy format)"));
-        }
+    // Check for version 1 prefix
+    if let Some(b64_content) = content.strip_prefix("v1:") {
+        // Version 1: base64 format
+        return BASE64
+            .decode(b64_content)
+            .map(|bytes| (bytes, "base64 (v1)"))
+            .map_err(|e| format!("Failed to decode {} as base64 (v1): {}", label, e));
     }
 
-    // Decode as base64 (new format or fallback)
-    match BASE64.decode(content) {
-        Ok(bytes) => Ok((bytes, "base64 (new format)")),
-        Err(e) => {
-            // Accurate error message based on what was actually attempted
-            if hex_only {
-                Err(format!(
-                    "Failed to decode {} (attempted hex and base64): {}",
-                    label, e
-                ))
-            } else {
-                Err(format!("Failed to decode {} as base64: {}", label, e))
-            }
-        }
-    }
+    // No version prefix: legacy hex format
+    hex::decode(content)
+        .map(|bytes| (bytes, "hex (legacy)"))
+        .map_err(|e| format!("Failed to decode {} as hex (legacy): {}", label, e))
 }
