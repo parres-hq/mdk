@@ -6,7 +6,7 @@ plugins {
 
 android {
     namespace = "org.parres.mdk"
-    compileSdk = 36
+    compileSdk = 34
 
     defaultConfig {
         minSdk = 33

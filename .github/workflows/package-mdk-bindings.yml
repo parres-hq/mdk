@@ -430,6 +430,10 @@ jobs:
 
         cd kotlin-package-repo
 
+        # Remove old files from Git index before setting up LFS to avoid tracking errors
+        git rm --cached -r src/main/jniLibs/android-aarch64 2>/dev/null || true
+        git rm --cached -r src/main/jniLibs/android-armv7 2>/dev/null || true
+
         # Ensure jniLibs directories exist
         mkdir -p src/main/jniLibs/arm64-v8a
         mkdir -p src/main/jniLibs/armeabi-v7a
