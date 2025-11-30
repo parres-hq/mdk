@@ -1,32 +1,30 @@
-# MDK Kotlin/Android Bindings Documentation
+## Basic Usage
 
-## Building the AAR
+### Installation
 
-1. Ensure the native libraries produced by `just _build-uniffi-android …` are copied into `src/main/jniLibs/<abi>/libmdk_uniffi.so`.
-2. From `crates/mdk-uniffi/src/kotlin` run:
-
-```bash
-./mvnw clean package -DskipTests
-```
-
-The resulting AAR can be found in `target/mdk-0.5.2.aar`.
-
-## Installation
-
-Once published (e.g. via JitPack) reference it in your Android project:
+Make sure you have jitpack enabled in your settings.gradle: 
 
 ```kotlin
-dependencies {
-    implementation("org.parres:mdk:0.5.2")
+repositories {
+    maven { url 'https://jitpack.io' }
 }
 ```
 
-## Basic Usage
+Add the following dependencies (always add them as aar! it will not work otherwise): 
+
+```kotlin
+dependencies {
+    implementation("net.java.dev.jna:jna:5.14.0@aar")
+    implementation("com.github.dannym-arx:mdk-kotlin:0.5.2@aar") // will be com.github.marmot-protocol:mdk-kotlin:0.5.2@aar after merge
+}
+```
+
+to your build.gradle.kts
 
 ### Import and Initialize
 
 ```kotlin
-import uniffi.mdk_uniffi.*
+import build.marmot.mdk.*
 
 // Create an MDK instance with a SQLite database path
 val dbPath = context.filesDir.resolve("mdk.db").absolutePath
@@ -414,7 +412,7 @@ class MdkManager(private val context: Context) {
 ## Example: Complete Workflow
 
 ```kotlin
-import uniffi.mdk_uniffi.*
+import build.marmot.mdk.*
 
 // 1. Initialize
 val dbPath = "/path/to/mdk.db"
