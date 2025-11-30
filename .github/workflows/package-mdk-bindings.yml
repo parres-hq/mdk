@@ -469,6 +469,10 @@ jobs:
         git lfs install
         git lfs track "*.so"
         git add .gitattributes
+
+        mkdir -p src/main/kotlin/build/marmot/mdk
+
+        cp ../crates/mdk-uniffi/bindings/kotlin/build/marmot/mdk/mdk_uniffi.kt src/main/kotlin/build/marmot/mdk/mdk_uniffi.kt
         
         git add -A
 
