@@ -434,6 +434,10 @@ jobs:
         git rm --cached -r src/main/jniLibs/android-aarch64 2>/dev/null || true
         git rm --cached -r src/main/jniLibs/android-armv7 2>/dev/null || true
 
+        mkdir -p src/main/kotlin/build/marmot/mdk
+        cp ../crates/mdk-uniffi/bindings/kotlin/build/marmot/mdk/mdk_uniffi.kt src/main/kotlin/build/marmot/mdk/mdk_uniffi.kt
+        git add src/main/kotlin/build/marmot/mdk/mdk_uniffi.kt
+
         # Ensure jniLibs directories exist
         mkdir -p src/main/jniLibs/arm64-v8a
         mkdir -p src/main/jniLibs/armeabi-v7a
@@ -470,9 +474,6 @@ jobs:
         git lfs track "*.so"
         git add .gitattributes
 
-        mkdir -p src/main/kotlin/build/marmot/mdk
-
-        cp ../crates/mdk-uniffi/bindings/kotlin/build/marmot/mdk/mdk_uniffi.kt src/main/kotlin/build/marmot/mdk/mdk_uniffi.kt
         
         git add -A
 
