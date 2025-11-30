@@ -1,6 +1,8 @@
 //! Nostr MLS Key Packages
 
 use mdk_storage_traits::MdkStorageProvider;
+use nostr::base64::Engine;
+use nostr::base64::engine::general_purpose::STANDARD as BASE64;
 use nostr::{Event, Kind, PublicKey, RelayUrl, Tag, TagKind};
 use openmls::key_packages::KeyPackage;
 use openmls::prelude::*;
@@ -11,7 +13,7 @@ use tls_codec::{Deserialize as TlsDeserialize, Serialize as TlsSerialize};
 use crate::MDK;
 use crate::constant::{DEFAULT_CIPHERSUITE, TAG_EXTENSIONS};
 use crate::error::Error;
-use crate::util::NostrTagFormat;
+use crate::util::{NostrTagFormat, decode_dual_format};
 
 impl<Storage> MDK<Storage>
 where
@@ -19,13 +21,17 @@ where
 {
     /// Creates a key package for a Nostr event.
     ///
-    /// This function generates a hex-encoded key package that is used as the content field of a kind:443 Nostr event.
+    /// This function generates an encoded key package that is used as the content field of a kind:443 Nostr event.
+    /// The encoding format (hex or base64) is determined by `MdkConfig::use_base64_encoding`:
+    /// - When `false` (default): uses hex encoding (legacy format)
+    /// - When `true`: uses base64 encoding (new format, ~33% smaller)
+    ///
     /// The key package contains the user's credential and capabilities required for MLS operations.
     ///
     /// # Returns
     ///
     /// A tuple containing:
-    /// * A hex-encoded string containing the serialized key package
+    /// * An encoded string (hex or base64) containing the serialized key package
     /// * An array of 6 tags for the Nostr event:
     ///   1. `mls_protocol_version` - MLS protocol version (e.g., "1.0")
     ///   2. `mls_ciphersuite` - Ciphersuite identifier (e.g., "0x0001")
@@ -64,6 +70,21 @@ where
 
         let key_package_serialized = key_package_bundle.key_package().tls_serialize_detached()?;
 
+        // Encode based on configuration
+        let encoded_content = if self.config.use_base64_encoding {
+            tracing::debug!(
+                target: "mdk_core::key_packages",
+                "Encoding key package using base64 (new format)"
+            );
+            BASE64.encode(&key_package_serialized)
+        } else {
+            tracing::debug!(
+                target: "mdk_core::key_packages",
+                "Encoding key package using hex (legacy format)"
+            );
+            hex::encode(&key_package_serialized)
+        };
+
         let tags = [
             Tag::custom(TagKind::MlsProtocolVersion, ["1.0"]),
             Tag::custom(TagKind::MlsCiphersuite, [self.ciphersuite_value()]),
@@ -73,30 +94,59 @@ where
             Tag::client(format!("MDK/{}", env!("CARGO_PKG_VERSION"))),
         ];
 
-        Ok((hex::encode(key_package_serialized), tags))
+        Ok((encoded_content, tags))
     }
 
-    /// Parses and validates a hex-encoded key package.
+    /// Decodes key package content from either base64 or hex encoding.
     ///
-    /// This function takes a hex-encoded key package string, decodes it, deserializes it into a
-    /// KeyPackageIn object, and validates its signature, ciphersuite, and extensions.
+    /// Detects the format based on character set:
+    /// - Hex uses only: 0-9, a-f, A-F
+    /// - Base64 uses: A-Z, a-z, 0-9, +, /, =
+    ///
+    /// If the string contains only hex characters, it attempts hex decoding first (legacy format).
+    /// If hex decoding fails or if the string contains non-hex characters, it attempts base64 decoding.
+    /// This provides maximum robustness against edge cases.
     ///
     /// # Arguments
     ///
-    /// * `key_package_hex` - A hex-encoded string containing the serialized key package
+    /// * `content` - The encoded key package string (base64 or hex)
     ///
     /// # Returns
     ///
-    /// A validated KeyPackage on success, or a Error on failure.
+    /// The decoded bytes on success, or an Error if decoding fails.
+    fn decode_key_package_content(&self, content: &str) -> Result<Vec<u8>, Error> {
+        let (bytes, format) =
+            decode_dual_format(content, "key package").map_err(Error::KeyPackage)?;
+
+        tracing::debug!(
+            target: "mdk_core::key_packages",
+            "Decoded key package using {}", format
+        );
+
+        Ok(bytes)
+    }
+
+    /// Parses and validates a key package from either hex or base64 encoding.
+    ///
+    /// This function supports both hex (legacy) and base64 (new) encodings to enable
+    /// a smooth migration. It automatically detects the encoding format.
+    ///
+    /// # Arguments
+    ///
+    /// * `key_package_str` - A hex or base64 encoded string containing the serialized key package
+    ///
+    /// # Returns
+    ///
+    /// A validated KeyPackage on success, or an Error on failure.
     ///
     /// # Errors
     ///
     /// This function will return an error if:
-    /// * The hex decoding fails
+    /// * Both hex and base64 decoding fail
     /// * The TLS deserialization fails
     /// * The key package validation fails (invalid signature, ciphersuite, or extensions)
-    fn parse_serialized_key_package(&self, key_package_hex: &str) -> Result<KeyPackage, Error> {
-        let key_package_bytes = hex::decode(key_package_hex)?;
+    fn parse_serialized_key_package(&self, key_package_str: &str) -> Result<KeyPackage, Error> {
+        let key_package_bytes = self.decode_key_package_content(key_package_str)?;
 
         let key_package_in = KeyPackageIn::tls_deserialize(&mut key_package_bytes.as_slice())?;
 
@@ -907,9 +957,12 @@ mod tests {
     fn test_invalid_key_package_parsing() {
         let mdk = create_test_mdk();
 
-        // Try to parse invalid hex
-        let result = mdk.parse_serialized_key_package("invalid hex");
-        assert!(matches!(result, Err(Error::Hex(..))));
+        // Try to parse invalid encoding (neither valid base64 nor hex)
+        let result = mdk.parse_serialized_key_package("invalid!@#$%");
+        assert!(
+            matches!(result, Err(Error::KeyPackage(_))),
+            "Should return KeyPackage error for invalid encoding"
+        );
 
         // Try to parse valid hex but invalid key package
         let result = mdk.parse_serialized_key_package("deadbeef");
@@ -2028,5 +2081,257 @@ mod tests {
         // test setup with careful timing control. The last_resort extension enables this at the
         // protocol level, but the current test validates the extension is present and basic
         // lifecycle works correctly.
+    }
+
+    #[test]
+    fn test_key_package_base64_encoding() {
+        let config = crate::MdkConfig {
+            use_base64_encoding: true,
+        };
+
+        let mdk = crate::tests::create_test_mdk_with_config(config);
+        let test_pubkey =
+            PublicKey::from_hex("884704bd421671e01c13f854d2ce23ce2a5bfe9562f4f297ad2bc921ba30c3a6")
+                .unwrap();
+        let relays = vec![RelayUrl::parse("wss://relay.example.com").unwrap()];
+
+        let (key_package_str, _) = mdk
+            .create_key_package_for_event(&test_pubkey, relays)
+            .expect("Failed to create key package");
+
+        // Verify it's base64 (not hex)
+        assert!(
+            BASE64.decode(&key_package_str).is_ok(),
+            "Should be valid base64"
+        );
+        assert!(
+            hex::decode(&key_package_str).is_err(),
+            "Should not be valid hex"
+        );
+
+        // Verify we can parse it back
+        let parsed = mdk
+            .parse_serialized_key_package(&key_package_str)
+            .expect("Failed to parse base64 key package");
+        assert_eq!(parsed.ciphersuite(), DEFAULT_CIPHERSUITE);
+    }
+
+    #[test]
+    fn test_key_package_hex_encoding_legacy() {
+        let config = crate::MdkConfig {
+            use_base64_encoding: false,
+        };
+
+        let mdk = crate::tests::create_test_mdk_with_config(config);
+        let test_pubkey =
+            PublicKey::from_hex("884704bd421671e01c13f854d2ce23ce2a5bfe9562f4f297ad2bc921ba30c3a6")
+                .unwrap();
+        let relays = vec![RelayUrl::parse("wss://relay.example.com").unwrap()];
+
+        let (key_package_str, _) = mdk
+            .create_key_package_for_event(&test_pubkey, relays)
+            .expect("Failed to create key package");
+
+        // Verify it's hex (not base64 - though hex is technically valid base64)
+        assert!(hex::decode(&key_package_str).is_ok(), "Should be valid hex");
+
+        // Verify we can parse it back
+        let parsed = mdk
+            .parse_serialized_key_package(&key_package_str)
+            .expect("Failed to parse hex key package");
+        assert_eq!(parsed.ciphersuite(), DEFAULT_CIPHERSUITE);
+    }
+
+    #[test]
+    fn test_key_package_cross_format_compatibility() {
+        // Create with hex
+        let hex_config = crate::MdkConfig {
+            use_base64_encoding: false,
+        };
+        let hex_mdk = crate::tests::create_test_mdk_with_config(hex_config);
+
+        let test_pubkey =
+            PublicKey::from_hex("884704bd421671e01c13f854d2ce23ce2a5bfe9562f4f297ad2bc921ba30c3a6")
+                .unwrap();
+        let relays = vec![RelayUrl::parse("wss://relay.example.com").unwrap()];
+
+        let (hex_key_package, _) = hex_mdk
+            .create_key_package_for_event(&test_pubkey, relays.clone())
+            .expect("Failed to create hex key package");
+
+        // Create with base64
+        let base64_config = crate::MdkConfig {
+            use_base64_encoding: true,
+        };
+        let base64_mdk = crate::tests::create_test_mdk_with_config(base64_config);
+
+        let (base64_key_package, _) = base64_mdk
+            .create_key_package_for_event(&test_pubkey, relays)
+            .expect("Failed to create base64 key package");
+
+        // Both MDK instances should be able to parse both formats
+        assert!(
+            hex_mdk
+                .parse_serialized_key_package(&hex_key_package)
+                .is_ok(),
+            "Hex MDK should parse hex key package"
+        );
+        assert!(
+            hex_mdk
+                .parse_serialized_key_package(&base64_key_package)
+                .is_ok(),
+            "Hex MDK should parse base64 key package"
+        );
+        assert!(
+            base64_mdk
+                .parse_serialized_key_package(&hex_key_package)
+                .is_ok(),
+            "Base64 MDK should parse hex key package"
+        );
+        assert!(
+            base64_mdk
+                .parse_serialized_key_package(&base64_key_package)
+                .is_ok(),
+            "Base64 MDK should parse base64 key package"
+        );
+    }
+
+    #[test]
+    fn test_key_package_size_comparison() {
+        let test_pubkey =
+            PublicKey::from_hex("884704bd421671e01c13f854d2ce23ce2a5bfe9562f4f297ad2bc921ba30c3a6")
+                .unwrap();
+        let relays = vec![RelayUrl::parse("wss://relay.example.com").unwrap()];
+
+        // Create with hex
+        let hex_config = crate::MdkConfig {
+            use_base64_encoding: false,
+        };
+        let hex_mdk = crate::tests::create_test_mdk_with_config(hex_config);
+
+        let (hex_key_package, _) = hex_mdk
+            .create_key_package_for_event(&test_pubkey, relays.clone())
+            .expect("Failed to create hex key package");
+
+        // Create with base64
+        let base64_config = crate::MdkConfig {
+            use_base64_encoding: true,
+        };
+        let base64_mdk = crate::tests::create_test_mdk_with_config(base64_config);
+
+        let (base64_key_package, _) = base64_mdk
+            .create_key_package_for_event(&test_pubkey, relays)
+            .expect("Failed to create base64 key package");
+
+        let hex_size = hex_key_package.len();
+        let base64_size = base64_key_package.len();
+
+        // Base64 should be smaller than hex
+        assert!(
+            base64_size < hex_size,
+            "Base64 ({} bytes) should be smaller than hex ({} bytes)",
+            base64_size,
+            hex_size
+        );
+
+        // Calculate the savings
+        let savings_percent = ((hex_size - base64_size) as f64 / hex_size as f64) * 100.0;
+        println!(
+            "Size comparison: hex={} bytes, base64={} bytes, savings={:.1}%",
+            hex_size, base64_size, savings_percent
+        );
+
+        // Base64 should be approximately 33% smaller (hex is 2x, base64 is 1.33x)
+        // Allow some variance due to encoding overhead
+        assert!(
+            savings_percent > 25.0 && savings_percent < 40.0,
+            "Expected savings between 25-40%, got {:.1}%",
+            savings_percent
+        );
+    }
+
+    #[test]
+    fn test_decode_invalid_hex_string() {
+        let mdk = create_test_mdk();
+
+        // Create a string that has non-hex characters and is also invalid base64
+        // Use invalid characters for both formats
+        let invalid = "!!!"; // '!' is not valid for hex or base64
+
+        let result = mdk.decode_key_package_content(invalid);
+
+        // This should attempt base64 decode since it's not hex-only
+        // and will fail since "!!!" isn't valid base64 either
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("as base64"),
+            "Error should indicate base64 was tried (not hex since it's not hex-only), got: {}",
+            err_msg
+        );
+    }
+
+    #[test]
+    fn test_decode_hex_only_invalid() {
+        let mdk = create_test_mdk();
+
+        // Create a string with only hex characters but odd length (invalid for hex decode)
+        let odd_length_hex = "abc"; // Valid hex chars but odd length
+
+        let result = mdk.decode_key_package_content(odd_length_hex);
+
+        // Should try hex first (fails due to odd length), then fall back to base64
+        // This should fail with an error indicating both formats were tried
+        assert!(result.is_err(), "Expected error but got Ok");
+        let err = result.unwrap_err();
+        let err_msg = err.to_string();
+        assert!(
+            err_msg.contains("attempted hex and base64"),
+            "Error should indicate both formats were tried for hex-only string, got: {}",
+            err_msg
+        );
+    }
+
+    #[test]
+    fn test_decode_valid_hex() {
+        let mdk = create_test_mdk();
+
+        // Test that valid hex strings decode successfully via the hex path
+        let valid_hex = "00000000";
+        let result = mdk.decode_key_package_content(valid_hex);
+        assert!(result.is_ok(), "Valid hex should decode successfully");
+        assert_eq!(result.unwrap(), vec![0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn test_decode_base64_with_special_chars() {
+        let mdk = create_test_mdk();
+
+        // Test base64 string with characters not in hex alphabet
+        // This should skip hex decode entirely and go straight to base64
+        let base64_str = "SGVsbG8="; // "Hello" in base64 (contains non-hex chars 'S', 'G', 'l', '=')
+        let result = mdk.decode_key_package_content(base64_str);
+
+        assert!(result.is_ok(), "Should decode valid base64");
+        let decoded = result.unwrap();
+        assert_eq!(decoded, b"Hello");
+    }
+
+    #[test]
+    fn test_decode_base64_with_padding() {
+        let mdk = create_test_mdk();
+
+        // Test various base64 strings with padding
+        let test_cases = vec![
+            ("dGVzdA==", b"test".as_slice()), // "test" in base64
+            ("aGk=", b"hi".as_slice()),       // "hi" in base64
+            ("YQ==", b"a".as_slice()),        // "a" in base64
+        ];
+
+        for (input, expected) in test_cases {
+            let result = mdk.decode_key_package_content(input);
+            assert!(result.is_ok(), "Should decode {}", input);
+            assert_eq!(result.unwrap(), expected, "Mismatch for {}", input);
+        }
     }
 }

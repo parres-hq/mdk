@@ -10,6 +10,7 @@ use tls_codec::Deserialize as TlsDeserialize;
 use crate::MDK;
 use crate::error::Error;
 use crate::extension::NostrGroupDataExtension;
+use crate::util::decode_dual_format;
 
 /// Welcome preview
 #[derive(Debug)]
@@ -267,6 +268,34 @@ where
         Ok((staged_welcome, nostr_group_data))
     }
 
+    /// Decodes welcome content from either base64 or hex encoding.
+    ///
+    /// Detects the format based on character set:
+    /// - Hex uses only: 0-9, a-f, A-F
+    /// - Base64 uses: A-Z, a-z, 0-9, +, /, =
+    ///
+    /// If the string contains only hex characters, it attempts hex decoding first (legacy format).
+    /// If hex decoding fails or if the string contains non-hex characters, it attempts base64 decoding.
+    /// This provides maximum robustness against edge cases.
+    ///
+    /// # Arguments
+    ///
+    /// * `content` - The encoded welcome string (base64 or hex)
+    ///
+    /// # Returns
+    ///
+    /// The decoded bytes on success, or an Error if decoding fails.
+    fn decode_welcome_content(&self, content: &str) -> Result<Vec<u8>, Error> {
+        let (bytes, format) = decode_dual_format(content, "welcome").map_err(Error::Welcome)?;
+
+        tracing::debug!(
+            target: "mdk_core::welcomes",
+            "Decoded welcome using {}", format
+        );
+
+        Ok(bytes)
+    }
+
     /// Previews a welcome message without joining the group.
     ///
     /// This function parses and validates a welcome message, returning information about the group
@@ -275,28 +304,23 @@ where
     ///
     /// # Arguments
     ///
-    /// * `mdk` - The MDK instance containing MLS configuration and provider
-    /// * `welcome_message` - The serialized welcome message as a byte vector
+    /// * `wrapper_event_id` - The ID of the wrapper event containing the welcome
+    /// * `welcome_event` - The unsigned welcome event to preview
     ///
     /// # Returns
     ///
     /// A `WelcomePreview` containing the staged welcome and group data on success,
-    /// or a `WelcomeError` on failure.
-    ///
-    /// # Errors
-    ///
-    /// Returns a `WelcomeError` if:
-    /// - The welcome message cannot be parsed
-    /// - The welcome message is invalid
+    /// or an Error on failure.
     fn preview_welcome(
         &self,
         wrapper_event_id: &EventId,
         welcome_event: &UnsignedEvent,
     ) -> Result<WelcomePreview, Error> {
-        let hex_content = match hex::decode(&welcome_event.content) {
+        let decoded_content = match self.decode_welcome_content(&welcome_event.content) {
             Ok(content) => content,
             Err(e) => {
-                let error_string = format!("Error hex decoding welcome event: {:?}", e);
+                let error_string =
+                    format!("Error decoding welcome event content (hex/base64): {:?}", e);
                 let processed_welcome = welcome_types::ProcessedWelcome {
                     wrapper_event_id: *wrapper_event_id,
                     welcome_event_id: welcome_event.id,
@@ -315,7 +339,7 @@ where
             }
         };
 
-        let welcome_preview = match self.parse_serialized_welcome(&hex_content) {
+        let welcome_preview = match self.parse_serialized_welcome(&decoded_content) {
             Ok((staged_welcome, nostr_group_data)) => WelcomePreview {
                 staged_welcome,
                 nostr_group_data,
@@ -1052,5 +1076,90 @@ mod tests {
             result.is_err(),
             "Should fail when leaving a group you haven't joined"
         );
+    }
+
+    #[test]
+    fn test_decode_welcome_invalid_hex_string() {
+        let mdk = create_test_mdk();
+
+        // Create a string that has non-hex characters and is also invalid base64
+        // Use invalid characters for both formats
+        let invalid = "!!!"; // '!' is not valid for hex or base64
+
+        let result = mdk.decode_welcome_content(invalid);
+
+        // This should attempt base64 decode since it's not hex-only
+        // and will fail since "!!!" isn't valid base64 either
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("as base64"),
+            "Error should indicate base64 was tried (not hex since it's not hex-only), got: {}",
+            err_msg
+        );
+    }
+
+    #[test]
+    fn test_decode_welcome_hex_only_invalid() {
+        let mdk = create_test_mdk();
+
+        // Create a string with only hex characters but odd length (invalid for hex decode)
+        let odd_length_hex = "abc"; // Valid hex chars but odd length
+
+        let result = mdk.decode_welcome_content(odd_length_hex);
+
+        // Should try hex first (fails due to odd length), then fall back to base64
+        // This should fail with an error indicating both formats were tried
+        assert!(result.is_err(), "Expected error but got Ok");
+        let err = result.unwrap_err();
+        let err_msg = err.to_string();
+        assert!(
+            err_msg.contains("attempted hex and base64"),
+            "Error should indicate both formats were tried for hex-only string, got: {}",
+            err_msg
+        );
+    }
+
+    #[test]
+    fn test_decode_welcome_valid_hex() {
+        let mdk = create_test_mdk();
+
+        // Test that valid hex strings decode successfully via the hex path
+        let valid_hex = "00000000";
+        let result = mdk.decode_welcome_content(valid_hex);
+        assert!(result.is_ok(), "Valid hex should decode successfully");
+        assert_eq!(result.unwrap(), vec![0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn test_decode_welcome_base64_with_special_chars() {
+        let mdk = create_test_mdk();
+
+        // Test base64 string with characters not in hex alphabet
+        // This should skip hex decode entirely and go straight to base64
+        let base64_str = "SGVsbG8="; // "Hello" in base64 (contains non-hex chars 'S', 'G', 'l', '=')
+        let result = mdk.decode_welcome_content(base64_str);
+
+        assert!(result.is_ok(), "Should decode valid base64");
+        let decoded = result.unwrap();
+        assert_eq!(decoded, b"Hello");
+    }
+
+    #[test]
+    fn test_decode_welcome_base64_with_padding() {
+        let mdk = create_test_mdk();
+
+        // Test various base64 strings with padding
+        let test_cases = vec![
+            ("dGVzdA==", b"test".as_slice()), // "test" in base64
+            ("aGk=", b"hi".as_slice()),       // "hi" in base64
+            ("YQ==", b"a".as_slice()),        // "a" in base64
+        ];
+
+        for (input, expected) in test_cases {
+            let result = mdk.decode_welcome_content(input);
+            assert!(result.is_ok(), "Should decode {}", input);
+            assert_eq!(result.unwrap(), expected, "Mismatch for {}", input);
+        }
     }
 }
