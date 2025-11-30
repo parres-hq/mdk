@@ -1,4 +1,3 @@
 [bindings.kotlin]
 package_name = "build.marmot.mdk"
-cdylib_name = "mdk_uniffi"
 android = true
