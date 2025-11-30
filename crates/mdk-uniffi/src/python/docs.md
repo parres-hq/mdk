@@ -313,7 +313,7 @@ class KeyPackageResult:
 MDK instances are thread-safe internally, but you should avoid sharing a single instance across multiple threads. Instead:
 
 - Create separate MDK instances for different threads if needed
-- Or use thread-local storage or locks to serialize access
+- Or use thread-local storage or mutexes to serialize access
 
 ## Example: Complete Workflow
 

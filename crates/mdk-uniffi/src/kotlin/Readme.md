@@ -15,7 +15,7 @@ Add the following dependencies (always add them as aar! it will not work otherwi
 ```kotlin
 dependencies {
     implementation("net.java.dev.jna:jna:5.14.0@aar")
-    implementation("com.github.dannym-arx:mdk-kotlin:{{version}}@aar")
+    implementation("com.github.dannym-arx:mdk-kotlin:{{version}}@aar") 
 }
 ```
 
@@ -373,7 +373,7 @@ data class KeyPackageResult(
 MDK instances are thread-safe internally, but you should avoid sharing a single instance across multiple threads. Instead:
 
 - Create separate MDK instances for different threads if needed
-- Or use coroutines and ensure serialized access within your application
+- Or use thread-local storage or mutexes to serialize access
 
 ## Android Integration
 

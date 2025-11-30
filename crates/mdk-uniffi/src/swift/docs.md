@@ -273,7 +273,7 @@ struct KeyPackageResult {
 MDK instances are thread-safe internally, but you should avoid sharing a single instance across multiple threads. Instead:
 
 - Create separate MDK instances for different threads if needed
-- Or serialize access to a single instance within your application
+- Or use thread-local storage or mutexes to serialize access
 
 ## iOS Integration
 
