@@ -95,9 +95,14 @@ fn parse_json<T: serde::de::DeserializeOwned>(
 
 impl Mdk {
     /// Lock the internal MDK instance for exclusive access.
-    /// Panics if the mutex is poisoned (should never happen if using MDK correctly (do NOT share memory across threads)).
-    fn lock(&self) -> std::sync::MutexGuard<'_, MDK<MdkSqliteStorage>> {
-        self.mdk.lock().expect("MDK mutex poisoned")
+    /// Returns an error if the mutex is poisoned.
+    /// Using MDK correctly (do NOT share memory across threads) should never result in a poisoned mutex.
+    fn lock(&self) -> Result<std::sync::MutexGuard<'_, MDK<MdkSqliteStorage>>, MdkUniffiError> {
+        self.mdk.lock().map_err(|_| {
+            MdkUniffiError::Mdk(
+                "MDK mutex poisoned. This indicates a critical internal error. Using MDK correctly (do NOT share memory across threads) should never result in a poisoned mutex.".to_string(),
+            )
+        })
     }
 }
 
@@ -122,7 +127,7 @@ impl Mdk {
         let pubkey = parse_public_key(&public_key)?;
         let relay_urls = parse_relay_urls(&relays)?;
 
-        let mdk = self.lock();
+        let mdk = self.lock()?;
         let (key_package_hex, tags) = mdk.create_key_package_for_event(&pubkey, relay_urls)?;
 
         let tags: Vec<Vec<String>> = tags.iter().map(|tag| tag.as_slice().to_vec()).collect();
@@ -136,14 +141,14 @@ impl Mdk {
     /// Parse a key package from a Nostr event
     pub fn parse_key_package(&self, event_json: String) -> Result<(), MdkUniffiError> {
         let event: Event = parse_json(&event_json, "event JSON")?;
-        self.lock().parse_key_package(&event)?;
+        self.lock()?.parse_key_package(&event)?;
         Ok(())
     }
 
     /// Get all groups
     pub fn get_groups(&self) -> Result<Vec<Group>, MdkUniffiError> {
         Ok(self
-            .lock()
+            .lock()?
             .get_groups()?
             .into_iter()
             .map(Group::from)
@@ -153,14 +158,14 @@ impl Mdk {
     /// Get a group by MLS group ID
     pub fn get_group(&self, mls_group_id: String) -> Result<Option<Group>, MdkUniffiError> {
         let group_id = parse_group_id(&mls_group_id)?;
-        Ok(self.lock().get_group(&group_id)?.map(Group::from))
+        Ok(self.lock()?.get_group(&group_id)?.map(Group::from))
     }
 
     /// Get members of a group
     pub fn get_members(&self, mls_group_id: String) -> Result<Vec<String>, MdkUniffiError> {
         let group_id = parse_group_id(&mls_group_id)?;
         Ok(self
-            .lock()
+            .lock()?
             .get_members(&group_id)?
             .into_iter()
             .map(|pk| pk.to_hex())
@@ -171,7 +176,7 @@ impl Mdk {
     pub fn get_messages(&self, mls_group_id: String) -> Result<Vec<Message>, MdkUniffiError> {
         let group_id = parse_group_id(&mls_group_id)?;
         Ok(self
-            .lock()
+            .lock()?
             .get_messages(&group_id)?
             .into_iter()
             .map(Message::from)
@@ -181,13 +186,13 @@ impl Mdk {
     /// Get a message by event ID
     pub fn get_message(&self, event_id: String) -> Result<Option<Message>, MdkUniffiError> {
         let event_id = parse_event_id(&event_id)?;
-        Ok(self.lock().get_message(&event_id)?.map(Message::from))
+        Ok(self.lock()?.get_message(&event_id)?.map(Message::from))
     }
 
     /// Get pending welcomes
     pub fn get_pending_welcomes(&self) -> Result<Vec<Welcome>, MdkUniffiError> {
         Ok(self
-            .lock()
+            .lock()?
             .get_pending_welcomes()?
             .into_iter()
             .map(Welcome::from)
@@ -197,7 +202,7 @@ impl Mdk {
     /// Get a welcome by event ID
     pub fn get_welcome(&self, event_id: String) -> Result<Option<Welcome>, MdkUniffiError> {
         let event_id = parse_event_id(&event_id)?;
-        Ok(self.lock().get_welcome(&event_id)?.map(Welcome::from))
+        Ok(self.lock()?.get_welcome(&event_id)?.map(Welcome::from))
     }
 
     /// Process a welcome message
@@ -209,21 +214,21 @@ impl Mdk {
         let wrapper_id = parse_event_id(&wrapper_event_id)?;
         let rumor_event: UnsignedEvent = parse_json(&rumor_event_json, "rumor event JSON")?;
         Ok(Welcome::from(
-            self.lock().process_welcome(&wrapper_id, &rumor_event)?,
+            self.lock()?.process_welcome(&wrapper_id, &rumor_event)?,
         ))
     }
 
     /// Accept a welcome message
     pub fn accept_welcome(&self, welcome_json: String) -> Result<(), MdkUniffiError> {
         let welcome: welcome_types::Welcome = parse_json(&welcome_json, "welcome JSON")?;
-        self.lock().accept_welcome(&welcome)?;
+        self.lock()?.accept_welcome(&welcome)?;
         Ok(())
     }
 
     /// Decline a welcome message
     pub fn decline_welcome(&self, welcome_json: String) -> Result<(), MdkUniffiError> {
         let welcome: welcome_types::Welcome = parse_json(&welcome_json, "welcome JSON")?;
-        self.lock().decline_welcome(&welcome)?;
+        self.lock()?.decline_welcome(&welcome)?;
         Ok(())
     }
 
@@ -231,7 +236,7 @@ impl Mdk {
     pub fn get_relays(&self, mls_group_id: String) -> Result<Vec<String>, MdkUniffiError> {
         let group_id = parse_group_id(&mls_group_id)?;
         Ok(self
-            .lock()
+            .lock()?
             .get_relays(&group_id)?
             .into_iter()
             .map(|r| r.to_string())
@@ -270,7 +275,7 @@ impl Mdk {
             admin_pubkeys,
         );
 
-        let mdk = self.lock();
+        let mdk = self.lock()?;
         let result = mdk.create_group(&creator_pubkey, member_key_package_events, config)?;
 
         let welcome_rumors_json: Vec<String> = result
@@ -303,7 +308,7 @@ impl Mdk {
             .collect();
         let key_package_events = key_package_events?;
 
-        let mdk = self.lock();
+        let mdk = self.lock()?;
         let result = mdk.add_members(&group_id, &key_package_events)?;
 
         let evolution_event_json = serde_json::to_string(&result.evolution_event).map_err(|e| {
@@ -347,7 +352,7 @@ impl Mdk {
             .collect();
         let pubkeys = pubkeys?;
 
-        let mdk = self.lock();
+        let mdk = self.lock()?;
         let result = mdk.remove_members(&group_id, &pubkeys)?;
 
         let evolution_event_json = serde_json::to_string(&result.evolution_event).map_err(|e| {
@@ -380,14 +385,14 @@ impl Mdk {
     /// Merge pending commit for a group
     pub fn merge_pending_commit(&self, mls_group_id: String) -> Result<(), MdkUniffiError> {
         let group_id = parse_group_id(&mls_group_id)?;
-        self.lock().merge_pending_commit(&group_id)?;
+        self.lock()?.merge_pending_commit(&group_id)?;
         Ok(())
     }
 
     /// Sync group metadata from MLS
     pub fn sync_group_metadata_from_mls(&self, mls_group_id: String) -> Result<(), MdkUniffiError> {
         let group_id = parse_group_id(&mls_group_id)?;
-        self.lock().sync_group_metadata_from_mls(&group_id)?;
+        self.lock()?.sync_group_metadata_from_mls(&group_id)?;
         Ok(())
     }
 
@@ -401,7 +406,7 @@ impl Mdk {
     ) -> Result<String, MdkUniffiError> {
         let group_id = parse_group_id(&mls_group_id)?;
         let sender_pubkey = parse_public_key(&sender_public_key)?;
-        let mdk = self.lock();
+        let mdk = self.lock()?;
 
         let rumor = EventBuilder::new(Kind::Custom(kind), content).build(sender_pubkey);
 
@@ -416,7 +421,7 @@ impl Mdk {
     /// Update the current member's leaf node in an MLS group
     pub fn self_update(&self, mls_group_id: String) -> Result<AddMembersResult, MdkUniffiError> {
         let group_id = parse_group_id(&mls_group_id)?;
-        let mdk = self.lock();
+        let mdk = self.lock()?;
         let result = mdk.self_update(&group_id)?;
 
         let evolution_event_json = serde_json::to_string(&result.evolution_event).map_err(|e| {
@@ -449,7 +454,7 @@ impl Mdk {
     /// Create a proposal to leave the group
     pub fn leave_group(&self, mls_group_id: String) -> Result<AddMembersResult, MdkUniffiError> {
         let group_id = parse_group_id(&mls_group_id)?;
-        let mdk = self.lock();
+        let mdk = self.lock()?;
         let result = mdk.leave_group(&group_id)?;
 
         let evolution_event_json = serde_json::to_string(&result.evolution_event).map_err(|e| {
@@ -545,7 +550,7 @@ impl Mdk {
             group_update = group_update.admins(admin_pubkeys);
         }
 
-        let mdk = self.lock();
+        let mdk = self.lock()?;
         let result = mdk.update_group_data(&group_id, group_update)?;
 
         let evolution_event_json = serde_json::to_string(&result.evolution_event).map_err(|e| {
@@ -581,7 +586,7 @@ impl Mdk {
         event_json: String,
     ) -> Result<ProcessMessageResult, MdkUniffiError> {
         let event: Event = parse_json(&event_json, "event JSON")?;
-        let mdk = self.lock();
+        let mdk = self.lock()?;
         let result = mdk.process_message(&event)?;
 
         Ok(match result {
