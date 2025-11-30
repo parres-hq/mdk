@@ -20,16 +20,16 @@ where
     /// Creates a key package for a Nostr event.
     ///
     /// This function generates an encoded key package that is used as the content field of a kind:443 Nostr event.
-    /// The encoding format (hex or base64) is determined by `MdkConfig::use_base64_encoding`:
-    /// - When `false` (default): uses hex encoding (legacy format)
-    /// - When `true`: uses base64 encoding (new format, ~33% smaller)
+    /// The encoding format is determined by `MdkConfig::use_base64_encoding`:
+    /// - When `false` (default): uses hex encoding without prefix (legacy format)
+    /// - When `true`: uses base64 encoding with `v1:` prefix (preferred format, ~33% smaller)
     ///
     /// The key package contains the user's credential and capabilities required for MLS operations.
     ///
     /// # Returns
     ///
     /// A tuple containing:
-    /// * An encoded string (hex or base64) containing the serialized key package
+    /// * An encoded string (unprefixed hex or `v1:` prefixed base64) containing the serialized key package
     /// * An array of 6 tags for the Nostr event:
     ///   1. `mls_protocol_version` - MLS protocol version (e.g., "1.0")
     ///   2. `mls_ciphersuite` - Ciphersuite identifier (e.g., "0x0001")
@@ -90,23 +90,22 @@ where
         Ok((encoded_content, tags))
     }
 
-    /// Decodes key package content from either base64 or hex encoding.
+    /// Decodes key package content from version-tagged base64 or legacy hex encoding.
     ///
-    /// Detects the format based on character set:
-    /// - Hex uses only: 0-9, a-f, A-F
-    /// - Base64 uses: A-Z, a-z, 0-9, +, /, =
+    /// Supports two formats:
+    /// - **Version 1 (base64)**: Prefix `v1:` followed by base64-encoded content
+    /// - **Legacy (hex)**: No prefix, hex-encoded content
     ///
-    /// If the string contains only hex characters, it attempts hex decoding first (legacy format).
-    /// If hex decoding fails or if the string contains non-hex characters, it attempts base64 decoding.
-    /// This provides maximum robustness against edge cases.
+    /// The version tag eliminates ambiguity for strings like `deadbeef` that are valid
+    /// in both hex and base64 formats but decode to completely different bytes.
     ///
     /// # Arguments
     ///
-    /// * `content` - The encoded key package string (base64 or hex)
+    /// * `content` - The encoded key package string (either `v1:<base64>` or hex)
     ///
     /// # Returns
     ///
-    /// The decoded bytes on success, or an Error if decoding fails.
+    /// The decoded bytes on success, or an Error if the selected format fails to decode.
     fn decode_key_package_content(&self, content: &str) -> Result<Vec<u8>, Error> {
         let (bytes, format) =
             decode_dual_format(content, "key package").map_err(Error::KeyPackage)?;
@@ -119,14 +118,16 @@ where
         Ok(bytes)
     }
 
-    /// Parses and validates a key package from either hex or base64 encoding.
+    /// Parses and validates a key package from version-tagged base64 or legacy hex encoding.
     ///
-    /// This function supports both hex (legacy) and base64 (new) encodings to enable
-    /// a smooth migration. It automatically detects the encoding format.
+    /// This function supports both version-tagged base64 (`v1:` prefix) and legacy hex (no prefix)
+    /// encodings to enable a smooth migration. The format is determined by the presence of the `v1:` prefix.
     ///
     /// # Arguments
     ///
-    /// * `key_package_str` - A hex or base64 encoded string containing the serialized key package
+    /// * `key_package_str` - An encoded string containing the serialized key package:
+    ///   - `v1:<base64>` for version 1 base64 encoding (preferred)
+    ///   - Unprefixed hex string for legacy hex encoding
     ///
     /// # Returns
     ///
@@ -135,7 +136,7 @@ where
     /// # Errors
     ///
     /// This function will return an error if:
-    /// * Both hex and base64 decoding fail
+    /// * The selected encoding format (base64 or hex) fails to decode
     /// * The TLS deserialization fails
     /// * The key package validation fails (invalid signature, ciphersuite, or extensions)
     fn parse_serialized_key_package(&self, key_package_str: &str) -> Result<KeyPackage, Error> {

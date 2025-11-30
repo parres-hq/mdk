@@ -268,23 +268,22 @@ where
         Ok((staged_welcome, nostr_group_data))
     }
 
-    /// Decodes welcome content from either base64 or hex encoding.
+    /// Decodes welcome content from version-tagged base64 or legacy hex encoding.
     ///
-    /// Detects the format based on character set:
-    /// - Hex uses only: 0-9, a-f, A-F
-    /// - Base64 uses: A-Z, a-z, 0-9, +, /, =
+    /// Supports two formats:
+    /// - **Version 1 (base64)**: Prefix `v1:` followed by base64-encoded content
+    /// - **Legacy (hex)**: No prefix, hex-encoded content
     ///
-    /// If the string contains only hex characters, it attempts hex decoding first (legacy format).
-    /// If hex decoding fails or if the string contains non-hex characters, it attempts base64 decoding.
-    /// This provides maximum robustness against edge cases.
+    /// The version tag eliminates ambiguity for strings like `deadbeef` that are valid
+    /// in both hex and base64 formats but decode to completely different bytes.
     ///
     /// # Arguments
     ///
-    /// * `content` - The encoded welcome string (base64 or hex)
+    /// * `content` - The encoded welcome string (either `v1:<base64>` or hex)
     ///
     /// # Returns
     ///
-    /// The decoded bytes on success, or an Error if decoding fails.
+    /// The decoded bytes on success, or an Error if the selected format fails to decode.
     fn decode_welcome_content(&self, content: &str) -> Result<Vec<u8>, Error> {
         let (bytes, format) = decode_dual_format(content, "welcome").map_err(Error::Welcome)?;
 
