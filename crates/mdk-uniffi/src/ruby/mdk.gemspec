@@ -10,13 +10,13 @@ Gem::Specification.new do |spec|
 
   spec.summary       = "Ruby bindings for Marmot Development Kit"
   spec.description   = "Ruby bindings for Marmot Development Kit - A Rust implementation of the Marmot Protocol for secure, decentralized group messaging."
-  spec.homepage      = "https://github.com/parres-hq/mdk"
+  spec.homepage      = "https://github.com/marmot-protocol/mdk"
   spec.license       = "MIT"
   spec.required_ruby_version = ">= 3.0"
 
   spec.metadata["homepage_uri"] = spec.homepage
-  spec.metadata["source_code_uri"] = "https://github.com/parres-hq/mdk"
-  spec.metadata["changelog_uri"] = "https://github.com/parres-hq/mdk"
+  spec.metadata["source_code_uri"] = "https://github.com/marmot-protocol/mdk"
+  spec.metadata["changelog_uri"] = "https://github.com/marmot-protocol/mdk"
 
   spec.files = Dir["lib/**/*", "ext/**/*"]
   spec.require_paths = ["lib"]
