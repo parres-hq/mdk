@@ -21,6 +21,6 @@ Gem::Specification.new do |spec|
   spec.files = Dir["lib/**/*", "ext/**/*"]
   spec.require_paths = ["lib"]
 
-  spec.add_runtime_dependency "ffi", "~> 1.15"
+  spec.add_runtime_dependency "ffi", "~> 1.17.2"
 end
 

@@ -1,5 +1,5 @@
 > [!NOTE]  
-> This is a generic documentation, to read {{lang}} specific docs [click here](docs.md).
+> This is a generic documentation, [read {{lang}}-specific docs](docs.md).
 
 # MDK Bindings for {{lang}}
 
@@ -17,7 +17,7 @@ We use [UniFFI](https://mozilla.github.io/uniffi-rs/) to bridge the Rust MDK cor
 
 ## Core Concepts
 
-The MDK instance is your main entry point, just point it at a SQLite file and it manages all your groups, messages, key packages, and everything else. Groups are MLS conversations with unique hex IDs, names, descriptions, member lists, and associated Nostr relays. Each group has admins who handle adding and removing keypackages.
+The MDK instance is your main entry point, just point it at a SQLite file and it manages all your groups, messages, key packages, and everything else. Groups are MLS conversations with unique hex IDs, names, descriptions, member lists, and associated Nostr relays. Each group has admins who handle adding and removing key packages.
 
 Messages are MLS-encrypted group chatter that get auto-decrypted when you retrieve them, when someone adds you to a group, you get a welcome message containing all the keys and state you need to decrypt everything and participate.
 
@@ -27,7 +27,7 @@ Getting started is simple: create your MDK instance with `MDK.new("/path/to/your
 
 For group management, start your own group with `mdk.create_group()` - you'll need your creator pubkey, initial members, metadata, relays, and admin list. It returns the group object and welcome messages for your initial members. Adding people requires admin privileges and their key package events via `mdk.add_members()`. Remove troublemakers with `mdk.remove_members()` using their pubkeys, or update group metadata like name and description with `mdk.update_group_metadata()`.
 
-Send encrypted messages with `mdk.create_message()`, specifying the group, your pubkey, content, and message kind - it returns an encrypted Nostr event you can publish to your relays. Retrieve message history with `mdk.get_messages()` where everything's auto-decrypted. When you pull events from Nostr relays, process them using `mdk.process_message()` which tells you if it's new, a duplicate, or if something fucked up during processing.
+Send encrypted messages with `mdk.create_message()`, specifying the group, your pubkey, content, and message kind - it returns an encrypted Nostr event you can publish to your relays. Retrieve message history with `mdk.get_messages()` where everything's auto-decrypted. When you pull events from Nostr relays, process them using `mdk.process_message()` which tells you if it's new, a duplicate, or if something goes wrong during processing.
 
 ## Data Models
 

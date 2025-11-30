@@ -1,11 +1,13 @@
 """MDK Python bindings - Marmot Development Kit"""
 try:
-    from .mdk_uniffi import *
+    from .mdk_uniffi import * # noqa: F401
 except ImportError as e:
     from pathlib import Path
+    import sys
+
     bindings_dir = Path(__file__).parent
-    print("Error: Could not import mdk_uniffi. Make sure the bindings are built.")
-    print(f"Expected bindings at: {bindings_dir}")
-    print(f"Import error: {e}")
+    print("Error: Could not import mdk_uniffi. Make sure the bindings are built.", file=sys.stderr)
+    print(f"Expected bindings at: {bindings_dir}", file=sys.stderr)
+    print(f"Import error: {e}", file=sys.stderr)
     raise
 

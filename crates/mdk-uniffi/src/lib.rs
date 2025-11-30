@@ -93,6 +93,18 @@ fn parse_json<T: serde::de::DeserializeOwned>(
         .map_err(|e| MdkUniffiError::InvalidInput(format!("Invalid {context}: {e}")))
 }
 
+fn vec_to_array<const N: usize>(vec: Option<Vec<u8>>) -> Option<[u8; N]> {
+    vec.and_then(|bytes| {
+        if bytes.len() == N {
+            let mut arr = [0u8; N];
+            arr.copy_from_slice(&bytes);
+            Some(arr)
+        } else {
+            None
+        }
+    })
+}
+
 impl Mdk {
     /// Lock the internal MDK instance for exclusive access.
     /// Returns an error if the mutex is poisoned.
@@ -503,39 +515,15 @@ impl Mdk {
         }
 
         if let Some(image_hash) = update.image_hash {
-            group_update = group_update.image_hash(image_hash.and_then(|bytes| {
-                let mut arr = [0u8; 32];
-                if bytes.len() == 32 {
-                    arr.copy_from_slice(&bytes);
-                    Some(arr)
-                } else {
-                    None
-                }
-            }));
+            group_update = group_update.image_hash(vec_to_array::<32>(image_hash));
         }
 
         if let Some(image_key) = update.image_key {
-            group_update = group_update.image_key(image_key.and_then(|bytes| {
-                let mut arr = [0u8; 32];
-                if bytes.len() == 32 {
-                    arr.copy_from_slice(&bytes);
-                    Some(arr)
-                } else {
-                    None
-                }
-            }));
+            group_update = group_update.image_key(vec_to_array::<32>(image_key));
         }
 
         if let Some(image_nonce) = update.image_nonce {
-            group_update = group_update.image_nonce(image_nonce.and_then(|bytes| {
-                let mut arr = [0u8; 12];
-                if bytes.len() == 12 {
-                    arr.copy_from_slice(&bytes);
-                    Some(arr)
-                } else {
-                    None
-                }
-            }));
+            group_update = group_update.image_nonce(vec_to_array::<12>(image_nonce));
         }
 
         if let Some(relays) = update.relays {
