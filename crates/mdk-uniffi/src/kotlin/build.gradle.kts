@@ -5,7 +5,7 @@ plugins {
 }
 
 android {
-    namespace = "org.parres.mdk"
+    namespace = "build.marmot.mdk"
     compileSdk = 34
 
     defaultConfig {

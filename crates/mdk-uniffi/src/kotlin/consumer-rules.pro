@@ -5,7 +5,7 @@
 # Keep the JNA classes and our generated bindings
 -keep class com.sun.jna.** { *; }
 -keep class * extends com.sun.jna.** { *; }
--keep class org.parres.mdk.** { *; }
+-keep class build.marmot.mdk.** { *; }
 
 # Ensure JNA native libraries are kept if minified
 -keepresourcexmlelements **
