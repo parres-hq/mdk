@@ -268,26 +268,6 @@ where
         Ok((staged_welcome, nostr_group_data))
     }
 
-    /// Previews a welcome message without joining the group.
-    ///
-    /// This function parses and validates a welcome message, returning information about the group
-    /// that can be used to decide whether to join it. Unlike `join_group_from_welcome`, this does
-    /// not actually join the group.
-    ///
-    /// # Arguments
-    ///
-    /// * `mdk` - The MDK instance containing MLS configuration and provider
-    /// * `welcome_message` - The serialized welcome message as a byte vector
-    ///
-    /// # Returns
-    ///
-    /// A `WelcomePreview` containing the staged welcome and group data on success,
-    /// or a `WelcomeError` on failure.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if both hex and base64 decoding fail.
-    ///
     /// Decodes welcome content from either base64 or hex encoding.
     ///
     /// Detects the format based on character set:
@@ -297,6 +277,14 @@ where
     /// If the string contains only hex characters, it attempts hex decoding first (legacy format).
     /// If hex decoding fails or if the string contains non-hex characters, it attempts base64 decoding.
     /// This provides maximum robustness against edge cases.
+    ///
+    /// # Arguments
+    ///
+    /// * `content` - The encoded welcome string (base64 or hex)
+    ///
+    /// # Returns
+    ///
+    /// The decoded bytes on success, or an Error if decoding fails.
     fn decode_welcome_content(&self, content: &str) -> Result<Vec<u8>, Error> {
         let (bytes, format) = decode_dual_format(content, "welcome").map_err(Error::Welcome)?;
 
@@ -308,15 +296,31 @@ where
         Ok(bytes)
     }
 
+    /// Previews a welcome message without joining the group.
+    ///
+    /// This function parses and validates a welcome message, returning information about the group
+    /// that can be used to decide whether to join it. Unlike `join_group_from_welcome`, this does
+    /// not actually join the group.
+    ///
+    /// # Arguments
+    ///
+    /// * `wrapper_event_id` - The ID of the wrapper event containing the welcome
+    /// * `welcome_event` - The unsigned welcome event to preview
+    ///
+    /// # Returns
+    ///
+    /// A `WelcomePreview` containing the staged welcome and group data on success,
+    /// or an Error on failure.
     fn preview_welcome(
         &self,
         wrapper_event_id: &EventId,
         welcome_event: &UnsignedEvent,
     ) -> Result<WelcomePreview, Error> {
-        let hex_content = match self.decode_welcome_content(&welcome_event.content) {
+        let decoded_content = match self.decode_welcome_content(&welcome_event.content) {
             Ok(content) => content,
             Err(e) => {
-                let error_string = format!("Error hex decoding welcome event: {:?}", e);
+                let error_string =
+                    format!("Error decoding welcome event content (hex/base64): {:?}", e);
                 let processed_welcome = welcome_types::ProcessedWelcome {
                     wrapper_event_id: *wrapper_event_id,
                     welcome_event_id: welcome_event.id,
@@ -335,7 +339,7 @@ where
             }
         };
 
-        let welcome_preview = match self.parse_serialized_welcome(&hex_content) {
+        let welcome_preview = match self.parse_serialized_welcome(&decoded_content) {
             Ok((staged_welcome, nostr_group_data)) => WelcomePreview {
                 staged_welcome,
                 nostr_group_data,
@@ -1117,10 +1121,10 @@ mod tests {
     }
 
     #[test]
-    fn test_decode_welcome_fallback_path() {
+    fn test_decode_welcome_valid_hex() {
         let mdk = create_test_mdk();
 
-        // Test valid hex decoding
+        // Test that valid hex strings decode successfully via the hex path
         let valid_hex = "00000000";
         let result = mdk.decode_welcome_content(valid_hex);
         assert!(result.is_ok(), "Valid hex should decode successfully");

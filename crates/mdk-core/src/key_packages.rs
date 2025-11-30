@@ -2293,13 +2293,10 @@ mod tests {
     }
 
     #[test]
-    fn test_decode_fallback_path() {
+    fn test_decode_valid_hex() {
         let mdk = create_test_mdk();
 
-        // Test the fallback path: string that is hex-only but fails hex decode
-        // yet could potentially succeed as base64
-
-        // "00000000" is valid hex (all zeros) and should decode successfully as hex
+        // Test that valid hex strings decode successfully via the hex path
         let valid_hex = "00000000";
         let result = mdk.decode_key_package_content(valid_hex);
         assert!(result.is_ok(), "Valid hex should decode successfully");
