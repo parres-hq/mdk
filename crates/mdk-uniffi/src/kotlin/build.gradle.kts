@@ -47,12 +47,17 @@ dependencies {
     androidTestImplementation("androidx.test.espresso:espresso-core:3.5.1")
 }
 
+// Read version from gradle.properties (set during build from Cargo.toml)
+// Falls back to a default if not set (for standalone builds)
+val libraryVersion: String = project.findProperty("libraryVersion") as String? 
+    ?: throw GradleException("libraryVersion property not found in gradle.properties. This should be set during the build process from Cargo.toml.")
+
 publishing {
     publications {
         register<MavenPublication>("release") {
             groupId = "org.parres"
             artifactId = "mdk"
-            version = "0.5.2"
+            version = libraryVersion
 
             afterEvaluate {
                 from(components["release"])

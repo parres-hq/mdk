@@ -15,9 +15,11 @@ Add the following dependencies (always add them as aar! it will not work otherwi
 ```kotlin
 dependencies {
     implementation("net.java.dev.jna:jna:5.14.0@aar")
-    implementation("com.github.dannym-arx:mdk-kotlin:0.5.2@aar") // will be com.github.marmot-protocol:mdk-kotlin:0.5.2@aar after merge
+    implementation("com.github.dannym-arx:mdk-kotlin:{{version}}@aar")
 }
 ```
+
+**Note:** The library version is automatically synchronized with the Rust crate version from `Cargo.toml` during the build process. The version is embedded in `gradle.properties` and published to the separate `mdk-kotlin` repository. Check the repository releases or `gradle.properties` for the current version.
 
 to your build.gradle.kts
 

@@ -464,6 +464,26 @@ jobs:
         chmod +x gradlew
         ./gradlew build
 
+    - name: Extract version from Cargo.toml
+      id: cargo_version
+      shell: bash
+      run: |
+        VERSION=$(grep -E '^version\s*=' crates/mdk-uniffi/Cargo.toml | head -1 | sed -E 's/version\s*=\s*"([^"]+)"/\1/')
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        echo "Extracted version: $VERSION"
+
+    - name: Update gradle.properties with version
+      shell: bash
+      run: |
+        VERSION="${{ steps.cargo_version.outputs.version }}"
+        # Update or add libraryVersion in gradle.properties
+        if grep -q "^libraryVersion=" crates/mdk-uniffi/src/kotlin/gradle.properties; then
+          sed -i "s/^libraryVersion=.*/libraryVersion=$VERSION/" crates/mdk-uniffi/src/kotlin/gradle.properties
+        else
+          echo "libraryVersion=$VERSION" >> crates/mdk-uniffi/src/kotlin/gradle.properties
+        fi
+        echo "Updated gradle.properties with version: $VERSION"
+
     - name: Checkout Kotlin package repo
       uses: actions/checkout@v6
       with:
@@ -533,6 +553,12 @@ jobs:
         git lfs track "*.so"
         git add .gitattributes
 
+        # Replace {{version}} template variable in README with actual version
+        VERSION="${{ steps.cargo_version.outputs.version }}"
+        if [ -f Readme.md ]; then
+          sed -i "s/{{version}}/$VERSION/g" Readme.md
+          echo "Updated README with version: $VERSION"
+        fi
         
         git add -A
 
@@ -547,4 +573,25 @@ jobs:
           git remote set-url origin https://x-access-token:${{ secrets.BINDINGS_PACKAGE_PAT }}@github.com/${{ env.KOTLIN_PACKAGE_REPO }}.git
           git push origin HEAD
         fi
+
+    - name: Create and push version tag
+      shell: bash
+      run: |
+        cd kotlin-package-repo
+        VERSION="${{ steps.cargo_version.outputs.version }}"
+        TAG="$VERSION"
+        
+        # Check if tag already exists locally
+        if git rev-parse "$TAG" >/dev/null 2>&1; then
+          echo "Tag $TAG already exists locally, updating it"
+          git tag -d "$TAG" 2>/dev/null || true
+        fi
+        
+        # Create or update the tag
+        git tag -a "$TAG" -m "Release version $VERSION"
+        git remote set-url origin https://x-access-token:${{ secrets.BINDINGS_PACKAGE_PAT }}@github.com/${{ env.KOTLIN_PACKAGE_REPO }}.git
+        
+        # Force push to update remote tag if it exists
+        git push origin "$TAG" --force
+        echo "Created/updated and pushed tag: $TAG"
 
