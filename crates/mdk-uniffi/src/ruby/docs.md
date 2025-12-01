@@ -95,7 +95,8 @@ groups = mdk.get_groups
 groups.each do |group|
   puts "Group: #{group.name}"
   puts "ID: #{group.mls_group_id}"
-  puts "Members: #{group.members.length}"
+  puts "State: #{group.state}"
+  # To get member count, use: mdk.get_members(mls_group_id: group.mls_group_id).length
 end
 ```
 
@@ -171,10 +172,10 @@ welcomes = mdk.get_pending_welcomes
 
 welcomes.each do |welcome|
   puts "Invited to: #{welcome.group_name}"
-  puts "By: #{welcome.sender_public_key}"
+  puts "By: #{welcome.welcomer}"
   
   # Accept the welcome
-  mdk.accept_welcome(welcome_json: welcome.welcome_json)
+  mdk.accept_welcome(welcome_json: welcome.event_json)
 end
 ```
 
@@ -182,7 +183,7 @@ end
 
 ```ruby
 welcome = welcomes.first
-mdk.decline_welcome(welcome_json: welcome.welcome_json)
+mdk.decline_welcome(welcome_json: welcome.event_json)
 ```
 
 ### Create and Send Messages
@@ -210,9 +211,10 @@ event_json = mdk.create_message(
 messages = mdk.get_messages(mls_group_id: "hex_group_id")
 
 messages.each do |message|
-  puts "From: #{message.sender_public_key}"
-  puts "Content: #{message.content}"
+  puts "From: #{message.sender_pubkey}"
+  puts "Event JSON: #{message.event_json}"
   puts "Kind: #{message.kind}"
+  # Note: To extract decrypted content, parse the event_json and extract the content field
 end
 ```
 
@@ -221,7 +223,8 @@ end
 ```ruby
 message = mdk.get_message(event_id: "hex_event_id")
 if message
-  puts "Message: #{message.content}"
+  puts "Message event JSON: #{message.event_json}"
+  # Note: To extract decrypted content, parse the event_json and extract the content field
 end
 ```
 
@@ -242,7 +245,8 @@ result = mdk.process_message(event_json: event_json)
 
 case result
 when MdkUniffi::MessageProcessingResult::NewMessage
-  puts "New message: #{result.new_message.content}"
+  puts "New message event JSON: #{result.new_message.event_json}"
+  # Note: To extract decrypted content, parse the event_json and extract the content field
 when MdkUniffi::MessageProcessingResult::Duplicate
   puts "Message already processed"
 when MdkUniffi::MessageProcessingResult::Error
@@ -258,7 +262,8 @@ results = mdk.process_messages(event_jsons: event_jsons)
 
 results.each do |result|
   if result.is_a?(MdkUniffi::MessageProcessingResult::NewMessage)
-    puts "Processed: #{result.new_message.content}"
+    puts "Processed message event JSON: #{result.new_message.event_json}"
+    # Note: To extract decrypted content, parse the event_json and extract the content field
   end
 end
 ```
@@ -286,33 +291,53 @@ end
 ```ruby
 # Group object with:
 # - mls_group_id: String (hex-encoded MLS group ID)
+# - nostr_group_id: String (hex-encoded Nostr group ID)
 # - name: String
 # - description: String
-# - relays: Array<String> (relay URLs)
-# - admins: Array<String> (admin public keys, hex)
-# - created_at: Integer (timestamp)
+# - image_hash: Array<Byte> | nil (optional group image hash)
+# - image_key: Array<Byte> | nil (optional group image encryption key)
+# - image_nonce: Array<Byte> | nil (optional group image encryption nonce)
+# - admin_pubkeys: Array<String> (admin public keys, hex-encoded)
+# - last_message_id: String | nil (last message event ID, hex-encoded)
+# - last_message_at: Integer | nil (timestamp of last message, Unix timestamp)
+# - epoch: Integer (current epoch number)
+# - state: String (group state, e.g., "active", "archived")
 ```
 
 ### Message
 
 ```ruby
 # Message object with:
-# - event_id: String (Nostr event ID, hex)
-# - mls_group_id: String
-# - sender_public_key: String (hex-encoded)
-# - content: String (decrypted content)
-# - kind: Integer
-# - created_at: Integer
+# - id: String (message ID, hex-encoded event ID)
+# - mls_group_id: String (hex-encoded MLS group ID)
+# - nostr_group_id: String (hex-encoded Nostr group ID)
+# - event_id: String (event ID, hex-encoded)
+# - sender_pubkey: String (sender public key, hex-encoded)
+# - event_json: String (JSON representation of the event)
+# - processed_at: Integer (timestamp when message was processed, Unix timestamp)
+# - kind: Integer (message kind)
+# - state: String (message state, e.g., "processed", "pending")
 ```
 
 ### Welcome
 
 ```ruby
 # Welcome object with:
-# - welcome_json: String (welcome message JSON)
+# - id: String (welcome ID, hex-encoded event ID)
+# - event_json: String (JSON representation of the welcome event)
+# - mls_group_id: String (hex-encoded MLS group ID)
+# - nostr_group_id: String (hex-encoded Nostr group ID)
 # - group_name: String
 # - group_description: String
-# - sender_public_key: String (hex-encoded)
+# - group_image_hash: Array<Byte> | nil (optional group image hash)
+# - group_image_key: Array<Byte> | nil (optional group image encryption key)
+# - group_image_nonce: Array<Byte> | nil (optional group image encryption nonce)
+# - group_admin_pubkeys: Array<String> (list of admin public keys, hex-encoded)
+# - group_relays: Array<String> (list of relay URLs for the group)
+# - welcomer: String (welcomer public key, hex-encoded)
+# - member_count: Integer (current member count)
+# - state: String (welcome state, e.g., "pending", "accepted", "declined")
+# - wrapper_event_id: String (wrapper event ID, hex-encoded)
 ```
 
 ### KeyPackageResult
@@ -325,10 +350,7 @@ end
 
 ## Thread Safety
 
-MDK instances are thread-safe internally, but you should avoid sharing a single instance across multiple threads. Instead:
-
-- Create separate MDK instances for different threads if needed
-- Or use thread-local storage or mutexes to serialize access
+A given `Mdk` instance must be confined to a single thread and must not be shared across threads. If you need to use MDK from multiple threads, create separate isolated `Mdk` instances per thread. Note that multi-threaded usage with separate instances is not a supported concurrency model.
 
 ## Example: Complete Workflow
 
@@ -368,7 +390,8 @@ message_event = mdk.create_message(
 # 5. Retrieve messages
 messages = mdk.get_messages(mls_group_id: group_result.group.mls_group_id)
 messages.each do |message|
-  puts "#{message.sender_public_key}: #{message.content}"
+  puts "#{message.sender_pubkey}: #{message.event_json}"
+  # Note: To extract decrypted content, parse the event_json and extract the content field
 end
 ```
 

@@ -89,7 +89,8 @@ let groups = try mdk.getGroups()
 for group in groups {
     print("Group: \(group.name)")
     print("ID: \(group.mlsGroupId)")
-    print("Members: \(group.members.count)")
+    print("State: \(group.state)")
+    // To get member count, use: try mdk.getMembers(mlsGroupId: group.mlsGroupId).count
 }
 ```
 
@@ -138,10 +139,10 @@ let welcomes = try mdk.getPendingWelcomes()
 
 for welcome in welcomes {
     print("Invited to: \(welcome.groupName)")
-    print("By: \(welcome.senderPublicKey)")
+    print("By: \(welcome.welcomer)")
     
     // Accept the welcome
-    try mdk.acceptWelcome(welcomeJson: welcome.welcomeJson)
+    try mdk.acceptWelcome(welcomeJson: welcome.eventJson)
 }
 ```
 
@@ -170,9 +171,10 @@ let eventJson = try mdk.createMessage(
 let messages = try mdk.getMessages(mlsGroupId: "hex_group_id")
 
 for message in messages {
-    print("From: \(message.senderPublicKey)")
-    print("Content: \(message.content)")
+    print("From: \(message.senderPubkey)")
+    print("Event JSON: \(message.eventJson)")
     print("Kind: \(message.kind)")
+    // Note: To extract decrypted content, parse the eventJson and extract the content field
 }
 ```
 
@@ -193,7 +195,8 @@ let result = try mdk.processMessage(eventJson: eventJson)
 
 switch result {
 case .newMessage(let message):
-    print("New message: \(message.content)")
+    print("New message event JSON: \(message.eventJson)")
+    // Note: To extract decrypted content, parse the eventJson and extract the content field
 case .duplicate:
     print("Message already processed")
 case .error(let error):
@@ -226,12 +229,18 @@ do {
 
 ```swift
 struct Group {
-    let mlsGroupId: String        // Hex-encoded MLS group ID
+    let mlsGroupId: String              // Hex-encoded MLS group ID
+    let nostrGroupId: String            // Hex-encoded Nostr group ID
     let name: String
     let description: String
-    let relays: [String]          // Relay URLs
-    let admins: [String]          // Admin public keys (hex)
-    let createdAt: UInt64         // Timestamp
+    let imageHash: [UInt8]?            // Optional group image hash
+    let imageKey: [UInt8]?             // Optional group image encryption key
+    let imageNonce: [UInt8]?           // Optional group image encryption nonce
+    let adminPubkeys: [String]          // Admin public keys (hex-encoded)
+    let lastMessageId: String?         // Last message event ID (hex-encoded)
+    let lastMessageAt: UInt64?          // Timestamp of last message (Unix timestamp)
+    let epoch: UInt64                   // Current epoch number
+    let state: String                   // Group state (e.g., "active", "archived")
 }
 ```
 
@@ -239,12 +248,15 @@ struct Group {
 
 ```swift
 struct Message {
-    let eventId: String            // Nostr event ID (hex)
-    let mlsGroupId: String
-    let senderPublicKey: String   // Hex-encoded
-    let content: String           // Decrypted content
-    let kind: UInt16
-    let createdAt: UInt64
+    let id: String                     // Message ID (hex-encoded event ID)
+    let mlsGroupId: String             // Hex-encoded MLS group ID
+    let nostrGroupId: String           // Hex-encoded Nostr group ID
+    let eventId: String                // Event ID (hex-encoded)
+    let senderPubkey: String           // Sender public key (hex-encoded)
+    let eventJson: String              // JSON representation of the event
+    let processedAt: UInt64            // Timestamp when message was processed (Unix timestamp)
+    let kind: UInt16                   // Message kind
+    let state: String                  // Message state (e.g., "processed", "pending")
 }
 ```
 
@@ -252,10 +264,21 @@ struct Message {
 
 ```swift
 struct Welcome {
-    let welcomeJson: String       // Welcome message JSON
+    let id: String                     // Welcome ID (hex-encoded event ID)
+    let eventJson: String              // JSON representation of the welcome event
+    let mlsGroupId: String             // Hex-encoded MLS group ID
+    let nostrGroupId: String           // Hex-encoded Nostr group ID
     let groupName: String
     let groupDescription: String
-    let senderPublicKey: String   // Hex-encoded
+    let groupImageHash: [UInt8]?       // Optional group image hash
+    let groupImageKey: [UInt8]?        // Optional group image encryption key
+    let groupImageNonce: [UInt8]?      // Optional group image encryption nonce
+    let groupAdminPubkeys: [String]    // List of admin public keys (hex-encoded)
+    let groupRelays: [String]          // List of relay URLs for the group
+    let welcomer: String               // Welcomer public key (hex-encoded)
+    let memberCount: UInt32            // Current member count
+    let state: String                  // Welcome state (e.g., "pending", "accepted", "declined")
+    let wrapperEventId: String         // Wrapper event ID (hex-encoded)
 }
 ```
 
@@ -270,10 +293,7 @@ struct KeyPackageResult {
 
 ## Thread Safety
 
-MDK instances are thread-safe internally, but you should avoid sharing a single instance across multiple threads. Instead:
-
-- Create separate MDK instances for different threads if needed
-- Or use thread-local storage or mutexes to serialize access
+A given `Mdk` instance must be confined to a single thread and must not be shared across threads. If you need to use MDK from multiple threads, create separate isolated `Mdk` instances per thread. Note that multi-threaded usage with separate instances is not a supported concurrency model.
 
 ## iOS Integration
 
@@ -317,7 +337,8 @@ let messageEvent = try mdk.createMessage(
 // 5. Retrieve messages
 let messages = try mdk.getMessages(mlsGroupId: group.group.mlsGroupId)
 for message in messages {
-    print("\(message.senderPublicKey): \(message.content)")
+    print("\(message.senderPubkey): \(message.eventJson)")
+    // Note: To extract decrypted content, parse the eventJson and extract the content field
 }
 ```
 

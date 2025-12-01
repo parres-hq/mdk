@@ -89,7 +89,8 @@ groups = mdk.get_groups()
 for group in groups:
     print(f"Group: {group.name}")
     print(f"ID: {group.mls_group_id}")
-    print(f"Members: {len(group.members)}")
+    print(f"State: {group.state}")
+    # To get member count, use: len(mdk.get_members(mls_group_id=group.mls_group_id))
 ```
 
 ### Get a Specific Group
@@ -162,17 +163,17 @@ welcomes = mdk.get_pending_welcomes()
 
 for welcome in welcomes:
     print(f"Invited to: {welcome.group_name}")
-    print(f"By: {welcome.sender_public_key}")
+    print(f"By: {welcome.welcomer}")
     
     # Accept the welcome
-    mdk.accept_welcome(welcome_json=welcome.welcome_json)
+    mdk.accept_welcome(welcome_json=welcome.event_json)
 ```
 
 ### Decline Welcome Messages
 
 ```python
 welcome = welcomes[0]
-mdk.decline_welcome(welcome_json=welcome.welcome_json)
+mdk.decline_welcome(welcome_json=welcome.event_json)
 ```
 
 ### Create and Send Messages
@@ -200,9 +201,10 @@ event_json = mdk.create_message(
 messages = mdk.get_messages(mls_group_id="hex_group_id")
 
 for message in messages:
-    print(f"From: {message.sender_public_key}")
-    print(f"Content: {message.content}")
+    print(f"From: {message.sender_pubkey}")
+    print(f"Event JSON: {message.event_json}")
     print(f"Kind: {message.kind}")
+    # Note: To extract decrypted content, parse the event_json and extract the content field
 ```
 
 ### Get a Specific Message
@@ -210,7 +212,8 @@ for message in messages:
 ```python
 message = mdk.get_message(event_id="hex_event_id")
 if message:
-    print(f"Message: {message.content}")
+    print(f"Message event JSON: {message.event_json}")
+    # Note: To extract decrypted content, parse the event_json and extract the content field
 ```
 
 ### Process Incoming Messages
@@ -229,7 +232,8 @@ event_json = """
 result = mdk.process_message(event_json=event_json)
 
 if result.new_message:
-    print(f"New message: {result.new_message.content}")
+    print(f"New message event JSON: {result.new_message.event_json}")
+    # Note: To extract decrypted content, parse the event_json and extract the content field
 elif result.duplicate:
     print("Message already processed")
 elif result.error:
@@ -244,7 +248,8 @@ results = mdk.process_messages(event_jsons=event_jsons)
 
 for result in results:
     if result.new_message:
-        print(f"Processed: {result.new_message.content}")
+        print(f"Processed message event JSON: {result.new_message.event_json}")
+        # Note: To extract decrypted content, parse the event_json and extract the content field
 ```
 
 ## Error Handling
@@ -270,34 +275,54 @@ except MdkUniffiError.InvalidInput as e:
 
 ```python
 class Group:
-    mls_group_id: str        # Hex-encoded MLS group ID
+    mls_group_id: str              # Hex-encoded MLS group ID
+    nostr_group_id: str            # Hex-encoded Nostr group ID
     name: str
     description: str
-    relays: list[str]        # Relay URLs
-    admins: list[str]        # Admin public keys (hex)
-    created_at: int         # Timestamp
+    image_hash: list[bytes] | None # Optional group image hash
+    image_key: list[bytes] | None  # Optional group image encryption key
+    image_nonce: list[bytes] | None # Optional group image encryption nonce
+    admin_pubkeys: list[str]       # Admin public keys (hex-encoded)
+    last_message_id: str | None    # Last message event ID (hex-encoded)
+    last_message_at: int | None    # Timestamp of last message (Unix timestamp)
+    epoch: int                     # Current epoch number
+    state: str                     # Group state (e.g., "active", "archived")
 ```
 
 ### Message
 
 ```python
 class Message:
-    event_id: str            # Nostr event ID (hex)
-    mls_group_id: str
-    sender_public_key: str  # Hex-encoded
-    content: str            # Decrypted content
-    kind: int
-    created_at: int
+    id: str                        # Message ID (hex-encoded event ID)
+    mls_group_id: str              # Hex-encoded MLS group ID
+    nostr_group_id: str            # Hex-encoded Nostr group ID
+    event_id: str                  # Event ID (hex-encoded)
+    sender_pubkey: str             # Sender public key (hex-encoded)
+    event_json: str                # JSON representation of the event
+    processed_at: int              # Timestamp when message was processed (Unix timestamp)
+    kind: int                      # Message kind
+    state: str                     # Message state (e.g., "processed", "pending")
 ```
 
 ### Welcome
 
 ```python
 class Welcome:
-    welcome_json: str        # Welcome message JSON
+    id: str                        # Welcome ID (hex-encoded event ID)
+    event_json: str                # JSON representation of the welcome event
+    mls_group_id: str              # Hex-encoded MLS group ID
+    nostr_group_id: str            # Hex-encoded Nostr group ID
     group_name: str
     group_description: str
-    sender_public_key: str  # Hex-encoded
+    group_image_hash: list[bytes] | None  # Optional group image hash
+    group_image_key: list[bytes] | None   # Optional group image encryption key
+    group_image_nonce: list[bytes] | None # Optional group image encryption nonce
+    group_admin_pubkeys: list[str] # List of admin public keys (hex-encoded)
+    group_relays: list[str]        # List of relay URLs for the group
+    welcomer: str                  # Welcomer public key (hex-encoded)
+    member_count: int              # Current member count
+    state: str                     # Welcome state (e.g., "pending", "accepted", "declined")
+    wrapper_event_id: str          # Wrapper event ID (hex-encoded)
 ```
 
 ### KeyPackageResult
@@ -310,10 +335,7 @@ class KeyPackageResult:
 
 ## Thread Safety
 
-MDK instances are thread-safe internally, but you should avoid sharing a single instance across multiple threads. Instead:
-
-- Create separate MDK instances for different threads if needed
-- Or use thread-local storage or mutexes to serialize access
+A given `Mdk` instance must be confined to a single thread and must not be shared across threads. If you need to use MDK from multiple threads, create separate isolated `Mdk` instances per thread. Note that multi-threaded usage with separate instances is not a supported concurrency model.
 
 ## Example: Complete Workflow
 
@@ -353,7 +375,8 @@ message_event = mdk.create_message(
 # 5. Retrieve messages
 messages = mdk.get_messages(mls_group_id=group_result.group.mls_group_id)
 for message in messages:
-    print(f"{message.sender_public_key}: {message.content}")
+    print(f"{message.sender_pubkey}: {message.event_json}")
+    # Note: To extract decrypted content, parse the event_json and extract the content field
 ```
 
 ## Integration with Nostr SDK
