@@ -25,7 +25,7 @@ use tls_codec::Serialize as TlsSerialize;
 use super::MDK;
 use super::extension::NostrGroupDataExtension;
 use crate::error::Error;
-use crate::util::encode_content;
+use crate::util::{ContentEncoding, encode_content};
 
 /// Result of creating a new MLS group
 #[derive(Debug)]
@@ -1273,23 +1273,36 @@ where
         let mut welcome_rumors_vec = Vec::new();
 
         for event in key_package_events {
-            // Encode based on configuration (with version tag for base64)
-            let encoded_welcome =
-                encode_content(&serialized_welcome, self.config.use_base64_encoding);
+            // Determine encoding format based on configuration
+            let encoding = if self.config.use_base64_encoding {
+                ContentEncoding::Base64
+            } else {
+                ContentEncoding::Hex
+            };
+
+            let encoded_welcome = encode_content(&serialized_welcome, encoding);
 
             tracing::debug!(
                 target: "mdk_core::groups",
                 "Encoded welcome using {} format",
-                if self.config.use_base64_encoding { "base64 (v1)" } else { "hex (legacy)" }
+                encoding.as_tag_value()
             );
+
+            // Build tags, including encoding tag for base64
+            let mut tags = vec![
+                Tag::from_standardized(TagStandard::Relays(group_relays.to_vec())),
+                Tag::event(event.id),
+                Tag::client(format!("MDK/{}", env!("CARGO_PKG_VERSION"))),
+            ];
+
+            // Add encoding tag only for base64 (hex is the default, no tag needed)
+            if encoding == ContentEncoding::Base64 {
+                tags.push(Tag::custom(TagKind::Custom("encoding".into()), ["base64"]));
+            }
 
             // Build welcome event rumors for each new user
             let welcome_rumor = EventBuilder::new(Kind::MlsWelcome, encoded_welcome)
-                .tags(vec![
-                    Tag::from_standardized(TagStandard::Relays(group_relays.to_vec())),
-                    Tag::event(event.id),
-                    Tag::client(format!("MDK/{}", env!("CARGO_PKG_VERSION"))),
-                ])
+                .tags(tags)
                 .build(committer_pubkey);
 
             welcome_rumors_vec.push(welcome_rumor);

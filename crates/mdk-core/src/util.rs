@@ -47,57 +47,110 @@ pub(crate) fn decrypt_with_exporter_secret(
     Ok(message_bytes)
 }
 
-/// Encodes content using base64 with version tag, or hex without version tag
+/// Encoding format for content fields
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ContentEncoding {
+    /// Legacy hex encoding (default for backward compatibility)
+    #[default]
+    Hex,
+    /// Base64 encoding (~33% smaller than hex)
+    Base64,
+}
+
+impl ContentEncoding {
+    /// Returns the tag value for this encoding format
+    pub fn as_tag_value(&self) -> &'static str {
+        match self {
+            ContentEncoding::Hex => "hex",
+            ContentEncoding::Base64 => "base64",
+        }
+    }
+
+    /// Parse encoding from tag value
+    pub fn from_tag_value(value: &str) -> Option<Self> {
+        match value.to_lowercase().as_str() {
+            "base64" => Some(ContentEncoding::Base64),
+            "hex" => Some(ContentEncoding::Hex),
+            _ => None,
+        }
+    }
+
+    /// Extracts the encoding format from an iterator of tags.
+    ///
+    /// Looks for an `["encoding", "..."]` tag.
+    /// - `["encoding", "base64"]` → Base64 encoding
+    /// - `["encoding", "hex"]` → Hex encoding
+    /// - No encoding tag → Hex encoding (legacy default)
+    ///
+    /// # Arguments
+    ///
+    /// * `tags` - An iterator over tags (works with both Event and UnsignedEvent)
+    ///
+    /// # Returns
+    ///
+    /// The ContentEncoding specified by the tag, or Hex if no tag present.
+    pub fn from_tags<'a>(tags: impl Iterator<Item = &'a nostr::Tag>) -> Self {
+        for tag in tags {
+            let slice = tag.as_slice();
+            if slice.len() >= 2
+                && slice[0] == "encoding"
+                && let Some(encoding) = Self::from_tag_value(&slice[1])
+            {
+                return encoding;
+            }
+        }
+        // Default to hex for backward compatibility
+        ContentEncoding::Hex
+    }
+}
+
+/// Encodes content using the specified encoding format
 ///
 /// # Arguments
 ///
 /// * `bytes` - The bytes to encode
-/// * `use_base64` - If true, encode as base64 with "v1:" prefix; otherwise encode as hex
+/// * `encoding` - The encoding format to use
 ///
 /// # Returns
 ///
-/// The encoded string
-pub(crate) fn encode_content(bytes: &[u8], use_base64: bool) -> String {
-    if use_base64 {
-        format!("v1:{}", BASE64.encode(bytes))
-    } else {
-        hex::encode(bytes)
+/// The encoded string (pure base64 or hex, no prefix)
+pub(crate) fn encode_content(bytes: &[u8], encoding: ContentEncoding) -> String {
+    match encoding {
+        ContentEncoding::Base64 => BASE64.encode(bytes),
+        ContentEncoding::Hex => hex::encode(bytes),
     }
 }
 
-/// Decodes content from versioned base64 or legacy hex encoding
+/// Decodes content using the specified encoding format
 ///
-/// Supports two formats:
-/// - **Version 1 (base64)**: Prefix "v1:" followed by base64-encoded content
-/// - **Legacy (hex)**: No prefix, hex-encoded content
+/// The encoding format is determined by the `["encoding", "..."]` tag on the event:
+/// - `["encoding", "base64"]` → base64 decoding
+/// - `["encoding", "hex"]` or no encoding tag → hex decoding (legacy default)
 ///
-/// This version-based approach eliminates ambiguity when hex-only strings could be valid
-/// in both formats (e.g., "deadbeef" is valid hex and valid base64, but decodes to
-/// completely different bytes in each format).
+/// This tag-based approach eliminates ambiguity for strings like `deadbeef` that are valid
+/// in both hex and base64 formats but decode to completely different bytes.
 ///
 /// # Arguments
 ///
-/// * `content` - The encoded string (either "v1:base64data" or "hexdata")
+/// * `content` - The encoded string
+/// * `encoding` - The encoding format (from the event's encoding tag, or Hex if absent)
 /// * `label` - A label for the content type (e.g., "key package", "welcome") used in error messages
 ///
 /// # Returns
 ///
 /// A tuple of (decoded bytes, format description) on success, or an error message string.
-pub(crate) fn decode_dual_format(
+pub(crate) fn decode_content(
     content: &str,
+    encoding: ContentEncoding,
     label: &str,
 ) -> Result<(Vec<u8>, &'static str), String> {
-    // Check for version 1 prefix
-    if let Some(b64_content) = content.strip_prefix("v1:") {
-        // Version 1: base64 format
-        return BASE64
-            .decode(b64_content)
-            .map(|bytes| (bytes, "base64 (v1)"))
-            .map_err(|e| format!("Failed to decode {} as base64 (v1): {}", label, e));
+    match encoding {
+        ContentEncoding::Base64 => BASE64
+            .decode(content)
+            .map(|bytes| (bytes, "base64"))
+            .map_err(|e| format!("Failed to decode {} as base64: {}", label, e)),
+        ContentEncoding::Hex => hex::decode(content)
+            .map(|bytes| (bytes, "hex"))
+            .map_err(|e| format!("Failed to decode {} as hex: {}", label, e)),
     }
-
-    // No version prefix: legacy hex format
-    hex::decode(content)
-        .map(|bytes| (bytes, "hex (legacy)"))
-        .map_err(|e| format!("Failed to decode {} as hex (legacy): {}", label, e))
 }

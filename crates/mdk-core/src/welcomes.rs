@@ -10,7 +10,7 @@ use tls_codec::Deserialize as TlsDeserialize;
 use crate::MDK;
 use crate::error::Error;
 use crate::extension::NostrGroupDataExtension;
-use crate::util::decode_dual_format;
+use crate::util::{ContentEncoding, decode_content};
 
 /// Welcome preview
 #[derive(Debug)]
@@ -268,24 +268,30 @@ where
         Ok((staged_welcome, nostr_group_data))
     }
 
-    /// Decodes welcome content from version-tagged base64 or legacy hex encoding.
+    /// Decodes welcome content using the specified encoding format.
     ///
-    /// Supports two formats:
-    /// - **Version 1 (base64)**: Prefix `v1:` followed by base64-encoded content
-    /// - **Legacy (hex)**: No prefix, hex-encoded content
+    /// The encoding format is determined by the `["encoding", "..."]` tag on the event:
+    /// - `["encoding", "base64"]` → base64 decoding
+    /// - `["encoding", "hex"]` or no encoding tag → hex decoding (legacy default)
     ///
-    /// The version tag eliminates ambiguity for strings like `deadbeef` that are valid
+    /// This tag-based approach eliminates ambiguity for strings like `deadbeef` that are valid
     /// in both hex and base64 formats but decode to completely different bytes.
     ///
     /// # Arguments
     ///
-    /// * `content` - The encoded welcome string (either `v1:<base64>` or hex)
+    /// * `content` - The encoded welcome string
+    /// * `encoding` - The encoding format (from the event's encoding tag)
     ///
     /// # Returns
     ///
-    /// The decoded bytes on success, or an Error if the selected format fails to decode.
-    fn decode_welcome_content(&self, content: &str) -> Result<Vec<u8>, Error> {
-        let (bytes, format) = decode_dual_format(content, "welcome").map_err(Error::Welcome)?;
+    /// The decoded bytes on success, or an Error if the specified format fails to decode.
+    fn decode_welcome_content(
+        &self,
+        content: &str,
+        encoding: ContentEncoding,
+    ) -> Result<Vec<u8>, Error> {
+        let (bytes, format) =
+            decode_content(content, encoding, "welcome").map_err(Error::Welcome)?;
 
         tracing::debug!(
             target: "mdk_core::welcomes",
@@ -315,11 +321,17 @@ where
         wrapper_event_id: &EventId,
         welcome_event: &UnsignedEvent,
     ) -> Result<WelcomePreview, Error> {
-        let decoded_content = match self.decode_welcome_content(&welcome_event.content) {
+        // Get encoding format from event tags (defaults to Hex for legacy events)
+        let encoding = ContentEncoding::from_tags(welcome_event.tags.iter());
+
+        let decoded_content = match self.decode_welcome_content(&welcome_event.content, encoding) {
             Ok(content) => content,
             Err(e) => {
-                let error_string =
-                    format!("Error decoding welcome event content (hex/base64): {:?}", e);
+                let error_string = format!(
+                    "Error decoding welcome event content ({}): {:?}",
+                    encoding.as_tag_value(),
+                    e
+                );
                 let processed_welcome = welcome_types::ProcessedWelcome {
                     wrapper_event_id: *wrapper_event_id,
                     welcome_event_id: welcome_event.id,
@@ -1081,19 +1093,17 @@ mod tests {
     fn test_decode_welcome_invalid_hex_string() {
         let mdk = create_test_mdk();
 
-        // Create a string that has non-hex characters and is also invalid base64
-        // Use invalid characters for both formats
-        let invalid = "!!!"; // '!' is not valid for hex or base64
+        // Create a string that has non-hex characters (invalid hex)
+        let invalid = "!!!"; // '!' is not valid for hex
 
-        let result = mdk.decode_welcome_content(invalid);
+        let result = mdk.decode_welcome_content(invalid, ContentEncoding::Hex);
 
-        // With version tags, unprefixed strings are always treated as hex (legacy)
-        // This should fail with a hex decode error
+        // Should fail with a hex decode error
         assert!(result.is_err());
         let err_msg = result.unwrap_err().to_string();
         assert!(
-            err_msg.contains("hex (legacy)"),
-            "Error should indicate hex (legacy) format was tried, got: {}",
+            err_msg.contains("hex"),
+            "Error should indicate hex format was tried, got: {}",
             err_msg
         );
     }
@@ -1105,16 +1115,15 @@ mod tests {
         // Create a string with only hex characters but odd length (invalid for hex decode)
         let odd_length_hex = "abc"; // Valid hex chars but odd length
 
-        let result = mdk.decode_welcome_content(odd_length_hex);
+        let result = mdk.decode_welcome_content(odd_length_hex, ContentEncoding::Hex);
 
-        // With version tags, unprefixed strings are always treated as hex (legacy)
-        // This should fail with a hex decode error
+        // Should fail with a hex decode error
         assert!(result.is_err(), "Expected error but got Ok");
         let err = result.unwrap_err();
         let err_msg = err.to_string();
         assert!(
-            err_msg.contains("hex (legacy)"),
-            "Error should indicate hex (legacy) format was tried, got: {}",
+            err_msg.contains("hex"),
+            "Error should indicate hex format was tried, got: {}",
             err_msg
         );
     }
@@ -1123,9 +1132,9 @@ mod tests {
     fn test_decode_welcome_valid_hex() {
         let mdk = create_test_mdk();
 
-        // Test that valid hex strings decode successfully via the hex path
+        // Test that valid hex strings decode successfully
         let valid_hex = "00000000";
-        let result = mdk.decode_welcome_content(valid_hex);
+        let result = mdk.decode_welcome_content(valid_hex, ContentEncoding::Hex);
         assert!(result.is_ok(), "Valid hex should decode successfully");
         assert_eq!(result.unwrap(), vec![0, 0, 0, 0]);
     }
@@ -1134,11 +1143,11 @@ mod tests {
     fn test_decode_welcome_base64_with_special_chars() {
         let mdk = create_test_mdk();
 
-        // Test base64 string with v1: prefix
-        let base64_str = "v1:SGVsbG8="; // "Hello" in base64 with v1: prefix
-        let result = mdk.decode_welcome_content(base64_str);
+        // Test base64 string (no prefix in tag-based approach)
+        let base64_str = "SGVsbG8="; // "Hello" in base64
+        let result = mdk.decode_welcome_content(base64_str, ContentEncoding::Base64);
 
-        assert!(result.is_ok(), "Should decode valid v1 base64");
+        assert!(result.is_ok(), "Should decode valid base64");
         let decoded = result.unwrap();
         assert_eq!(decoded, b"Hello");
     }
@@ -1147,46 +1156,46 @@ mod tests {
     fn test_decode_welcome_base64_with_padding() {
         let mdk = create_test_mdk();
 
-        // Test various base64 strings with padding and v1: prefix
+        // Test various base64 strings with padding
         let test_cases = vec![
-            ("v1:dGVzdA==", b"test".as_slice()), // "test" in base64 with v1: prefix
-            ("v1:aGk=", b"hi".as_slice()),       // "hi" in base64 with v1: prefix
-            ("v1:YQ==", b"a".as_slice()),        // "a" in base64 with v1: prefix
+            ("dGVzdA==", b"test".as_slice()), // "test" in base64
+            ("aGk=", b"hi".as_slice()),       // "hi" in base64
+            ("YQ==", b"a".as_slice()),        // "a" in base64
         ];
 
         for (input, expected) in test_cases {
-            let result = mdk.decode_welcome_content(input);
+            let result = mdk.decode_welcome_content(input, ContentEncoding::Base64);
             assert!(result.is_ok(), "Should decode {}", input);
             assert_eq!(result.unwrap(), expected, "Mismatch for {}", input);
         }
     }
 
     #[test]
-    fn test_decode_welcome_v1_base64() {
+    fn test_decode_welcome_base64() {
         let mdk = create_test_mdk();
 
-        // Test version 1 (base64) format with v1: prefix
-        let v1_base64 = "v1:SGVsbG8="; // "v1:Hello" in base64
-        let result = mdk.decode_welcome_content(v1_base64);
+        // Test base64 format
+        let base64_str = "SGVsbG8="; // "Hello" in base64
+        let result = mdk.decode_welcome_content(base64_str, ContentEncoding::Base64);
 
-        assert!(result.is_ok(), "Should decode valid v1 base64");
+        assert!(result.is_ok(), "Should decode valid base64");
         let decoded = result.unwrap();
         assert_eq!(decoded, b"Hello");
     }
 
     #[test]
-    fn test_decode_welcome_v1_invalid_base64() {
+    fn test_decode_welcome_invalid_base64() {
         let mdk = create_test_mdk();
 
-        // Test version 1 format with invalid base64
-        let invalid_v1 = "v1:!!!";
-        let result = mdk.decode_welcome_content(invalid_v1);
+        // Test invalid base64
+        let invalid_base64 = "!!!";
+        let result = mdk.decode_welcome_content(invalid_base64, ContentEncoding::Base64);
 
-        assert!(result.is_err(), "Should fail on invalid v1 base64");
+        assert!(result.is_err(), "Should fail on invalid base64");
         let err_msg = result.unwrap_err().to_string();
         assert!(
-            err_msg.contains("base64 (v1)"),
-            "Error should indicate v1 base64 format, got: {}",
+            err_msg.contains("base64"),
+            "Error should indicate base64 format, got: {}",
             err_msg
         );
     }
@@ -1195,30 +1204,30 @@ mod tests {
     fn test_decode_welcome_ambiguous_hex_base64() {
         let mdk = create_test_mdk();
 
-        // Test that hex-only strings that are valid in both formats decode correctly
-        // "deadbeef" is valid hex AND valid base64, but decodes to different bytes
-        let hex_only = "deadbeef";
-        let result_legacy = mdk.decode_welcome_content(hex_only);
-        let result_v1 = mdk.decode_welcome_content(&format!("v1:{}", hex_only));
+        // Test that "deadbeef" (valid in both hex and base64) decodes to different bytes
+        // depending on the encoding specified via the tag
+        let ambiguous_string = "deadbeef";
+        let result_hex = mdk.decode_welcome_content(ambiguous_string, ContentEncoding::Hex);
+        let result_base64 = mdk.decode_welcome_content(ambiguous_string, ContentEncoding::Base64);
 
-        assert!(result_legacy.is_ok(), "Legacy hex should decode");
-        assert!(result_v1.is_ok(), "v1 base64 should decode");
+        assert!(result_hex.is_ok(), "Hex decoding should succeed");
+        assert!(result_base64.is_ok(), "Base64 decoding should succeed");
 
-        let bytes_legacy = result_legacy.unwrap();
-        let bytes_v1 = result_v1.unwrap();
+        let bytes_hex = result_hex.unwrap();
+        let bytes_base64 = result_base64.unwrap();
 
         // These should be different!
         assert_ne!(
-            bytes_legacy, bytes_v1,
+            bytes_hex, bytes_base64,
             "Hex and base64 decoding of same string should produce different bytes"
         );
 
         // Verify hex decoding
-        assert_eq!(bytes_legacy, hex::decode("deadbeef").unwrap());
+        assert_eq!(bytes_hex, hex::decode("deadbeef").unwrap());
 
         // Verify base64 decoding
         use nostr::base64::Engine;
         use nostr::base64::engine::general_purpose::STANDARD as BASE64;
-        assert_eq!(bytes_v1, BASE64.decode("deadbeef").unwrap());
+        assert_eq!(bytes_base64, BASE64.decode("deadbeef").unwrap());
     }
 }
