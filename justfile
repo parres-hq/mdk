@@ -138,8 +138,8 @@ gen-binding-kotlin: (_build-uniffi "true") (gen-binding "kotlin")
     mkdir -p "$PROJECT_DIR/src/main/jniLibs/armeabi-v7a"
     # mkdir -p "$PROJECT_DIR/src/main/jniLibs/x86-64"
     
-    @test -f target/aarch64-linux-android/release/libmdk_uniffi.so || (echo "Error: aarch64 Android library not found. Did the build succeed?" && exit 1)
-    @test -f target/armv7-linux-androideabi/release/libmdk_uniffi.so || (echo "Error: armv7 Android library not found. Did the build succeed?" && exit 1)
+    test -f target/aarch64-linux-android/release/libmdk_uniffi.so || (echo "Error: aarch64 Android library not found. Did the build succeed?" && exit 1)
+    test -f target/armv7-linux-androideabi/release/libmdk_uniffi.so || (echo "Error: armv7 Android library not found. Did the build succeed?" && exit 1)
     
     cp target/aarch64-linux-android/release/libmdk_uniffi.so "$PROJECT_DIR/src/main/jniLibs/arm64-v8a/libmdk_uniffi.so"
     cp target/armv7-linux-androideabi/release/libmdk_uniffi.so "$PROJECT_DIR/src/main/jniLibs/armeabi-v7a/libmdk_uniffi.so"
