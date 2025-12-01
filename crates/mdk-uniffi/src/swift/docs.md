@@ -6,7 +6,7 @@ Add the MDK package to your `Package.swift`:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/parres-hq/mdk-swift.git", from: "0.5.2")
+    .package(url: "https://github.com/marmot-protocol/mdk-swift.git", from: "0.5.2")
 ]
 ```
 

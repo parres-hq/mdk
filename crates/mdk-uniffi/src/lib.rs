@@ -21,7 +21,7 @@ use mdk_storage_traits::{
     GroupId, groups::types as group_types, messages::types as message_types,
     welcomes::types as welcome_types,
 };
-use nostr::{Event, EventBuilder, EventId, Kind, PublicKey, RelayUrl, TagKind, UnsignedEvent};
+use nostr::{Event, EventBuilder, EventId, Kind, PublicKey, RelayUrl, Tag, TagKind, UnsignedEvent};
 use std::path::PathBuf;
 use std::sync::Mutex;
 
@@ -93,16 +93,29 @@ fn parse_json<T: serde::de::DeserializeOwned>(
         .map_err(|e| MdkUniffiError::InvalidInput(format!("Invalid {context}: {e}")))
 }
 
-fn vec_to_array<const N: usize>(vec: Option<Vec<u8>>) -> Option<[u8; N]> {
-    vec.and_then(|bytes| {
-        if bytes.len() == N {
+fn vec_to_array<const N: usize>(vec: Option<Vec<u8>>) -> Result<Option<[u8; N]>, MdkUniffiError> {
+    match vec {
+        Some(bytes) if bytes.len() == N => {
             let mut arr = [0u8; N];
             arr.copy_from_slice(&bytes);
-            Some(arr)
-        } else {
-            None
+            Ok(Some(arr))
         }
-    })
+        Some(bytes) => Err(MdkUniffiError::InvalidInput(format!(
+            "Expected {} bytes, got {} bytes",
+            N,
+            bytes.len()
+        ))),
+        None => Ok(None),
+    }
+}
+
+fn parse_tags(tags: Vec<Vec<String>>) -> Result<Vec<Tag>, MdkUniffiError> {
+    tags.into_iter()
+        .map(|tag_vec| {
+            Tag::parse(tag_vec)
+                .map_err(|e| MdkUniffiError::InvalidInput(format!("Failed to parse tag: {e}")))
+        })
+        .collect()
 }
 
 impl Mdk {
@@ -151,10 +164,10 @@ impl Mdk {
     }
 
     /// Parse a key package from a Nostr event
-    pub fn parse_key_package(&self, event_json: String) -> Result<(), MdkUniffiError> {
+    pub fn parse_key_package(&self, event_json: String) -> Result<String, MdkUniffiError> {
         let event: Event = parse_json(&event_json, "event JSON")?;
         self.lock()?.parse_key_package(&event)?;
-        Ok(())
+        Ok(event.content)
     }
 
     /// Get all groups
@@ -311,7 +324,7 @@ impl Mdk {
         &self,
         mls_group_id: String,
         key_package_events_json: Vec<String>,
-    ) -> Result<AddMembersResult, MdkUniffiError> {
+    ) -> Result<UpdateGroupResult, MdkUniffiError> {
         let group_id = parse_group_id(&mls_group_id)?;
 
         let key_package_events: Result<Vec<Event>, _> = key_package_events_json
@@ -343,7 +356,7 @@ impl Mdk {
             })
             .transpose()?;
 
-        Ok(AddMembersResult {
+        Ok(UpdateGroupResult {
             evolution_event_json,
             welcome_rumors_json,
             mls_group_id: hex::encode(result.mls_group_id.as_slice()),
@@ -355,7 +368,7 @@ impl Mdk {
         &self,
         mls_group_id: String,
         member_public_keys: Vec<String>,
-    ) -> Result<AddMembersResult, MdkUniffiError> {
+    ) -> Result<UpdateGroupResult, MdkUniffiError> {
         let group_id = parse_group_id(&mls_group_id)?;
 
         let pubkeys: Result<Vec<PublicKey>, _> = member_public_keys
@@ -387,7 +400,7 @@ impl Mdk {
             })
             .transpose()?;
 
-        Ok(AddMembersResult {
+        Ok(UpdateGroupResult {
             evolution_event_json,
             welcome_rumors_json,
             mls_group_id: hex::encode(result.mls_group_id.as_slice()),
@@ -415,12 +428,20 @@ impl Mdk {
         sender_public_key: String,
         content: String,
         kind: u16,
+        tags: Option<Vec<Vec<String>>>,
     ) -> Result<String, MdkUniffiError> {
         let group_id = parse_group_id(&mls_group_id)?;
         let sender_pubkey = parse_public_key(&sender_public_key)?;
         let mdk = self.lock()?;
 
-        let rumor = EventBuilder::new(Kind::Custom(kind), content).build(sender_pubkey);
+        let mut builder = EventBuilder::new(Kind::Custom(kind), content);
+
+        if let Some(tags_vec) = tags {
+            let parsed_tags = parse_tags(tags_vec)?;
+            builder = builder.tags(parsed_tags);
+        }
+
+        let rumor = builder.build(sender_pubkey);
 
         let event = mdk.create_message(&group_id, rumor)?;
 
@@ -431,7 +452,7 @@ impl Mdk {
     }
 
     /// Update the current member's leaf node in an MLS group
-    pub fn self_update(&self, mls_group_id: String) -> Result<AddMembersResult, MdkUniffiError> {
+    pub fn self_update(&self, mls_group_id: String) -> Result<UpdateGroupResult, MdkUniffiError> {
         let group_id = parse_group_id(&mls_group_id)?;
         let mdk = self.lock()?;
         let result = mdk.self_update(&group_id)?;
@@ -456,7 +477,7 @@ impl Mdk {
             })
             .transpose()?;
 
-        Ok(AddMembersResult {
+        Ok(UpdateGroupResult {
             evolution_event_json,
             welcome_rumors_json,
             mls_group_id: hex::encode(result.mls_group_id.as_slice()),
@@ -464,7 +485,7 @@ impl Mdk {
     }
 
     /// Create a proposal to leave the group
-    pub fn leave_group(&self, mls_group_id: String) -> Result<AddMembersResult, MdkUniffiError> {
+    pub fn leave_group(&self, mls_group_id: String) -> Result<UpdateGroupResult, MdkUniffiError> {
         let group_id = parse_group_id(&mls_group_id)?;
         let mdk = self.lock()?;
         let result = mdk.leave_group(&group_id)?;
@@ -489,7 +510,7 @@ impl Mdk {
             })
             .transpose()?;
 
-        Ok(AddMembersResult {
+        Ok(UpdateGroupResult {
             evolution_event_json,
             welcome_rumors_json,
             mls_group_id: hex::encode(result.mls_group_id.as_slice()),
@@ -501,7 +522,7 @@ impl Mdk {
         &self,
         mls_group_id: String,
         update: GroupDataUpdate,
-    ) -> Result<AddMembersResult, MdkUniffiError> {
+    ) -> Result<UpdateGroupResult, MdkUniffiError> {
         let group_id = parse_group_id(&mls_group_id)?;
 
         let mut group_update = NostrGroupDataUpdate::new();
@@ -515,15 +536,15 @@ impl Mdk {
         }
 
         if let Some(image_hash) = update.image_hash {
-            group_update = group_update.image_hash(vec_to_array::<32>(image_hash));
+            group_update = group_update.image_hash(vec_to_array::<32>(image_hash)?);
         }
 
         if let Some(image_key) = update.image_key {
-            group_update = group_update.image_key(vec_to_array::<32>(image_key));
+            group_update = group_update.image_key(vec_to_array::<32>(image_key)?);
         }
 
         if let Some(image_nonce) = update.image_nonce {
-            group_update = group_update.image_nonce(vec_to_array::<12>(image_nonce));
+            group_update = group_update.image_nonce(vec_to_array::<12>(image_nonce)?);
         }
 
         if let Some(relays) = update.relays {
@@ -561,7 +582,7 @@ impl Mdk {
             })
             .transpose()?;
 
-        Ok(AddMembersResult {
+        Ok(UpdateGroupResult {
             evolution_event_json,
             welcome_rumors_json,
             mls_group_id: hex::encode(result.mls_group_id.as_slice()),
@@ -608,7 +629,7 @@ impl Mdk {
                     .transpose()?;
 
                 ProcessMessageResult::Proposal {
-                    result: AddMembersResult {
+                    result: UpdateGroupResult {
                         evolution_event_json,
                         welcome_rumors_json,
                         mls_group_id: hex::encode(update_result.mls_group_id.as_slice()),
@@ -650,9 +671,9 @@ pub struct CreateGroupResult {
     pub welcome_rumors_json: Vec<String>,
 }
 
-/// Result of adding members to a group
+/// Result of updating a group
 #[derive(uniffi::Record)]
-pub struct AddMembersResult {
+pub struct UpdateGroupResult {
     /// JSON-encoded evolution event to be published
     pub evolution_event_json: String,
     /// Optional JSON-encoded welcome rumors to be published
@@ -691,7 +712,7 @@ pub enum ProcessMessageResult {
     /// A proposal message (add/remove member proposal)
     Proposal {
         /// The proposal result containing evolution event and welcome rumors
-        result: AddMembersResult,
+        result: UpdateGroupResult,
     },
     /// External join proposal
     ExternalJoinProposal {

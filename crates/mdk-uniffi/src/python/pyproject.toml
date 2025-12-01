@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "mdk"
 version = "0.5.2"
 description = "Python bindings for Marmot Development Kit"
-requires-python = ">=3.8"
+requires-python = ">=3.10"
 license = { text = "MIT" }
 authors = [{ name = "MDK Developers" }]
 keywords = ["nostr", "mls", "openmls", "messaging", "encryption"]
@@ -15,8 +15,6 @@ classifiers = [
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.8",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",

@@ -9,7 +9,7 @@ pip install mdk
 Or install from source:
 
 ```bash
-git clone https://github.com/parres-hq/mdk-python.git
+git clone https://github.com/marmot-protocol/mdk-python.git
 cd mdk-python
 pip install .
 ```

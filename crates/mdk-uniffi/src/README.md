@@ -35,4 +35,4 @@ Group objects contain the `mls_group_id` as a hex string, plus the name you gave
 
 ## What's Next
 
-If you want to go deeper, check out the [Marmot Protocol Spec](https://github.com/parres-hq/marmot) for the full details, [MLS RFC 9420](https://www.rfc-editor.org/rfc/rfc9420.html) for the crypto foundation, the [Nostr Protocol](https://github.com/nostr-protocol/nostr) for the network layer, and [UniFFI Docs](https://mozilla.github.io/uniffi-rs/) if you're curious about how the bindings work under the hood. But you don't have to!
+If you want to go deeper, check out the [Marmot Protocol Spec](https://github.com/marmot-protocol/marmot) for the full details, [MLS RFC 9420](https://www.rfc-editor.org/rfc/rfc9420.html) for the crypto foundation, the [Nostr Protocol](https://github.com/nostr-protocol/nostr) for the network layer, and [UniFFI Docs](https://mozilla.github.io/uniffi-rs/) if you're curious about how the bindings work under the hood. But you don't have to!
