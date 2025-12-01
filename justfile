@@ -105,7 +105,7 @@ _build-uniffi-android TARGET CLANG_PREFIX:
     export AR_${TARGET_UNDER}="${LLVM_BIN}/llvm-ar"
     export CARGO_TARGET_${TARGET_UPPER}_LINKER="${LLVM_BIN}/{{CLANG_PREFIX}}"
 
-    cargo build --lib -p mdk-uniffi --target {{TARGET}}
+    cargo build --release --lib -p mdk-uniffi --target {{TARGET}}
 
 uniffi-bindgen: (gen-binding "python") gen-binding-kotlin gen-binding-ruby
     @if [ "{{os()}}" = "macos" ]; then just gen-binding-swift; fi
@@ -138,9 +138,12 @@ gen-binding-kotlin: (_build-uniffi "true") (gen-binding "kotlin")
     mkdir -p "$PROJECT_DIR/src/main/jniLibs/armeabi-v7a"
     # mkdir -p "$PROJECT_DIR/src/main/jniLibs/x86-64"
     
-    cp target/aarch64-linux-android/debug/libmdk_uniffi.so "$PROJECT_DIR/src/main/jniLibs/arm64-v8a/libmdk_uniffi.so"
-    cp target/armv7-linux-androideabi/debug/libmdk_uniffi.so "$PROJECT_DIR/src/main/jniLibs/armeabi-v7a/libmdk_uniffi.so"
-    # cp target/x86_64-linux-android/debug/libmdk_uniffi.so "$PROJECT_DIR/src/main/jniLibs/x86-64/libmdk_uniffi.so"
+    @test -f target/aarch64-linux-android/release/libmdk_uniffi.so || (echo "Error: aarch64 Android library not found. Did the build succeed?" && exit 1)
+    @test -f target/armv7-linux-androideabi/release/libmdk_uniffi.so || (echo "Error: armv7 Android library not found. Did the build succeed?" && exit 1)
+    
+    cp target/aarch64-linux-android/release/libmdk_uniffi.so "$PROJECT_DIR/src/main/jniLibs/arm64-v8a/libmdk_uniffi.so"
+    cp target/armv7-linux-androideabi/release/libmdk_uniffi.so "$PROJECT_DIR/src/main/jniLibs/armeabi-v7a/libmdk_uniffi.so"
+    # cp target/x86_64-linux-android/release/libmdk_uniffi.so "$PROJECT_DIR/src/main/jniLibs/x86-64/libmdk_uniffi.so"
     rm -f "$BINDINGS_DIR/libmdk_uniffi.so"
     echo "✓ Kotlin bindings generated and moved to Android project"
 
@@ -167,10 +170,24 @@ gen-binding-ruby: (gen-binding "ruby")
         echo "Ruby binding not found at $RUBY_BINDING" >&2
         exit 1
     fi
-    sed -i '/^module MdkUniffiError$/,/^end$/c\
+    # Use portable sed approach: detect OS and use appropriate syntax
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        # macOS requires empty string argument for -i
+        sed -i '' '/^module MdkUniffiError$/,/^end$/c\
     module MdkUniffiError\
       class Storage < StandardError; end\
       class Mdk < StandardError; end\
       class InvalidInput < StandardError; end\
     end' "$RUBY_BINDING"
+    else
+        # Linux/GNU sed
+        sed -i '/^module MdkUniffiError$/,/^end$/c\
+    module MdkUniffiError\
+      class Storage < StandardError; end\
+      class Mdk < StandardError; end\
+      class InvalidInput < StandardError; end\
+    end' "$RUBY_BINDING"
+    fi
+    # Validate the Ruby file parses correctly
+    ruby -c "$RUBY_BINDING" || (echo "Error: Ruby binding file does not parse correctly after patching" >&2 && exit 1)
     echo "✓ Ruby binding patched (MdkUniffiError classes)"

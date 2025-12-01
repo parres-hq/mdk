@@ -522,31 +522,10 @@ jobs:
         mkdir -p src/main/jniLibs/armeabi-v7a
         # mkdir -p src/main/jniLibs/x86-64
 
-        # wget https://github.com/java-native-access/jna/raw/refs/heads/master/dist/android-x86-64.jar
-        wget https://github.com/java-native-access/jna/raw/refs/heads/master/dist/android-aarch64.jar
-        wget https://github.com/java-native-access/jna/raw/refs/heads/master/dist/android-armv7.jar
-
-        # mkdir tmp
-        # mv android-x86-64.jar tmp/
-        # unzip tmp/android-x86-64.jar -d tmp/
-        # mv tmp/libjnidispatch.so src/main/jniLibs/x86-64/
-        # rm -rf tmp
-
-        mkdir tmp
-        mv android-aarch64.jar tmp/
-        unzip tmp/android-aarch64.jar -d tmp/
-        mv tmp/libjnidispatch.so src/main/jniLibs/arm64-v8a/
-        rm -rf tmp
-
-        mkdir tmp
-        mv android-armv7.jar tmp/
-        unzip tmp/android-armv7.jar -d tmp/
-        mv tmp/libjnidispatch.so src/main/jniLibs/armeabi-v7a/
-        rm -rf tmp
-
         # Clean up any old directory structure that might exist
         rm -rf src/main/jniLibs/android-aarch64 || true
         rm -rf src/main/jniLibs/android-armv7 || true
+        # rm -rf src/main/jniLibs/android-x86-64 || true
 
         # Setup LFS and ensure tracking is set before adding files
         git lfs install

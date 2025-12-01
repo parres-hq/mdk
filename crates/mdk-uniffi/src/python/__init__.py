@@ -1,6 +1,6 @@
 """MDK Python bindings - Marmot Development Kit"""
 try:
-    from .mdk_uniffi import * # noqa: F401
+    from .mdk_uniffi import *  # noqa: F403
 except ImportError as e:
     from pathlib import Path
     import sys

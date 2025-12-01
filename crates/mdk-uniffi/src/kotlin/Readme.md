@@ -228,7 +228,7 @@ mdk.declineWelcome(welcomeJson = welcome.welcomeJson)
 val mlsGroupId = "hex_group_id"
 val senderPublicKey = "your_hex_public_key"
 val content = "Hello, group!"
-val kind: UShort = 1u // Message kind
+val kind: UShort = 9u // Message kind
 
 val eventJson = mdk.createMessage(
     mlsGroupId = mlsGroupId,

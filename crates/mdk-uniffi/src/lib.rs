@@ -813,7 +813,10 @@ impl From<message_types::Message> for Message {
             .unwrap_or_default()
             .to_string();
 
-        let event_json = serde_json::to_string(&m.event).unwrap_or_else(|_| "{}".to_string());
+        let event_json = serde_json::to_string(&m.event).unwrap_or_else(|e| {
+            tracing::error!(target: "mdk_uniffi::message", "Failed to serialize message event: {}", e);
+            "{}".to_string()
+        });
 
         Self {
             id: m.id.to_hex(),
@@ -866,7 +869,10 @@ pub struct Welcome {
 
 impl From<welcome_types::Welcome> for Welcome {
     fn from(w: welcome_types::Welcome) -> Self {
-        let event_json = serde_json::to_string(&w.event).unwrap_or_else(|_| "{}".to_string());
+        let event_json = serde_json::to_string(&w.event).unwrap_or_else(|e| {
+            tracing::error!(target: "mdk_uniffi::welcome", "Failed to serialize welcome event: {}", e);
+            "{}".to_string()
+        });
 
         Self {
             id: w.id.to_hex(),
