@@ -78,7 +78,9 @@ pub(crate) struct TlsNostrGroupDataExtension {
 /// description, ID, admin identities, image URL, and image encryption key.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NostrGroupDataExtension {
-    /// Extension format version (current: 1)
+    /// Extension format version (current: 2)
+    /// Version 2: image_key field contains image_seed (used for HKDF derivation)
+    /// Version 1: image_key field contains encryption key directly (deprecated)
     pub version: u16,
     /// Nostr Group ID
     pub nostr_group_id: [u8; 32],
@@ -92,7 +94,9 @@ pub struct NostrGroupDataExtension {
     pub relays: BTreeSet<RelayUrl>,
     /// Group image hash (blossom hash)
     pub image_hash: Option<[u8; 32]>,
-    /// Private key to decrypt group image (encrypted when stored)
+    /// Image seed (v2) or encryption key (v1) for group image decryption
+    /// For v2: This is the master seed used to derive both encryption key and upload keypair via HKDF
+    /// For v1: This is the encryption key directly (deprecated, kept for backward compatibility)
     pub image_key: Option<[u8; 32]>,
     /// Nonce to decrypt group image
     pub image_nonce: Option<[u8; 12]>,
@@ -103,7 +107,9 @@ impl NostrGroupDataExtension {
     pub const EXTENSION_TYPE: u16 = NOSTR_GROUP_DATA_EXTENSION_TYPE;
 
     /// Current extension format version (MIP-01)
-    pub const CURRENT_VERSION: u16 = 1;
+    /// Version 2: Uses image_seed (stored in image_key field) with HKDF derivation
+    /// Version 1: Uses image_key directly as encryption key (deprecated)
+    pub const CURRENT_VERSION: u16 = 2;
 
     /// Creates a new NostrGroupDataExtension with the given parameters.
     ///
@@ -152,7 +158,10 @@ impl NostrGroupDataExtension {
         }
     }
 
-    /// Migrate a legacy extension (without version field) to the current format
+    /// Migrate a legacy extension (without version field) to version 1 format
+    ///
+    /// Legacy extensions are migrated to version 1 (not CURRENT_VERSION) because they
+    /// were created before versioning existed and use the v1 format (direct image_key).
     pub(crate) fn from_legacy_raw(legacy: LegacyTlsNostrGroupDataExtension) -> Result<Self, Error> {
         tracing::info!(
             target: "mdk_core::extension::types",
@@ -207,7 +216,7 @@ impl NostrGroupDataExtension {
         };
 
         Ok(Self {
-            version: Self::CURRENT_VERSION, // Migrate to version 1
+            version: 1, // Migrate to version 1 (legacy extensions use v1 format)
             nostr_group_id: legacy.nostr_group_id,
             name: String::from_utf8(legacy.name)?,
             description: String::from_utf8(legacy.description)?,
@@ -259,7 +268,7 @@ impl NostrGroupDataExtension {
     }
 
     pub(crate) fn from_raw(raw: TlsNostrGroupDataExtension) -> Result<Self, Error> {
-        // Validate version - currently we only support version 1
+        // Validate version - we support versions 1 and 2
         // Future versions should be handled with forward compatibility
         if raw.version == 0 {
             return Err(Error::InvalidExtensionVersion(raw.version));
@@ -492,6 +501,58 @@ impl NostrGroupDataExtension {
         self.image_nonce = image_nonce;
     }
 
+    /// Migrate extension to version 2 format
+    ///
+    /// Updates the extension version to 2. This should be called after migrating
+    /// the group image from v1 to v2 format using `migrate_group_image_v1_to_v2`.
+    ///
+    /// # Arguments
+    ///
+    /// * `new_image_hash` - The new image hash (SHA256 of v2 encrypted image)
+    /// * `new_image_seed` - The new image seed (32 bytes, stored in image_key field for v2)
+    /// * `new_image_nonce` - The new image nonce (12 bytes)
+    ///
+    /// # Example
+    /// ```ignore
+    /// // Migrate image from v1 to v2
+    /// let v2_prepared = migrate_group_image_v1_to_v2(
+    ///     &encrypted_v1_data,
+    ///     &v1_extension.image_key.unwrap(),
+    ///     &v1_extension.image_nonce.unwrap(),
+    ///     "image/jpeg"
+    /// )?;
+    ///
+    /// // Upload to Blossom
+    /// let new_hash = blossom_client.upload(
+    ///     &v2_prepared.encrypted_data,
+    ///     &v2_prepared.upload_keypair
+    /// ).await?;
+    ///
+    /// // Migrate extension to v2
+    /// extension.migrate_to_v2(
+    ///     Some(new_hash),
+    ///     Some(v2_prepared.image_key), // This is the seed in v2
+    ///     Some(v2_prepared.image_nonce)
+    /// );
+    /// ```
+    pub fn migrate_to_v2(
+        &mut self,
+        new_image_hash: Option<[u8; 32]>,
+        new_image_seed: Option<[u8; 32]>,
+        new_image_nonce: Option<[u8; 12]>,
+    ) {
+        self.version = Self::CURRENT_VERSION; // Set to version 2
+        if let Some(hash) = new_image_hash {
+            self.image_hash = Some(hash);
+        }
+        if let Some(seed) = new_image_seed {
+            self.image_key = Some(seed);
+        }
+        if let Some(nonce) = new_image_nonce {
+            self.image_nonce = Some(nonce);
+        }
+    }
+
     /// Get group image encryption data if all three fields are set
     ///
     /// Returns `Some` only when image_hash, image_key, and image_nonce are all present.
@@ -514,6 +575,7 @@ impl NostrGroupDataExtension {
         match (self.image_hash, self.image_key, self.image_nonce) {
             (Some(hash), Some(key), Some(nonce)) => {
                 Some(crate::extension::group_image::GroupImageEncryptionInfo {
+                    version: self.version,
                     image_hash: hash,
                     image_key: key,
                     image_nonce: nonce,
@@ -1039,7 +1101,10 @@ mod tests {
         let (current_deser, _) =
             TlsNostrGroupDataExtension::tls_deserialize_bytes(&current_bytes).unwrap();
         let current_parsed = NostrGroupDataExtension::from_raw(current_deser).unwrap();
-        assert_eq!(current_parsed.version, 1);
+        assert_eq!(
+            current_parsed.version,
+            NostrGroupDataExtension::CURRENT_VERSION
+        );
         assert_eq!(current_parsed.name, "Mixed Format Test");
 
         // Verify that trying to deserialize legacy bytes with the current format fails
@@ -1053,5 +1118,122 @@ mod tests {
             },
             "Legacy format should not deserialize correctly with current format"
         );
+    }
+
+    /// Test migration to version 2
+    #[test]
+    fn test_migrate_to_v2() {
+        let pk1 = PublicKey::parse(ADMIN_1).unwrap();
+        let relay1 = RelayUrl::parse(RELAY_1).unwrap();
+
+        // Create a version 1 extension with image data
+        let mut extension = NostrGroupDataExtension::new(
+            "Test Group",
+            "Test Description",
+            [pk1],
+            [relay1.clone()],
+            Some([1u8; 32]),
+            Some([2u8; 32]),
+            Some([3u8; 12]),
+        );
+
+        assert_eq!(extension.version, NostrGroupDataExtension::CURRENT_VERSION);
+
+        // Manually set to version 1 for testing
+        extension.version = 1;
+        assert_eq!(extension.version, 1);
+
+        // Migrate to v2 with new image data
+        let new_hash = [10u8; 32];
+        let new_seed = [20u8; 32];
+        let new_nonce = [30u8; 12];
+
+        extension.migrate_to_v2(Some(new_hash), Some(new_seed), Some(new_nonce));
+
+        // Verify version is now 2
+        assert_eq!(extension.version, NostrGroupDataExtension::CURRENT_VERSION);
+        assert_eq!(extension.image_hash, Some(new_hash));
+        assert_eq!(extension.image_key, Some(new_seed));
+        assert_eq!(extension.image_nonce, Some(new_nonce));
+
+        // Test partial migration (only updating some fields)
+        let mut extension2 = NostrGroupDataExtension::new(
+            "Test Group 2",
+            "Test Description 2",
+            [pk1],
+            [relay1],
+            Some([1u8; 32]),
+            Some([2u8; 32]),
+            Some([3u8; 12]),
+        );
+        extension2.version = 1;
+
+        extension2.migrate_to_v2(Some(new_hash), None, None);
+
+        // Version should be updated, but only hash should change
+        assert_eq!(extension2.version, NostrGroupDataExtension::CURRENT_VERSION);
+        assert_eq!(extension2.image_hash, Some(new_hash));
+        assert_eq!(extension2.image_key, Some([2u8; 32])); // Unchanged
+        assert_eq!(extension2.image_nonce, Some([3u8; 12])); // Unchanged
+    }
+
+    /// Test that migrating an already-v2 extension updates fields correctly
+    #[test]
+    fn test_migrate_to_v2_already_v2() {
+        let pk1 = PublicKey::parse(ADMIN_1).unwrap();
+        let relay1 = RelayUrl::parse(RELAY_1).unwrap();
+
+        // Create v2 extension
+        let mut extension = NostrGroupDataExtension::new(
+            "Test Group",
+            "Test Description",
+            [pk1],
+            [relay1.clone()],
+            Some([1u8; 32]),
+            Some([2u8; 32]),
+            Some([3u8; 12]),
+        );
+
+        assert_eq!(extension.version, NostrGroupDataExtension::CURRENT_VERSION);
+
+        // Migrate to v2 again (should still work, just update fields)
+        let new_hash = [10u8; 32];
+        let new_seed = [20u8; 32];
+        let new_nonce = [30u8; 12];
+
+        extension.migrate_to_v2(Some(new_hash), Some(new_seed), Some(new_nonce));
+
+        // Version should remain 2, fields should be updated
+        assert_eq!(extension.version, NostrGroupDataExtension::CURRENT_VERSION);
+        assert_eq!(extension.image_hash, Some(new_hash));
+        assert_eq!(extension.image_key, Some(new_seed));
+        assert_eq!(extension.image_nonce, Some(new_nonce));
+    }
+
+    /// Test migration with all None values (just version bump)
+    #[test]
+    fn test_migrate_to_v2_all_none() {
+        let pk1 = PublicKey::parse(ADMIN_1).unwrap();
+        let relay1 = RelayUrl::parse(RELAY_1).unwrap();
+
+        let mut extension = NostrGroupDataExtension::new(
+            "Test Group",
+            "Test Description",
+            [pk1],
+            [relay1],
+            Some([1u8; 32]),
+            Some([2u8; 32]),
+            Some([3u8; 12]),
+        );
+        extension.version = 1;
+
+        // Migrate with all None (just version bump)
+        extension.migrate_to_v2(None, None, None);
+
+        // Version should be updated, but fields unchanged
+        assert_eq!(extension.version, NostrGroupDataExtension::CURRENT_VERSION);
+        assert_eq!(extension.image_hash, Some([1u8; 32]));
+        assert_eq!(extension.image_key, Some([2u8; 32]));
+        assert_eq!(extension.image_nonce, Some([3u8; 12]));
     }
 }
