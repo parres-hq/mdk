@@ -94,8 +94,40 @@ _build-uniffi-ios TARGET:
 _build-uniffi-android TARGET CLANG_PREFIX:
     #!/usr/bin/env bash
     set -euo pipefail
-    NDK_HOST=$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m)
+    # Normalize platform detection to match NDK host-tag naming
+    OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+    ARCH=$(uname -m)
+    
+    # Map OS variants to canonical NDK host tags
+    case "$OS" in
+        linux*)
+            NDK_OS="linux"
+            ;;
+        darwin*)
+            NDK_OS="darwin"
+            # NDK uses darwin-x86_64 even on Apple Silicon (Universal binaries)
+            ARCH="x86_64"
+            ;;
+        mingw*|msys*|cygwin*|windows*)
+            NDK_OS="windows"
+            ARCH="x86_64"
+            ;;
+        *)
+            echo "Error: Unsupported OS: $OS" >&2
+            exit 1
+            ;;
+    esac
+    
+    NDK_HOST="${NDK_OS}-${ARCH}"
     NDK_PREBUILT="${NDK_HOME:-/opt/android-ndk}/toolchains/llvm/prebuilt/${NDK_HOST}"
+    
+    # Verify NDK directory exists
+    if [ ! -d "$NDK_PREBUILT" ]; then
+        echo "Error: NDK prebuilt directory not found: $NDK_PREBUILT" >&2
+        echo "Please ensure NDK_HOME is set correctly or NDK is installed at /opt/android-ndk" >&2
+        exit 1
+    fi
+    
     LLVM_BIN="${NDK_PREBUILT}/bin"
 
     TARGET_UPPER=$(echo "{{TARGET}}" | tr '[:lower:]-' '[:upper:]_')

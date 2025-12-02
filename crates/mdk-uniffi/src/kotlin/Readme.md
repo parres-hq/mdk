@@ -409,26 +409,38 @@ Place the `.so` files in your `src/main/jniLibs/` directory structure, or use th
 
 ### Coroutines Example
 
+Since `Mdk` instances must be confined to a single thread, all MDK operations should be serialized using a single-threaded dispatcher:
+
 ```kotlin
 import kotlinx.coroutines.*
+import kotlinx.coroutines.ExecutorCoroutineDispatcher
+import java.util.concurrent.Executors
 
 class MdkManager(private val context: Context) {
+    // Single-threaded dispatcher to ensure all MDK operations run on the same thread
+    private val mdkDispatcher = Executors.newSingleThreadExecutor().asCoroutineDispatcher()
     private val mdk = newMdk(context.filesDir.resolve("mdk.db").absolutePath)
     
-    suspend fun getGroupsAsync(): List<Group> = withContext(Dispatchers.IO) {
+    suspend fun getGroupsAsync(): List<Group> = withContext(mdkDispatcher) {
         mdk.getGroups()
     }
     
     suspend fun createMessageAsync(
         groupId: String,
+        senderPublicKey: String,
         content: String
-    ): String = withContext(Dispatchers.IO) {
+    ): String = withContext(mdkDispatcher) {
         mdk.createMessage(
             mlsGroupId = groupId,
-            senderPublicKey = myPublicKey,
+            senderPublicKey = senderPublicKey,
             content = content,
             kind = 9u
         )
+    }
+    
+    // Clean up dispatcher when done
+    fun close() {
+        (mdkDispatcher as? ExecutorCoroutineDispatcher)?.close()
     }
 }
 ```
@@ -478,14 +490,25 @@ messages.forEach { message ->
 
 ## Integration with Android ViewModel
 
+Since `Mdk` instances must be confined to a single thread, all MDK operations should be serialized using a single-threaded dispatcher:
+
 ```kotlin
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.ExecutorCoroutineDispatcher
+import java.util.concurrent.Executors
 
-class GroupViewModel(private val mdk: MdkInterface) : ViewModel() {
+class GroupViewModel(
+    private val mdk: Mdk,
+    private val senderPublicKey: String
+) : ViewModel() {
+    // Single-threaded dispatcher to ensure all MDK operations run on the same thread
+    private val mdkDispatcher = Executors.newSingleThreadExecutor().asCoroutineDispatcher()
+    
     private val _groups = MutableStateFlow<List<Group>>(emptyList())
     val groups: StateFlow<List<Group>> = _groups
     
@@ -496,7 +519,9 @@ class GroupViewModel(private val mdk: MdkInterface) : ViewModel() {
     private fun loadGroups() {
         viewModelScope.launch {
             try {
-                _groups.value = mdk.getGroups()
+                _groups.value = withContext(mdkDispatcher) {
+                    mdk.getGroups()
+                }
             } catch (e: Exception) {
                 // Handle error
             }
@@ -506,17 +531,25 @@ class GroupViewModel(private val mdk: MdkInterface) : ViewModel() {
     fun sendMessage(groupId: String, content: String) {
         viewModelScope.launch {
             try {
-                val eventJson = mdk.createMessage(
-                    mlsGroupId = groupId,
-                    senderPublicKey = myPublicKey,
-                    content = content,
-                    kind = 9u
-                )
+                val eventJson = withContext(mdkDispatcher) {
+                    mdk.createMessage(
+                        mlsGroupId = groupId,
+                        senderPublicKey = senderPublicKey,
+                        content = content,
+                        kind = 9u
+                    )
+                }
                 // Publish to Nostr
             } catch (e: Exception) {
                 // Handle error
             }
         }
+    }
+    
+    override fun onCleared() {
+        super.onCleared()
+        // Clean up dispatcher when ViewModel is cleared
+        (mdkDispatcher as? ExecutorCoroutineDispatcher)?.close()
     }
 }
 ```
