@@ -95,8 +95,12 @@ pub struct NostrGroupDataExtension {
     /// Group image hash (blossom hash)
     pub image_hash: Option<[u8; 32]>,
     /// Image seed (v2) or encryption key (v1) for group image decryption
-    /// For v2: This is the master seed used to derive both encryption key and upload keypair via HKDF
-    /// For v1: This is the encryption key directly (deprecated, kept for backward compatibility)
+    ///
+    /// **IMPORTANT**: The interpretation of this field depends on the `version` field:
+    /// - **Version 2**: This is the master seed used to derive both encryption key and upload keypair via HKDF
+    /// - **Version 1**: This is the encryption key directly (deprecated, kept for backward compatibility)
+    ///
+    /// Consumers MUST check the `version` field before interpreting `image_key` to ensure correct usage.
     pub image_key: Option<[u8; 32]>,
     /// Nonce to decrypt group image
     pub image_nonce: Option<[u8; 12]>,
@@ -277,10 +281,12 @@ impl NostrGroupDataExtension {
         if raw.version > Self::CURRENT_VERSION {
             tracing::warn!(
                 target: "mdk_core::extension::types",
-                "Received extension with unknown future version {}, attempting forward compatibility",
+                "Received extension with unknown future version {}, attempting forward compatibility. Note: field interpretation (especially image_key) depends on version - ensure correct version-specific handling",
                 raw.version
             );
             // Continue processing with forward compatibility - unknown fields will be ignored
+            // WARNING: Future versions might change field semantics (e.g., image_key meaning),
+            // so consumers must check version before interpreting fields
         }
 
         let mut admins = BTreeSet::new();
@@ -510,7 +516,16 @@ impl NostrGroupDataExtension {
     ///
     /// * `new_image_hash` - The new image hash (SHA256 of v2 encrypted image)
     /// * `new_image_seed` - The new image seed (32 bytes, stored in image_key field for v2)
+    ///   **REQUIRED** when migrating from v1 to v2, as v1 image_key is a direct encryption key,
+    ///   not a seed. Optional when updating an already-v2 extension.
     /// * `new_image_nonce` - The new image nonce (12 bytes)
+    ///
+    /// # Warning
+    ///
+    /// Migrating from v1 to v2 without providing `new_image_seed` creates a semantic mismatch:
+    /// the version will be set to 2 (expecting seed-based derivation), but the existing
+    /// `image_key` is in v1 format (direct encryption key). This pattern should only be used
+    /// when updating image data for an already-v2 extension.
     ///
     /// # Example
     /// ```ignore
@@ -528,7 +543,7 @@ impl NostrGroupDataExtension {
     ///     &v2_prepared.upload_keypair
     /// ).await?;
     ///
-    /// // Migrate extension to v2
+    /// // Migrate extension to v2 (MUST provide new seed when migrating from v1)
     /// extension.migrate_to_v2(
     ///     Some(new_hash),
     ///     Some(v2_prepared.image_key), // This is the seed in v2
@@ -541,6 +556,13 @@ impl NostrGroupDataExtension {
         new_image_seed: Option<[u8; 32]>,
         new_image_nonce: Option<[u8; 12]>,
     ) {
+        // Warn if migrating from v1 without providing new seed
+        if self.version == 1 && new_image_seed.is_none() && self.image_key.is_some() {
+            tracing::warn!(
+                target: "mdk_core::extension::types",
+                "Migrating from v1 to v2 without new image_seed - existing image_key will be treated as seed, which may cause issues since v1 image_key is a direct encryption key, not a seed"
+            );
+        }
         self.version = Self::CURRENT_VERSION; // Set to version 2
         if let Some(hash) = new_image_hash {
             self.image_hash = Some(hash);
