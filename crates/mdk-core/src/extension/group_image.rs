@@ -23,8 +23,14 @@ use crate::media_processing::{
     MediaProcessingOptions, metadata::extract_metadata_from_encoded_image,
 };
 
-/// Domain separation label for upload keypair derivation (MIP-01 spec)
-const UPLOAD_KEYPAIR_CONTEXT: &[u8] = b"mip01-blossom-upload-v1";
+/// Domain separation label for upload keypair derivation v1 (MIP-01 spec, deprecated)
+const UPLOAD_KEYPAIR_CONTEXT_V1: &[u8] = b"mip01-blossom-upload-v1";
+
+/// Domain separation label for image encryption key derivation v2 (MIP-01 spec)
+const IMAGE_ENCRYPTION_CONTEXT_V2: &[u8] = b"mip01-image-encryption-v2";
+
+/// Domain separation label for upload keypair derivation v2 (MIP-01 spec)
+const UPLOAD_KEYPAIR_CONTEXT_V2: &[u8] = b"mip01-blossom-upload-v2";
 
 /// Prepared group image data ready for upload to Blossom
 #[derive(Debug, Clone)]
@@ -58,7 +64,9 @@ struct GroupImageEncrypted {
     encrypted_data: Vec<u8>,
     /// SHA256 hash of encrypted data (for Blossom upload)
     encrypted_hash: [u8; 32],
-    /// Encryption key
+    /// Image seed (v2) or encryption key (v1) - stored in extension as image_key field
+    /// For v2: this is the master seed used to derive both encryption key and upload keypair
+    /// For v1: this is the encryption key directly
     image_key: [u8; 32],
     /// Encryption nonce
     image_nonce: [u8; 12],
@@ -67,9 +75,11 @@ struct GroupImageEncrypted {
 /// Group image encryption info from extension
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GroupImageEncryptionInfo {
+    /// Extension version (1 or 2)
+    pub version: u16,
     /// Blossom blob hash (SHA256 of encrypted data)
     pub image_hash: [u8; 32],
-    /// Encryption key
+    /// Image seed (v2) or encryption key (v1)
     pub image_key: [u8; 32],
     /// Encryption nonce
     pub image_nonce: [u8; 12],
@@ -113,17 +123,28 @@ pub enum GroupImageError {
     },
 }
 
-/// Encrypt group image with random key and nonce
+/// Encrypt group image with random seed and nonce (v2 format)
 ///
 /// This is an internal function used by `prepare_group_image_for_upload()`.
 /// Users should use `prepare_group_image_for_upload()` instead.
+///
+/// For v2 (current): Generates a random image_seed and derives the encryption key using HKDF.
+/// The image_seed is stored in the extension (as image_key field for backward compatibility).
 fn encrypt_group_image(image_data: &[u8]) -> Result<GroupImageEncrypted, GroupImageError> {
-    // Generate random key and nonce
+    // Generate random seed (v2) - this will be stored in extension as image_key
     let mut rng = OsRng;
-    let mut image_key = [0u8; 32];
+    let mut image_seed = [0u8; 32];
     let mut image_nonce = [0u8; 12];
-    rng.fill_bytes(&mut image_key);
+    rng.fill_bytes(&mut image_seed);
     rng.fill_bytes(&mut image_nonce);
+
+    // Derive encryption key from seed using HKDF-Expand (v2)
+    let hk = Hkdf::<Sha256>::new(None, &image_seed);
+    let mut image_key = [0u8; 32];
+    hk.expand(IMAGE_ENCRYPTION_CONTEXT_V2, &mut image_key)
+        .map_err(|e| GroupImageError::EncryptionFailed {
+            reason: format!("HKDF expansion failed: {}", e),
+        })?;
 
     // Encrypt with ChaCha20-Poly1305 (no AAD per MIP-01 spec)
     let cipher = ChaCha20Poly1305::new_from_slice(&image_key).map_err(|e| {
@@ -146,7 +167,7 @@ fn encrypt_group_image(image_data: &[u8]) -> Result<GroupImageEncrypted, GroupIm
     Ok(GroupImageEncrypted {
         encrypted_data,
         encrypted_hash,
-        image_key,
+        image_key: image_seed, // Store seed in image_key field (for backward compatibility)
         image_nonce,
     })
 }
@@ -156,9 +177,12 @@ fn encrypt_group_image(image_data: &[u8]) -> Result<GroupImageEncrypted, GroupIm
 /// Decrypts the encrypted blob using ChaCha20-Poly1305 AEAD. The auth tag
 /// automatically verifies integrity - if tampering occurred, decryption will fail.
 ///
+/// Supports both v1 (image_key is the encryption key directly) and v2 (image_key is a seed
+/// that needs to be derived using HKDF) formats for backward compatibility.
+///
 /// # Arguments
 /// * `encrypted_data` - Encrypted blob downloaded from Blossom
-/// * `image_key` - Encryption key from group extension
+/// * `image_key` - Encryption key (v1) or seed (v2) from group extension
 /// * `image_nonce` - Encryption nonce from group extension
 ///
 /// # Returns
@@ -180,6 +204,27 @@ pub fn decrypt_group_image(
     image_key: &[u8; 32],
     image_nonce: &[u8; 12],
 ) -> Result<Vec<u8>, GroupImageError> {
+    // Try v2 first: treat image_key as seed and derive encryption key
+    let hk = Hkdf::<Sha256>::new(None, image_key);
+    let mut derived_key = [0u8; 32];
+    if hk
+        .expand(IMAGE_ENCRYPTION_CONTEXT_V2, &mut derived_key)
+        .is_ok()
+    {
+        let cipher = ChaCha20Poly1305::new_from_slice(&derived_key).map_err(|e| {
+            GroupImageError::DecryptionFailed {
+                reason: format!("Failed to create cipher: {}", e),
+            }
+        })?;
+
+        let nonce = Nonce::from_slice(image_nonce);
+        if let Ok(decrypted_data) = cipher.decrypt(nonce, encrypted_data) {
+            return Ok(decrypted_data);
+        }
+        // If v2 decryption fails, fall through to try v1
+    }
+
+    // Fall back to v1: treat image_key as the encryption key directly
     let cipher = ChaCha20Poly1305::new_from_slice(image_key).map_err(|e| {
         GroupImageError::DecryptionFailed {
             reason: format!("Failed to create cipher: {}", e),
@@ -197,35 +242,59 @@ pub fn decrypt_group_image(
     Ok(decrypted_data)
 }
 
-/// Derive Blossom upload keypair from image_key
+/// Derive Blossom upload keypair from image_key (supports both v1 and v2)
 ///
-/// Uses HKDF-Expand with the context "mip01-blossom-upload-v1" to deterministically
-/// derive a Nostr keypair from the image encryption key. This enables cleanup of old
-/// images - anyone with the image_key can derive the upload keypair and delete the blob.
+/// For v2: Uses HKDF-Expand with the context "mip01-blossom-upload-v2" to deterministically
+/// derive a Nostr keypair from the image_seed. The image_key field contains the seed.
+///
+/// For v1 (backward compatibility): Uses HKDF-Expand with the context "mip01-blossom-upload-v1"
+/// to derive a Nostr keypair from the image encryption key directly.
+///
+/// This enables cleanup of old images - anyone with the image_key/seed can derive the upload
+/// keypair and delete the blob.
 ///
 /// # Arguments
-/// * `image_key` - The 32-byte image encryption key
+/// * `image_key` - The 32-byte image seed (v2) or encryption key (v1) from extension
+/// * `version` - Extension version (1 or 2). Must be specified to ensure correct derivation.
+///   For v1 images, this must be 1. For v2 images, this must be 2.
 ///
 /// # Returns
 /// * Nostr keypair for Blossom authentication
+///
+/// # Errors
+/// * `KeypairDerivationFailed` - If HKDF expansion fails or secret key is invalid
 ///
 /// # Example
 /// ```ignore
 /// // Cleanup old image after updating
 /// if let Some(old_info) = old_extension.group_image_encryption_data() {
-///     let old_keypair = derive_upload_keypair(&old_info.image_key)?;
+///     let old_keypair = derive_upload_keypair(&old_info.image_key, old_info.version)?;
 ///     blossom_client.delete(&old_info.image_hash, &old_keypair).await?;
 /// }
 /// ```
-pub fn derive_upload_keypair(image_key: &[u8; 32]) -> Result<nostr::Keys, GroupImageError> {
-    // Use HKDF-Expand to derive upload secret from image_key
+pub fn derive_upload_keypair(
+    image_key: &[u8; 32],
+    version: u16,
+) -> Result<nostr::Keys, GroupImageError> {
     let hk = Hkdf::<Sha256>::new(None, image_key);
     let mut upload_secret = [0u8; 32];
 
-    hk.expand(UPLOAD_KEYPAIR_CONTEXT, &mut upload_secret)
-        .map_err(|e| GroupImageError::KeypairDerivationFailed {
+    // Use the appropriate context based on version
+    let context = match version {
+        1 => UPLOAD_KEYPAIR_CONTEXT_V1,
+        2 => UPLOAD_KEYPAIR_CONTEXT_V2,
+        _ => {
+            return Err(GroupImageError::KeypairDerivationFailed {
+                reason: format!("Unsupported extension version: {}", version),
+            });
+        }
+    };
+
+    hk.expand(context, &mut upload_secret).map_err(|e| {
+        GroupImageError::KeypairDerivationFailed {
             reason: format!("HKDF expansion failed: {}", e),
-        })?;
+        }
+    })?;
 
     // Create Nostr keypair from derived secret
     let secret_key = nostr::SecretKey::from_slice(&upload_secret).map_err(|e| {
@@ -382,7 +451,8 @@ pub fn prepare_group_image_for_upload_with_options(
     // Now that validation and sanitization passed, proceed with encryption
     let encrypted = encrypt_group_image(&sanitized_data)?;
     let encrypted_size = encrypted.encrypted_data.len();
-    let upload_keypair = derive_upload_keypair(&encrypted.image_key)?;
+    // Always use version 2 for new uploads (encrypt_group_image creates v2 format)
+    let upload_keypair = derive_upload_keypair(&encrypted.image_key, 2)?;
 
     Ok(GroupImageUpload {
         encrypted_data: encrypted.encrypted_data,
@@ -396,6 +466,71 @@ pub fn prepare_group_image_for_upload_with_options(
         dimensions,
         blurhash,
     })
+}
+
+/// Migrate group image from v1 to v2 format
+///
+/// This function decrypts an image encrypted with v1 format (direct encryption key)
+/// and re-encrypts it using v2 format (seed-derived encryption key). This is used
+/// when upgrading a group's extension from version 1 to version 2.
+///
+/// # Arguments
+/// * `encrypted_v1_data` - The encrypted image data from Blossom (v1 format)
+/// * `v1_image_key` - The v1 encryption key (32 bytes, used directly)
+/// * `v1_image_nonce` - The v1 encryption nonce (12 bytes)
+/// * `mime_type` - MIME type of the image (e.g., "image/jpeg", "image/png")
+///
+/// # Returns
+/// * `GroupImageUpload` with v2 format encryption (seed stored in image_key field)
+///
+/// # Errors
+/// * `DecryptionFailed` - If v1 decryption fails
+/// * `EncryptionFailed` - If v2 encryption fails
+/// * `KeypairDerivationFailed` - If upload keypair derivation fails
+///
+/// # Example
+/// ```ignore
+/// // Download encrypted v1 image from Blossom
+/// let encrypted_v1 = download_from_blossom(&v1_extension.image_hash).await?;
+///
+/// // Migrate to v2 format
+/// let v2_prepared = migrate_group_image_v1_to_v2(
+///     &encrypted_v1,
+///     &v1_extension.image_key.unwrap(),
+///     &v1_extension.image_nonce.unwrap(),
+///     "image/jpeg"
+/// )?;
+///
+/// // Upload new v2 encrypted image to Blossom
+/// let new_hash = blossom_client.upload(
+///     &v2_prepared.encrypted_data,
+///     &v2_prepared.upload_keypair
+/// ).await?;
+///
+/// // Verify hash matches
+/// assert_eq!(new_hash, v2_prepared.encrypted_hash);
+///
+/// // Update extension to v2
+/// let mut extension = get_group_extension(&group_id)?;
+/// extension.version = 2;
+/// extension.image_hash = Some(new_hash);
+/// extension.image_key = Some(v2_prepared.image_key); // This is now the seed
+/// extension.image_nonce = Some(v2_prepared.image_nonce);
+///
+/// // Cleanup old v1 image (must use version 1 for v1 images)
+/// let old_keypair = derive_upload_keypair(&v1_extension.image_key.unwrap(), 1)?;
+/// blossom_client.delete(&v1_extension.image_hash.unwrap(), &old_keypair).await?;
+/// ```
+pub fn migrate_group_image_v1_to_v2(
+    encrypted_v1_data: &[u8],
+    v1_image_key: &[u8; 32],
+    v1_image_nonce: &[u8; 12],
+    mime_type: &str,
+) -> Result<GroupImageUpload, GroupImageError> {
+    let decrypted_data = decrypt_group_image(encrypted_v1_data, v1_image_key, v1_image_nonce)?;
+
+    // Re-encrypt using v2 format (which generates a seed and derives the encryption key)
+    prepare_group_image_for_upload(&decrypted_data, mime_type)
 }
 
 #[cfg(test)]
@@ -464,8 +599,8 @@ mod tests {
     fn test_derive_upload_keypair_deterministic() {
         let image_key = [0x42u8; 32];
 
-        let keypair1 = derive_upload_keypair(&image_key).unwrap();
-        let keypair2 = derive_upload_keypair(&image_key).unwrap();
+        let keypair1 = derive_upload_keypair(&image_key, 2).unwrap();
+        let keypair2 = derive_upload_keypair(&image_key, 2).unwrap();
 
         // Same key should derive same keypair
         assert_eq!(keypair1.public_key(), keypair2.public_key());
@@ -481,8 +616,8 @@ mod tests {
         let key1 = [0x42u8; 32];
         let key2 = [0x43u8; 32];
 
-        let keypair1 = derive_upload_keypair(&key1).unwrap();
-        let keypair2 = derive_upload_keypair(&key2).unwrap();
+        let keypair1 = derive_upload_keypair(&key1, 2).unwrap();
+        let keypair2 = derive_upload_keypair(&key2, 2).unwrap();
 
         // Different keys should derive different keypairs
         assert_ne!(keypair1.public_key(), keypair2.public_key());
@@ -540,8 +675,8 @@ mod tests {
         // The decrypted data should be valid
         assert!(!decrypted.is_empty());
 
-        // Verify keypair derivation is correct
-        let derived_keypair = derive_upload_keypair(&prepared.image_key).unwrap();
+        // Verify keypair derivation is correct (v2 format)
+        let derived_keypair = derive_upload_keypair(&prepared.image_key, 2).unwrap();
         assert_eq!(
             derived_keypair.public_key(),
             prepared.upload_keypair.public_key()
@@ -720,5 +855,423 @@ mod tests {
         assert_eq!(prepared.mime_type, "image/png");
         assert_eq!(prepared.dimensions, Some((32, 32)));
         assert_eq!(prepared.blurhash, None); // Blurhash disabled
+    }
+
+    /// Test v2 encryption/decryption (current format using seed derivation)
+    #[test]
+    fn test_v2_encryption_uses_seed_derivation() {
+        let original_data = b"Test v2 encryption";
+        let encrypted = encrypt_group_image(original_data).unwrap();
+
+        // Verify we can decrypt using v2 (seed derivation)
+        let decrypted = decrypt_group_image(
+            &encrypted.encrypted_data,
+            &encrypted.image_key,
+            &encrypted.image_nonce,
+        )
+        .unwrap();
+
+        assert_eq!(decrypted.as_slice(), original_data);
+
+        // Verify that image_key is actually a seed (not the encryption key directly)
+        // by checking that deriving the key from it works
+        let hk = Hkdf::<Sha256>::new(None, &encrypted.image_key);
+        let mut derived_key = [0u8; 32];
+        hk.expand(IMAGE_ENCRYPTION_CONTEXT_V2, &mut derived_key)
+            .unwrap();
+
+        // The derived key should work for decryption
+        let cipher = ChaCha20Poly1305::new_from_slice(&derived_key).unwrap();
+        let nonce = Nonce::from_slice(&encrypted.image_nonce);
+        let decrypted_v2 = cipher
+            .decrypt(nonce, encrypted.encrypted_data.as_ref())
+            .unwrap();
+        assert_eq!(decrypted_v2.as_slice(), original_data);
+    }
+
+    /// Test v1 backward compatibility: decrypt data encrypted with v1 format (direct key)
+    #[test]
+    fn test_v1_backward_compatibility_decryption() {
+        let original_data = b"Test v1 encrypted data";
+
+        // Simulate v1 encryption: use key directly (not derived from seed)
+        let mut rng = OsRng;
+        let mut image_key_v1 = [0u8; 32];
+        let mut image_nonce = [0u8; 12];
+        rng.fill_bytes(&mut image_key_v1);
+        rng.fill_bytes(&mut image_nonce);
+
+        // Encrypt with v1 format (direct key)
+        let cipher = ChaCha20Poly1305::new_from_slice(&image_key_v1).unwrap();
+        let nonce = Nonce::from_slice(&image_nonce);
+        let encrypted_data = cipher.encrypt(nonce, original_data.as_ref()).unwrap();
+
+        // Verify we can decrypt using v1 format (fallback)
+        let decrypted = decrypt_group_image(&encrypted_data, &image_key_v1, &image_nonce).unwrap();
+        assert_eq!(decrypted.as_slice(), original_data);
+    }
+
+    /// Test v2 upload keypair derivation
+    #[test]
+    fn test_v2_upload_keypair_derivation() {
+        // Generate a seed (as v2 would)
+        let mut rng = OsRng;
+        let mut image_seed = [0u8; 32];
+        rng.fill_bytes(&mut image_seed);
+
+        // Derive upload keypair using v2 method
+        let hk = Hkdf::<Sha256>::new(None, &image_seed);
+        let mut upload_secret = [0u8; 32];
+        hk.expand(UPLOAD_KEYPAIR_CONTEXT_V2, &mut upload_secret)
+            .unwrap();
+        let secret_key = nostr::SecretKey::from_slice(&upload_secret).unwrap();
+        let expected_keypair = nostr::Keys::new(secret_key);
+
+        // Verify derive_upload_keypair uses v2 when given a seed and version 2
+        let derived_keypair = derive_upload_keypair(&image_seed, 2).unwrap();
+        assert_eq!(derived_keypair.public_key(), expected_keypair.public_key());
+    }
+
+    /// Test v1 upload keypair derivation (backward compatibility)
+    #[test]
+    fn test_v1_upload_keypair_derivation() {
+        // Simulate v1: use encryption key directly (not a seed)
+        let mut rng = OsRng;
+        let mut image_key_v1 = [0u8; 32];
+        rng.fill_bytes(&mut image_key_v1);
+
+        // Derive upload keypair using v1 method directly
+        let hk = Hkdf::<Sha256>::new(None, &image_key_v1);
+        let mut upload_secret = [0u8; 32];
+        hk.expand(UPLOAD_KEYPAIR_CONTEXT_V1, &mut upload_secret)
+            .unwrap();
+        let secret_key = nostr::SecretKey::from_slice(&upload_secret).unwrap();
+        let expected_v1_keypair = nostr::Keys::new(secret_key);
+
+        // Verify derive_upload_keypair works with v1-style key when version 1 is specified
+        let derived_keypair = derive_upload_keypair(&image_key_v1, 1).unwrap();
+
+        // Verify it's deterministic
+        let derived_keypair2 = derive_upload_keypair(&image_key_v1, 1).unwrap();
+        assert_eq!(derived_keypair.public_key(), derived_keypair2.public_key());
+
+        // Verify that v1 derivation produces the correct keypair
+        assert_eq!(
+            derived_keypair.public_key(),
+            expected_v1_keypair.public_key(),
+            "v1 derivation should produce the expected keypair"
+        );
+
+        // Verify that v1 and v2 produce different keypairs for the same input
+        let v2_keypair = derive_upload_keypair(&image_key_v1, 2).unwrap();
+        assert_ne!(
+            derived_keypair.public_key(),
+            v2_keypair.public_key(),
+            "v2 and v1 should produce different keypairs for the same input"
+        );
+    }
+
+    /// Test that v2 and v1 produce different keypairs for the same input
+    /// (demonstrating that they use different HKDF contexts)
+    #[test]
+    fn test_v1_v2_keypair_difference() {
+        // Use the same 32-byte value as both v1 key and v2 seed
+        let test_bytes = [0x42u8; 32];
+
+        // Derive using v1 method
+        let hk_v1 = Hkdf::<Sha256>::new(None, &test_bytes);
+        let mut upload_secret_v1 = [0u8; 32];
+        hk_v1
+            .expand(UPLOAD_KEYPAIR_CONTEXT_V1, &mut upload_secret_v1)
+            .unwrap();
+        let secret_key_v1 = nostr::SecretKey::from_slice(&upload_secret_v1).unwrap();
+        let keypair_v1 = nostr::Keys::new(secret_key_v1);
+
+        // Derive using v2 method
+        let hk_v2 = Hkdf::<Sha256>::new(None, &test_bytes);
+        let mut upload_secret_v2 = [0u8; 32];
+        hk_v2
+            .expand(UPLOAD_KEYPAIR_CONTEXT_V2, &mut upload_secret_v2)
+            .unwrap();
+        let secret_key_v2 = nostr::SecretKey::from_slice(&upload_secret_v2).unwrap();
+        let keypair_v2 = nostr::Keys::new(secret_key_v2);
+
+        // They should be different (different HKDF contexts)
+        assert_ne!(keypair_v1.public_key(), keypair_v2.public_key());
+    }
+
+    /// Test that v2 encryption key and upload keypair are derived from the same seed
+    #[test]
+    fn test_v2_encryption_and_upload_derivation() {
+        let original_data = b"Test v2 derivation consistency";
+
+        // Encrypt using v2 (generates seed, derives encryption key)
+        let encrypted = encrypt_group_image(original_data).unwrap();
+        let image_seed = encrypted.image_key; // This is the seed in v2
+
+        // Derive encryption key from seed
+        let hk_enc = Hkdf::<Sha256>::new(None, &image_seed);
+        let mut encryption_key = [0u8; 32];
+        hk_enc
+            .expand(IMAGE_ENCRYPTION_CONTEXT_V2, &mut encryption_key)
+            .unwrap();
+
+        // Derive upload keypair from same seed (v2 format)
+        let upload_keypair = derive_upload_keypair(&image_seed, 2).unwrap();
+
+        // Verify we can decrypt using the derived encryption key
+        let cipher = ChaCha20Poly1305::new_from_slice(&encryption_key).unwrap();
+        let nonce = Nonce::from_slice(&encrypted.image_nonce);
+        let decrypted = cipher
+            .decrypt(nonce, encrypted.encrypted_data.as_ref())
+            .unwrap();
+        assert_eq!(decrypted.as_slice(), original_data);
+
+        // Verify upload keypair derivation is deterministic
+        let upload_keypair2 = derive_upload_keypair(&image_seed, 2).unwrap();
+        assert_eq!(upload_keypair.public_key(), upload_keypair2.public_key());
+    }
+
+    /// Test migration from v1 to v2 format
+    #[test]
+    fn test_migrate_v1_to_v2() {
+        // Create a valid 64x64 gradient image for testing
+        use image::{ImageBuffer, Rgb};
+        let img = ImageBuffer::from_fn(64, 64, |x, y| {
+            Rgb([(x * 4) as u8, (y * 4) as u8, ((x + y) * 2) as u8])
+        });
+        let mut original_data = Vec::new();
+        img.write_to(
+            &mut std::io::Cursor::new(&mut original_data),
+            image::ImageFormat::Png,
+        )
+        .unwrap();
+
+        // Simulate v1 encryption: use key directly (not derived from seed)
+        let mut rng = OsRng;
+        let mut v1_image_key = [0u8; 32];
+        let mut v1_image_nonce = [0u8; 12];
+        rng.fill_bytes(&mut v1_image_key);
+        rng.fill_bytes(&mut v1_image_nonce);
+
+        // Encrypt with v1 format (direct key)
+        let cipher = ChaCha20Poly1305::new_from_slice(&v1_image_key).unwrap();
+        let nonce = Nonce::from_slice(&v1_image_nonce);
+        let encrypted_v1_data = cipher.encrypt(nonce, original_data.as_ref()).unwrap();
+
+        // Migrate to v2 format
+        let v2_prepared = migrate_group_image_v1_to_v2(
+            &encrypted_v1_data,
+            &v1_image_key,
+            &v1_image_nonce,
+            "image/png",
+        )
+        .unwrap();
+
+        // Verify v2 encrypted data is different from v1
+        assert_ne!(encrypted_v1_data, v2_prepared.encrypted_data);
+
+        // Verify we can decrypt v2 data using the seed
+        let decrypted_v2 = decrypt_group_image(
+            &v2_prepared.encrypted_data,
+            &v2_prepared.image_key, // This is the seed in v2
+            &v2_prepared.image_nonce,
+        )
+        .unwrap();
+
+        // Verify decrypted data matches original (after processing)
+        // Note: prepare_group_image_for_upload may process the image, so we just verify it's not empty
+        assert!(!decrypted_v2.is_empty());
+
+        // Verify v2 uses seed derivation (image_key is seed, not encryption key)
+        // We can verify this by checking that deriving the encryption key works
+        let hk = Hkdf::<Sha256>::new(None, &v2_prepared.image_key);
+        let mut derived_key = [0u8; 32];
+        hk.expand(IMAGE_ENCRYPTION_CONTEXT_V2, &mut derived_key)
+            .unwrap();
+
+        // The derived key should work for decryption
+        let cipher_v2 = ChaCha20Poly1305::new_from_slice(&derived_key).unwrap();
+        let nonce_v2 = Nonce::from_slice(&v2_prepared.image_nonce);
+        let decrypted_with_derived = cipher_v2
+            .decrypt(nonce_v2, v2_prepared.encrypted_data.as_ref())
+            .unwrap();
+        assert_eq!(decrypted_v2, decrypted_with_derived);
+
+        // Verify upload keypair derivation works with v2 seed
+        let upload_keypair = derive_upload_keypair(&v2_prepared.image_key, 2).unwrap();
+        assert_eq!(
+            upload_keypair.public_key(),
+            v2_prepared.upload_keypair.public_key()
+        );
+    }
+
+    /// Test that migration fails with wrong v1 key
+    #[test]
+    fn test_migrate_v1_to_v2_wrong_key() {
+        // Create valid v1 encrypted data
+        let mut rng = OsRng;
+        let mut v1_key = [0u8; 32];
+        let mut v1_nonce = [0u8; 12];
+        rng.fill_bytes(&mut v1_key);
+        rng.fill_bytes(&mut v1_nonce);
+
+        let original_data = b"test data";
+        let cipher = ChaCha20Poly1305::new_from_slice(&v1_key).unwrap();
+        let nonce = Nonce::from_slice(&v1_nonce);
+        let encrypted = cipher.encrypt(nonce, original_data.as_ref()).unwrap();
+
+        // Try to migrate with wrong key
+        let wrong_key = [0xFFu8; 32];
+        let result = migrate_group_image_v1_to_v2(&encrypted, &wrong_key, &v1_nonce, "image/png");
+
+        assert!(result.is_err());
+        assert!(matches!(
+            result,
+            Err(GroupImageError::DecryptionFailed { .. })
+        ));
+    }
+
+    /// Test that migration fails with corrupted v1 data
+    #[test]
+    fn test_migrate_v1_to_v2_corrupted_data() {
+        let mut rng = OsRng;
+        let mut v1_key = [0u8; 32];
+        let mut v1_nonce = [0u8; 12];
+        rng.fill_bytes(&mut v1_key);
+        rng.fill_bytes(&mut v1_nonce);
+
+        // Corrupted encrypted data
+        let corrupted_data = vec![0xFFu8; 100];
+
+        let result = migrate_group_image_v1_to_v2(&corrupted_data, &v1_key, &v1_nonce, "image/png");
+
+        assert!(result.is_err());
+        assert!(matches!(
+            result,
+            Err(GroupImageError::DecryptionFailed { .. })
+        ));
+    }
+
+    /// Test that v1 and v2 produce different encrypted data for the same source
+    #[test]
+    fn test_v1_v2_produce_different_encryption() {
+        // Create test image
+        use image::{ImageBuffer, Rgb};
+        let img = ImageBuffer::from_fn(64, 64, |x, y| {
+            Rgb([(x * 4) as u8, (y * 4) as u8, ((x + y) * 2) as u8])
+        });
+        let mut image_data = Vec::new();
+        img.write_to(
+            &mut std::io::Cursor::new(&mut image_data),
+            image::ImageFormat::Png,
+        )
+        .unwrap();
+
+        // Encrypt with v1 (direct key)
+        let mut rng = OsRng;
+        let mut v1_key = [0u8; 32];
+        let mut v1_nonce = [0u8; 12];
+        rng.fill_bytes(&mut v1_key);
+        rng.fill_bytes(&mut v1_nonce);
+
+        let cipher_v1 = ChaCha20Poly1305::new_from_slice(&v1_key).unwrap();
+        let nonce_v1 = Nonce::from_slice(&v1_nonce);
+        let encrypted_v1 = cipher_v1.encrypt(nonce_v1, image_data.as_ref()).unwrap();
+
+        // Migrate to v2
+        let v2_prepared =
+            migrate_group_image_v1_to_v2(&encrypted_v1, &v1_key, &v1_nonce, "image/png").unwrap();
+
+        // Verify encrypted data is different (even though source is same)
+        assert_ne!(encrypted_v1, v2_prepared.encrypted_data);
+
+        // Verify hashes are different
+        let hash_v1: [u8; 32] = Sha256::digest(&encrypted_v1).into();
+        assert_ne!(hash_v1, v2_prepared.encrypted_hash);
+    }
+
+    /// Test that migration preserves image metadata (dimensions, MIME type)
+    #[test]
+    fn test_migration_preserves_metadata() {
+        // Create test image with known dimensions
+        use image::{ImageBuffer, Rgb};
+        let img = ImageBuffer::from_fn(128, 64, |x, y| {
+            Rgb([(x * 2) as u8, (y * 4) as u8, ((x + y) * 2) as u8])
+        });
+        let mut image_data = Vec::new();
+        img.write_to(
+            &mut std::io::Cursor::new(&mut image_data),
+            image::ImageFormat::Png,
+        )
+        .unwrap();
+
+        // Encrypt with v1
+        let mut rng = OsRng;
+        let mut v1_key = [0u8; 32];
+        let mut v1_nonce = [0u8; 12];
+        rng.fill_bytes(&mut v1_key);
+        rng.fill_bytes(&mut v1_nonce);
+
+        let cipher = ChaCha20Poly1305::new_from_slice(&v1_key).unwrap();
+        let nonce = Nonce::from_slice(&v1_nonce);
+        let encrypted_v1 = cipher.encrypt(nonce, image_data.as_ref()).unwrap();
+
+        // Migrate to v2
+        let v2_prepared =
+            migrate_group_image_v1_to_v2(&encrypted_v1, &v1_key, &v1_nonce, "image/png").unwrap();
+
+        // Verify metadata is preserved
+        assert_eq!(v2_prepared.mime_type, "image/png");
+        assert_eq!(v2_prepared.dimensions, Some((128, 64)));
+        assert_eq!(v2_prepared.original_size, image_data.len());
+    }
+
+    /// Test that we can still decrypt v1 data after migration
+    #[test]
+    fn test_v1_decryption_still_works_after_migration() {
+        // Create test image
+        use image::{ImageBuffer, Rgb};
+        let img = ImageBuffer::from_fn(64, 64, |x, y| {
+            Rgb([(x * 4) as u8, (y * 4) as u8, ((x + y) * 2) as u8])
+        });
+        let mut image_data = Vec::new();
+        img.write_to(
+            &mut std::io::Cursor::new(&mut image_data),
+            image::ImageFormat::Png,
+        )
+        .unwrap();
+
+        // Encrypt with v1
+        let mut rng = OsRng;
+        let mut v1_key = [0u8; 32];
+        let mut v1_nonce = [0u8; 12];
+        rng.fill_bytes(&mut v1_key);
+        rng.fill_bytes(&mut v1_nonce);
+
+        let cipher = ChaCha20Poly1305::new_from_slice(&v1_key).unwrap();
+        let nonce = Nonce::from_slice(&v1_nonce);
+        let encrypted_v1 = cipher.encrypt(nonce, image_data.as_ref()).unwrap();
+
+        // Migrate to v2
+        let v2_prepared =
+            migrate_group_image_v1_to_v2(&encrypted_v1, &v1_key, &v1_nonce, "image/png").unwrap();
+
+        // Verify we can still decrypt original v1 data
+        let decrypted_v1 = decrypt_group_image(&encrypted_v1, &v1_key, &v1_nonce).unwrap();
+
+        assert_eq!(decrypted_v1, image_data);
+
+        // Verify v2 data decrypts correctly too
+        let decrypted_v2 = decrypt_group_image(
+            &v2_prepared.encrypted_data,
+            &v2_prepared.image_key,
+            &v2_prepared.image_nonce,
+        )
+        .unwrap();
+
+        // Both should decrypt successfully (v2 may have processed the image)
+        assert!(!decrypted_v1.is_empty());
+        assert!(!decrypted_v2.is_empty());
     }
 }
