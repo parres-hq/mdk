@@ -79,7 +79,7 @@ jobs:
             echo "Using manual baseline: $MASTER_COV%"
           else
             echo "🔍 Searching for baseline from master branch..."
-            
+
             # Get the latest completed coverage workflow run ID from master
             RUN_ID=$(gh run list \
               --repo ${{ github.repository }} \
@@ -89,21 +89,21 @@ jobs:
               --limit 1 \
               --json databaseId \
               --jq '.[0].databaseId')
-            
+
             if [ -z "$RUN_ID" ] || [ "$RUN_ID" = "null" ]; then
               echo "baseline=0" >> "$GITHUB_OUTPUT"
               echo "⚠️  No completed coverage workflow run found on master"
               exit 0
             fi
-            
+
             echo "Found workflow run ID: $RUN_ID"
-            
+
             # Download the baseline artifact from that specific run
             if gh run download "$RUN_ID" \
               --repo ${{ github.repository }} \
               --name coverage-baseline \
               --dir master-coverage; then
-              
+
               if [ -f master-coverage/coverage-baseline.txt ]; then
                 MASTER_COV=$(cat master-coverage/coverage-baseline.txt)
                 echo "baseline=$MASTER_COV" >> "$GITHUB_OUTPUT"
@@ -150,17 +150,37 @@ jobs:
             const current = parseFloat('${{ steps.coverage.outputs.percentage }}');
             const baseline = parseFloat('${{ steps.master_coverage.outputs.baseline }}');
             const diff = (current - baseline).toFixed(2);
-            
+
             let emoji = current > baseline ? '✅' : current < baseline ? '❌' : '⚠️';
-            
-            const body = `## ${emoji} Coverage: ${baseline}% → ${current}% (${diff > 0 ? '+' : ''}${diff}%)`;
-            
-            github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: body
-            });
+
+            // Build the message (with markdown header for comments, without for logs)
+            const commentBody = `## ${emoji} Coverage: ${baseline}% → ${current}% (${diff > 0 ? '+' : ''}${diff}%)`;
+            const logMessage = `${emoji} Coverage: ${baseline}% → ${current}% (${diff > 0 ? '+' : ''}${diff}%)`;
+
+            // Skip commenting on PRs from forks (they don't have write permissions)
+            const isFork = context.payload.pull_request.head.repo.full_name !== context.payload.repository.full_name;
+            if (isFork) {
+              console.log('Skipping PR comment: PR is from a fork and does not have write permissions');
+              console.log('Coverage result:', logMessage);
+              return;
+            }
+
+            try {
+              await github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: commentBody
+              });
+            } catch (error) {
+              // Gracefully handle permission errors (e.g., from forks)
+              if (error.status === 403) {
+                console.log('Unable to comment on PR (likely from fork):', error.message);
+                console.log('Coverage result:', logMessage);
+              } else {
+                throw error;
+              }
+            }
 
       - name: Save coverage baseline (master only)
         if: github.ref == 'refs/heads/master' && github.event_name == 'push'
