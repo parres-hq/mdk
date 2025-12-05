@@ -39,10 +39,13 @@ pub struct GroupImageUpload {
     pub encrypted_data: Vec<u8>,
     /// SHA256 hash of encrypted data (verify against Blossom response)
     pub encrypted_hash: [u8; 32],
-    /// Encryption key (store in extension)
+    /// Image seed (v2) - used to derive encryption key via HKDF
     pub image_key: [u8; 32],
     /// Encryption nonce (store in extension)
     pub image_nonce: [u8; 12],
+    /// Upload seed (v2) - used to derive the Nostr keypair for Blossom authentication
+    /// Cryptographically independent from image_key
+    pub image_upload_key: [u8; 32],
     /// Derived keypair for Blossom authentication
     pub upload_keypair: nostr::Keys,
     /// Original image size before encryption (and before EXIF stripping if applicable)
@@ -64,12 +67,15 @@ struct GroupImageEncrypted {
     encrypted_data: Vec<u8>,
     /// SHA256 hash of encrypted data (for Blossom upload)
     encrypted_hash: [u8; 32],
-    /// Image seed (v2) or encryption key (v1) - stored in extension as image_key field
-    /// For v2: this is the master seed used to derive both encryption key and upload keypair
+    /// Image seed (v2) - used to derive encryption key via HKDF
+    /// For v2: this is the seed used to derive the encryption key
     /// For v1: this is the encryption key directly
     image_key: [u8; 32],
     /// Encryption nonce
     image_nonce: [u8; 12],
+    /// Upload seed (v2) - used to derive the Nostr keypair for Blossom authentication
+    /// For v2: this is cryptographically independent from image_key
+    image_upload_key: [u8; 32],
 }
 
 /// Group image encryption info from extension
@@ -83,6 +89,9 @@ pub struct GroupImageEncryptionInfo {
     pub image_key: [u8; 32],
     /// Encryption nonce
     pub image_nonce: [u8; 12],
+    /// Upload seed (v2 only) for deriving the Nostr keypair used for Blossom authentication
+    /// None for v1 extensions
+    pub image_upload_key: Option<[u8; 32]>,
 }
 
 /// Errors that can occur during group image operations
@@ -128,14 +137,17 @@ pub enum GroupImageError {
 /// This is an internal function used by `prepare_group_image_for_upload()`.
 /// Users should use `prepare_group_image_for_upload()` instead.
 ///
-/// For v2 (current): Generates a random image_seed and derives the encryption key using HKDF.
-/// The image_seed is stored in the extension (as image_key field for backward compatibility).
+/// For v2 (current): Generates cryptographically independent image_seed and upload_seed.
+/// The image_seed derives the encryption key via HKDF, while upload_seed derives the
+/// Nostr keypair for Blossom authentication, maintaining cryptographic independence.
 fn encrypt_group_image(image_data: &[u8]) -> Result<GroupImageEncrypted, GroupImageError> {
-    // Generate random seed (v2) - this will be stored in extension as image_key
+    // Generate cryptographically independent seeds for v2
     let mut rng = OsRng;
     let mut image_seed = [0u8; 32];
+    let mut image_upload_seed = [0u8; 32];
     let mut image_nonce = [0u8; 12];
     rng.fill_bytes(&mut image_seed);
+    rng.fill_bytes(&mut image_upload_seed);
     rng.fill_bytes(&mut image_nonce);
 
     // Derive encryption key from seed using HKDF-Expand (v2)
@@ -167,8 +179,9 @@ fn encrypt_group_image(image_data: &[u8]) -> Result<GroupImageEncrypted, GroupIm
     Ok(GroupImageEncrypted {
         encrypted_data,
         encrypted_hash,
-        image_key: image_seed, // Store seed in image_key field (for backward compatibility)
+        image_key: image_seed, // Store image seed in image_key field
         image_nonce,
+        image_upload_key: image_upload_seed, // Store upload seed separately
     })
 }
 
@@ -242,21 +255,25 @@ pub fn decrypt_group_image(
     Ok(decrypted_data)
 }
 
-/// Derive Blossom upload keypair from image_key (supports both v1 and v2)
+/// Derive Blossom upload keypair from seed/key (supports both v1 and v2)
 ///
 /// For v2: Uses HKDF-Expand with the context "mip01-blossom-upload-v2" to deterministically
-/// derive a Nostr keypair from the image_seed. The image_key field contains the seed.
+/// derive a Nostr keypair from the image_upload_seed. The seed is cryptographically independent
+/// from the image encryption seed to maintain cryptographic separation.
 ///
 /// For v1 (backward compatibility): Uses HKDF-Expand with the context "mip01-blossom-upload-v1"
-/// to derive a Nostr keypair from the image encryption key directly.
+/// to derive a Nostr keypair from the image encryption key directly. In v1, there is no
+/// cryptographic separation between encryption and upload keys.
 ///
-/// This enables cleanup of old images - anyone with the image_key/seed can derive the upload
+/// This enables cleanup of old images - anyone with the appropriate seed/key can derive the upload
 /// keypair and delete the blob.
 ///
 /// # Arguments
-/// * `image_key` - The 32-byte image seed (v2) or encryption key (v1) from extension
+/// * `seed_or_key` - For v2: The 32-byte image_upload_seed from extension.image_upload_key.
+///                   For v1: The 32-byte image encryption key from extension.image_key.
 /// * `version` - Extension version (1 or 2). Must be specified to ensure correct derivation.
-///   For v1 images, this must be 1. For v2 images, this must be 2.
+///   For v1 images, this must be 1 and seed_or_key is the encryption key.
+///   For v2 images, this must be 2 and seed_or_key is the upload seed.
 ///
 /// # Returns
 /// * Nostr keypair for Blossom authentication
@@ -268,15 +285,20 @@ pub fn decrypt_group_image(
 /// ```ignore
 /// // Cleanup old image after updating
 /// if let Some(old_info) = old_extension.group_image_encryption_data() {
-///     let old_keypair = derive_upload_keypair(&old_info.image_key, old_info.version)?;
+///     let seed_or_key = match old_info.version {
+///         1 => &old_info.image_key, // v1: use encryption key
+///         2 => old_info.image_upload_key.as_ref().unwrap(), // v2: use upload seed
+///         _ => return Err(...),
+///     };
+///     let old_keypair = derive_upload_keypair(seed_or_key, old_info.version)?;
 ///     blossom_client.delete(&old_info.image_hash, &old_keypair).await?;
 /// }
 /// ```
 pub fn derive_upload_keypair(
-    image_key: &[u8; 32],
+    seed_or_key: &[u8; 32],
     version: u16,
 ) -> Result<nostr::Keys, GroupImageError> {
-    let hk = Hkdf::<Sha256>::new(None, image_key);
+    let hk = Hkdf::<Sha256>::new(None, seed_or_key);
     let mut upload_secret = [0u8; 32];
 
     // Use the appropriate context based on version
@@ -452,13 +474,15 @@ pub fn prepare_group_image_for_upload_with_options(
     let encrypted = encrypt_group_image(&sanitized_data)?;
     let encrypted_size = encrypted.encrypted_data.len();
     // Always use version 2 for new uploads (encrypt_group_image creates v2 format)
-    let upload_keypair = derive_upload_keypair(&encrypted.image_key, 2)?;
+    // Use the upload seed (cryptographically independent from image seed)
+    let upload_keypair = derive_upload_keypair(&encrypted.image_upload_key, 2)?;
 
     Ok(GroupImageUpload {
         encrypted_data: encrypted.encrypted_data,
         encrypted_hash: encrypted.encrypted_hash,
         image_key: encrypted.image_key,
         image_nonce: encrypted.image_nonce,
+        image_upload_key: encrypted.image_upload_key,
         upload_keypair,
         original_size,
         encrypted_size,
@@ -676,7 +700,7 @@ mod tests {
         assert!(!decrypted.is_empty());
 
         // Verify keypair derivation is correct (v2 format)
-        let derived_keypair = derive_upload_keypair(&prepared.image_key, 2).unwrap();
+        let derived_keypair = derive_upload_keypair(&prepared.image_upload_key, 2).unwrap();
         assert_eq!(
             derived_keypair.public_key(),
             prepared.upload_keypair.public_key()
@@ -1098,8 +1122,8 @@ mod tests {
             .unwrap();
         assert_eq!(decrypted_v2, decrypted_with_derived);
 
-        // Verify upload keypair derivation works with v2 seed
-        let upload_keypair = derive_upload_keypair(&v2_prepared.image_key, 2).unwrap();
+        // Verify upload keypair derivation works with v2 upload seed
+        let upload_keypair = derive_upload_keypair(&v2_prepared.image_upload_key, 2).unwrap();
         assert_eq!(
             upload_keypair.public_key(),
             v2_prepared.upload_keypair.public_key()
@@ -1225,6 +1249,38 @@ mod tests {
         assert_eq!(v2_prepared.mime_type, "image/png");
         assert_eq!(v2_prepared.dimensions, Some((128, 64)));
         assert_eq!(v2_prepared.original_size, image_data.len());
+    }
+
+    /// Test that changing image_key doesn't affect upload keypair derivation
+    #[test]
+    fn test_changing_image_key_does_not_affect_upload_keypair() {
+        // Create test image
+        use image::{ImageBuffer, Rgb};
+        let img = ImageBuffer::from_fn(32, 32, |x, y| Rgb([x as u8, y as u8, 128]));
+        let mut image_data = Vec::new();
+        img.write_to(
+            &mut std::io::Cursor::new(&mut image_data),
+            image::ImageFormat::Png,
+        )
+        .unwrap();
+
+        // Prepare for upload
+        let prepared1 = prepare_group_image_for_upload(&image_data, "image/png").unwrap();
+
+        // Manually create another prepared image with same upload key but different image key
+        let mut prepared2 = prepare_group_image_for_upload(&image_data, "image/png").unwrap();
+        prepared2.image_key = [0xAAu8; 32]; // Change image key
+
+        // Upload keypairs should be different (since different upload seeds)
+        assert_ne!(
+            prepared1.upload_keypair.public_key(),
+            prepared2.upload_keypair.public_key()
+        );
+
+        // But if we manually set the upload key to be the same, the keypair should be the same
+        prepared2.image_upload_key = prepared1.image_upload_key;
+        let keypair2 = derive_upload_keypair(&prepared2.image_upload_key, 2).unwrap();
+        assert_eq!(keypair2.public_key(), prepared1.upload_keypair.public_key());
     }
 
     /// Test that we can still decrypt v1 data after migration

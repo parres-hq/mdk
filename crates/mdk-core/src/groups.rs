@@ -872,6 +872,7 @@ where
             config.image_hash,
             config.image_key,
             config.image_nonce,
+            None, // image_upload_key - will be set when image is uploaded
         );
 
         let extension = Self::get_unknown_extension_from_group_data(&group_data)?;
