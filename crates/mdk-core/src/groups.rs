@@ -1288,17 +1288,15 @@ where
                 encoding.as_tag_value()
             );
 
-            // Build tags, including encoding tag for base64
-            let mut tags = vec![
+            let tags = vec![
                 Tag::from_standardized(TagStandard::Relays(group_relays.to_vec())),
                 Tag::event(event.id),
                 Tag::client(format!("MDK/{}", env!("CARGO_PKG_VERSION"))),
+                Tag::custom(
+                    TagKind::Custom("encoding".into()),
+                    [encoding.as_tag_value()],
+                ),
             ];
-
-            // Add encoding tag only for base64 (hex is the default, no tag needed)
-            if encoding == ContentEncoding::Base64 {
-                tags.push(Tag::custom(TagKind::Custom("encoding".into()), ["base64"]));
-            }
 
             // Build welcome event rumors for each new user
             let welcome_rumor = EventBuilder::new(Kind::MlsWelcome, encoded_welcome)
