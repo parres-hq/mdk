@@ -135,6 +135,7 @@ impl NostrGroupDataExtension {
     /// A new NostrGroupDataExtension instance with a randomly generated group ID and
     /// the provided parameters converted to bytes. This group ID value is what's used when publishing
     /// events to Nostr relays for the group.
+    #[allow(clippy::too_many_arguments)]
     pub fn new<T1, T2, IA, IR>(
         name: T1,
         description: T2,

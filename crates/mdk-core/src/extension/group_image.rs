@@ -294,6 +294,7 @@ pub fn decrypt_group_image(
 ///     blossom_client.delete(&old_info.image_hash, &old_keypair).await?;
 /// }
 /// ```
+#[allow(clippy::doc_overindented_list_items)]
 pub fn derive_upload_keypair(
     seed_or_key: &[u8; 32],
     version: u16,
