@@ -69,9 +69,10 @@ pub(crate) struct TlsNostrGroupDataExtension {
     pub description: Vec<u8>,
     pub admin_pubkeys: Vec<Vec<u8>>,
     pub relays: Vec<Vec<u8>>,
-    pub image_hash: Vec<u8>,  // Use Vec<u8> to allow empty for None
-    pub image_key: Vec<u8>,   // Use Vec<u8> to allow empty for None
-    pub image_nonce: Vec<u8>, // Use Vec<u8> to allow empty for None
+    pub image_hash: Vec<u8>,       // Use Vec<u8> to allow empty for None
+    pub image_key: Vec<u8>,        // Use Vec<u8> to allow empty for None
+    pub image_nonce: Vec<u8>,      // Use Vec<u8> to allow empty for None
+    pub image_upload_key: Vec<u8>, // Use Vec<u8> to allow empty for None (v2 only)
 }
 
 /// This is an MLS Group Context extension used to store the group's name,
@@ -79,7 +80,7 @@ pub(crate) struct TlsNostrGroupDataExtension {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NostrGroupDataExtension {
     /// Extension format version (current: 2)
-    /// Version 2: image_key field contains image_seed (used for HKDF derivation)
+    /// Version 2: image_key field contains image_seed, image_upload_key contains upload_seed
     /// Version 1: image_key field contains encryption key directly (deprecated)
     pub version: u16,
     /// Nostr Group ID
@@ -97,13 +98,18 @@ pub struct NostrGroupDataExtension {
     /// Image seed (v2) or encryption key (v1) for group image decryption
     ///
     /// **IMPORTANT**: The interpretation of this field depends on the `version` field:
-    /// - **Version 2**: This is the master seed used to derive both encryption key and upload keypair via HKDF
+    /// - **Version 2**: This is the seed used to derive the encryption key via HKDF
     /// - **Version 1**: This is the encryption key directly (deprecated, kept for backward compatibility)
     ///
     /// Consumers MUST check the `version` field before interpreting `image_key` to ensure correct usage.
     pub image_key: Option<[u8; 32]>,
     /// Nonce to decrypt group image
     pub image_nonce: Option<[u8; 12]>,
+    /// Upload seed (v2 only) for deriving the Nostr keypair used for Blossom authentication
+    ///
+    /// In v2, the upload keypair is derived from this seed (cryptographically independent from image_key).
+    /// In v1, the upload keypair was derived from image_key (now deprecated).
+    pub image_upload_key: Option<[u8; 32]>,
 }
 
 impl NostrGroupDataExtension {
@@ -129,6 +135,7 @@ impl NostrGroupDataExtension {
     /// A new NostrGroupDataExtension instance with a randomly generated group ID and
     /// the provided parameters converted to bytes. This group ID value is what's used when publishing
     /// events to Nostr relays for the group.
+    #[allow(clippy::too_many_arguments)]
     pub fn new<T1, T2, IA, IR>(
         name: T1,
         description: T2,
@@ -137,6 +144,7 @@ impl NostrGroupDataExtension {
         image_hash: Option<[u8; 32]>,
         image_key: Option<[u8; 32]>,
         image_nonce: Option<[u8; 12]>,
+        image_upload_key: Option<[u8; 32]>,
     ) -> Self
     where
         T1: Into<String>,
@@ -159,6 +167,7 @@ impl NostrGroupDataExtension {
             image_hash,
             image_key,
             image_nonce,
+            image_upload_key,
         }
     }
 
@@ -229,6 +238,7 @@ impl NostrGroupDataExtension {
             image_hash,
             image_key,
             image_nonce,
+            image_upload_key: None, // Legacy extensions don't have this field
         })
     }
 
@@ -333,6 +343,16 @@ impl NostrGroupDataExtension {
             )
         };
 
+        let image_upload_key = if raw.image_upload_key.is_empty() {
+            None
+        } else {
+            Some(
+                raw.image_upload_key
+                    .try_into()
+                    .map_err(|_| Error::InvalidImageUploadKeyLength)?,
+            )
+        };
+
         Ok(Self {
             version: raw.version,
             nostr_group_id: raw.nostr_group_id,
@@ -343,6 +363,7 @@ impl NostrGroupDataExtension {
             image_hash,
             image_key,
             image_nonce,
+            image_upload_key,
         })
     }
 
@@ -555,12 +576,16 @@ impl NostrGroupDataExtension {
         new_image_hash: Option<[u8; 32]>,
         new_image_seed: Option<[u8; 32]>,
         new_image_nonce: Option<[u8; 12]>,
+        new_image_upload_seed: Option<[u8; 32]>,
     ) {
-        // Warn if migrating from v1 without providing new seed
-        if self.version == 1 && new_image_seed.is_none() && self.image_key.is_some() {
+        // Warn if migrating from v1 without providing new seeds
+        if self.version == 1
+            && (new_image_seed.is_none() || new_image_upload_seed.is_none())
+            && self.image_key.is_some()
+        {
             tracing::warn!(
                 target: "mdk_core::extension::types",
-                "Migrating from v1 to v2 without new image_seed - existing image_key will be treated as seed, which may cause issues since v1 image_key is a direct encryption key, not a seed"
+                "Migrating from v1 to v2 without new image_seed and image_upload_seed - existing image_key will be treated as seed, which may cause issues since v1 image_key is a direct encryption key, not a seed"
             );
         }
         self.version = Self::CURRENT_VERSION; // Set to version 2
@@ -573,11 +598,15 @@ impl NostrGroupDataExtension {
         if let Some(nonce) = new_image_nonce {
             self.image_nonce = Some(nonce);
         }
+        if let Some(upload_seed) = new_image_upload_seed {
+            self.image_upload_key = Some(upload_seed);
+        }
     }
 
-    /// Get group image encryption data if all three fields are set
+    /// Get group image encryption data if all required fields are set
     ///
     /// Returns `Some` only when image_hash, image_key, and image_nonce are all present.
+    /// For v2 extensions, image_upload_key is also included for cryptographic independence.
     /// This ensures you have all necessary data to download and decrypt the group image.
     ///
     /// # Example
@@ -589,6 +618,11 @@ impl NostrGroupDataExtension {
     ///         &info.image_key,
     ///         &info.image_nonce
     ///     )?;
+    ///     // For v2, use image_upload_key for Blossom authentication
+    ///     if let Some(upload_key) = info.image_upload_key {
+    ///         let keypair = group_image::derive_upload_keypair(&upload_key, 2)?;
+    ///         // Use keypair for Blossom operations
+    ///     }
     /// }
     /// ```
     pub fn group_image_encryption_data(
@@ -601,6 +635,7 @@ impl NostrGroupDataExtension {
                     image_hash: hash,
                     image_key: key,
                     image_nonce: nonce,
+                    image_upload_key: self.image_upload_key,
                 })
             }
             _ => None,
@@ -628,6 +663,9 @@ impl NostrGroupDataExtension {
             image_nonce: self
                 .image_nonce
                 .map_or_else(Vec::new, |nonce| nonce.to_vec()),
+            image_upload_key: self
+                .image_upload_key
+                .map_or_else(Vec::new, |key| key.to_vec()),
         }
     }
 }
@@ -662,6 +700,7 @@ mod tests {
             Some(image_hash),
             Some(image_key),
             Some(image_nonce),
+            Some(generate_random_bytes(32).try_into().unwrap()), // image_upload_key for v2
         )
     }
 
@@ -833,6 +872,7 @@ mod tests {
             Some(test_hash),
             Some(test_key),
             Some(test_nonce),
+            Some([4u8; 32]), // image_upload_key
         );
 
         // Create extension with None values
@@ -844,6 +884,7 @@ mod tests {
             None,
             None,
             None,
+            None, // image_upload_key
         );
 
         // Serialize both to measure size
@@ -884,6 +925,7 @@ mod tests {
             "Test Description",
             [PublicKey::parse(ADMIN_1).unwrap()],
             [RelayUrl::parse(RELAY_1).unwrap()],
+            None,
             None,
             None,
             None,
@@ -932,6 +974,7 @@ mod tests {
             image_hash: Vec::new(),
             image_key: Vec::new(),
             image_nonce: Vec::new(),
+            image_upload_key: Vec::new(),
         };
 
         let result = NostrGroupDataExtension::from_raw(raw_v0);
@@ -951,6 +994,7 @@ mod tests {
             image_hash: Vec::new(),
             image_key: Vec::new(),
             image_nonce: Vec::new(),
+            image_upload_key: Vec::new(),
         };
 
         let result = NostrGroupDataExtension::from_raw(raw_v1);
@@ -968,6 +1012,7 @@ mod tests {
             image_hash: Vec::new(),
             image_key: Vec::new(),
             image_nonce: Vec::new(),
+            image_upload_key: Vec::new(),
         };
 
         let result = NostrGroupDataExtension::from_raw(raw_v99);
@@ -1105,6 +1150,7 @@ mod tests {
             None,
             None,
             None,
+            None,
         );
         let current_bytes = current_extension.as_raw().tls_serialize_detached().unwrap();
 
@@ -1157,6 +1203,7 @@ mod tests {
             Some([1u8; 32]),
             Some([2u8; 32]),
             Some([3u8; 12]),
+            None, // v1 doesn't use image_upload_key
         );
 
         assert_eq!(extension.version, NostrGroupDataExtension::CURRENT_VERSION);
@@ -1169,8 +1216,14 @@ mod tests {
         let new_hash = [10u8; 32];
         let new_seed = [20u8; 32];
         let new_nonce = [30u8; 12];
+        let new_upload_seed = [40u8; 32];
 
-        extension.migrate_to_v2(Some(new_hash), Some(new_seed), Some(new_nonce));
+        extension.migrate_to_v2(
+            Some(new_hash),
+            Some(new_seed),
+            Some(new_nonce),
+            Some(new_upload_seed),
+        );
 
         // Verify version is now 2
         assert_eq!(extension.version, NostrGroupDataExtension::CURRENT_VERSION);
@@ -1187,10 +1240,11 @@ mod tests {
             Some([1u8; 32]),
             Some([2u8; 32]),
             Some([3u8; 12]),
+            None,
         );
         extension2.version = 1;
 
-        extension2.migrate_to_v2(Some(new_hash), None, None);
+        extension2.migrate_to_v2(Some(new_hash), None, None, None);
 
         // Version should be updated, but only hash should change
         assert_eq!(extension2.version, NostrGroupDataExtension::CURRENT_VERSION);
@@ -1214,6 +1268,7 @@ mod tests {
             Some([1u8; 32]),
             Some([2u8; 32]),
             Some([3u8; 12]),
+            Some([4u8; 32]), // image_upload_key for v2
         );
 
         assert_eq!(extension.version, NostrGroupDataExtension::CURRENT_VERSION);
@@ -1222,8 +1277,14 @@ mod tests {
         let new_hash = [10u8; 32];
         let new_seed = [20u8; 32];
         let new_nonce = [30u8; 12];
+        let new_upload_seed = [40u8; 32];
 
-        extension.migrate_to_v2(Some(new_hash), Some(new_seed), Some(new_nonce));
+        extension.migrate_to_v2(
+            Some(new_hash),
+            Some(new_seed),
+            Some(new_nonce),
+            Some(new_upload_seed),
+        );
 
         // Version should remain 2, fields should be updated
         assert_eq!(extension.version, NostrGroupDataExtension::CURRENT_VERSION);
@@ -1246,11 +1307,12 @@ mod tests {
             Some([1u8; 32]),
             Some([2u8; 32]),
             Some([3u8; 12]),
+            None,
         );
         extension.version = 1;
 
         // Migrate with all None (just version bump)
-        extension.migrate_to_v2(None, None, None);
+        extension.migrate_to_v2(None, None, None, None);
 
         // Version should be updated, but fields unchanged
         assert_eq!(extension.version, NostrGroupDataExtension::CURRENT_VERSION);

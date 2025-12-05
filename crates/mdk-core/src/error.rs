@@ -178,6 +178,9 @@ pub enum Error {
     /// Invalid image nonce length
     #[error("invalid image nonce length")]
     InvalidImageNonceLength,
+    /// Invalid image upload key length
+    #[error("invalid image upload key length")]
+    InvalidImageUploadKeyLength,
     /// Invalid extension version
     #[error("invalid extension version: {0}")]
     InvalidExtensionVersion(u16),
