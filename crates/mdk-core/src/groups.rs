@@ -79,6 +79,8 @@ pub struct NostrGroupDataUpdate {
     pub image_key: Option<Option<[u8; 32]>>,
     /// Nonce to decrypt the image (optional, use Some(None) to clear)
     pub image_nonce: Option<Option<[u8; 12]>>,
+    /// Upload key seed for the image (optional, use Some(None) to clear)
+    pub image_upload_key: Option<Option<[u8; 32]>>,
     /// Relays used by the group (optional)
     pub relays: Option<Vec<RelayUrl>>,
     /// Group admins (optional)
@@ -147,6 +149,12 @@ impl NostrGroupDataUpdate {
     /// Sets the image key to be updated
     pub fn image_nonce(mut self, image_nonce: Option<[u8; 12]>) -> Self {
         self.image_nonce = Some(image_nonce);
+        self
+    }
+
+    /// Sets the image upload key to be updated
+    pub fn image_upload_key(mut self, image_upload_key: Option<[u8; 32]>) -> Self {
+        self.image_upload_key = Some(image_upload_key);
         self
     }
 
@@ -742,6 +750,7 @@ where
     /// mls.update_group_data(&group_id, update)?;
     ///
     /// // Update image, clearing the existing one
+    /// // Note: Setting image_hash to None automatically clears image_key, image_nonce, and image_upload_key
     /// let update = NostrGroupDataUpdate::new().image_hash(None);
     /// mls.update_group_data(&group_id, update)?;
     /// ```
@@ -765,6 +774,12 @@ where
 
         if let Some(image_hash) = update.image_hash {
             group_data.image_hash = image_hash;
+            // When clearing the image (setting hash to None), also clear all related cryptographic material
+            if image_hash.is_none() {
+                group_data.image_key = None;
+                group_data.image_nonce = None;
+                group_data.image_upload_key = None;
+            }
         }
 
         if let Some(image_key) = update.image_key {
@@ -773,6 +788,10 @@ where
 
         if let Some(image_nonce) = update.image_nonce {
             group_data.image_nonce = image_nonce;
+        }
+
+        if let Some(image_upload_key) = update.image_upload_key {
+            group_data.image_upload_key = image_upload_key;
         }
 
         if let Some(relays) = update.relays {
@@ -2209,11 +2228,16 @@ mod tests {
         let new_image_key = mdk_storage_traits::test_utils::crypto_utils::generate_random_bytes(32)
             .try_into()
             .unwrap();
+        let new_image_upload_key =
+            mdk_storage_traits::test_utils::crypto_utils::generate_random_bytes(32)
+                .try_into()
+                .unwrap();
 
         let update = NostrGroupDataUpdate::new()
             .description(new_description.clone())
             .image_hash(Some(new_image_hash))
-            .image_key(Some(new_image_key));
+            .image_key(Some(new_image_key))
+            .image_upload_key(Some(new_image_upload_key));
 
         let update_result = creator_mdk
             .update_group_data(group_id, update)
@@ -2235,9 +2259,13 @@ mod tests {
         assert_eq!(final_group_data.description, new_description);
         assert_eq!(final_group_data.image_hash, Some(new_image_hash));
         assert_eq!(final_group_data.image_key, Some(new_image_key));
+        assert_eq!(
+            final_group_data.image_upload_key,
+            Some(new_image_upload_key)
+        );
 
         // Test 3: Clear optional fields
-        let update = NostrGroupDataUpdate::new().image_hash(None).image_key(None);
+        let update = NostrGroupDataUpdate::new().image_hash(None);
 
         let update_result = creator_mdk
             .update_group_data(group_id, update)
@@ -2259,6 +2287,8 @@ mod tests {
         assert_eq!(cleared_group_data.description, new_description);
         assert_eq!(cleared_group_data.image_hash, None);
         assert_eq!(cleared_group_data.image_key, None);
+        assert_eq!(cleared_group_data.image_nonce, None);
+        assert_eq!(cleared_group_data.image_upload_key, None);
 
         // Test 4: Empty update (should succeed but not change anything)
         let empty_update = NostrGroupDataUpdate::new();

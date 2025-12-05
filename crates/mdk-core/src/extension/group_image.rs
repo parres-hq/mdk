@@ -368,10 +368,13 @@ pub fn derive_upload_keypair(
 /// assert_eq!(blob_hash, prepared.encrypted_hash);
 ///
 /// // Update extension with the verified hash and metadata
+/// // Note: For v2, both image_key (encryption seed) and image_upload_key (upload seed)
+/// // must be stored to enable future cleanup and keypair derivation
 /// let update = NostrGroupDataUpdate::new()
 ///     .image_hash(Some(blob_hash))
 ///     .image_key(Some(prepared.image_key))
-///     .image_nonce(Some(prepared.image_nonce));
+///     .image_nonce(Some(prepared.image_nonce))
+///     .image_upload_key(Some(prepared.image_upload_key));
 /// ```
 pub fn prepare_group_image_for_upload(
     image_data: &[u8],
@@ -539,8 +542,9 @@ pub fn prepare_group_image_for_upload_with_options(
 /// let mut extension = get_group_extension(&group_id)?;
 /// extension.version = 2;
 /// extension.image_hash = Some(new_hash);
-/// extension.image_key = Some(v2_prepared.image_key); // This is now the seed
+/// extension.image_key = Some(v2_prepared.image_key); // Encryption seed
 /// extension.image_nonce = Some(v2_prepared.image_nonce);
+/// extension.image_upload_key = Some(v2_prepared.image_upload_key); // Upload seed (cryptographically independent)
 ///
 /// // Cleanup old v1 image (must use version 1 for v1 images)
 /// let old_keypair = derive_upload_keypair(&v1_extension.image_key.unwrap(), 1)?;
@@ -1025,24 +1029,28 @@ mod tests {
         assert_ne!(keypair_v1.public_key(), keypair_v2.public_key());
     }
 
-    /// Test that v2 encryption key and upload keypair are derived from the same seed
+    /// Test that v2 uses separate seeds: encryption key from image_seed, upload keypair from upload_seed
     #[test]
     fn test_v2_encryption_and_upload_derivation() {
         let original_data = b"Test v2 derivation consistency";
 
-        // Encrypt using v2 (generates seed, derives encryption key)
+        // Encrypt using v2 (generates separate seeds for encryption and upload)
         let encrypted = encrypt_group_image(original_data).unwrap();
-        let image_seed = encrypted.image_key; // This is the seed in v2
+        let image_seed = encrypted.image_key; // Encryption seed
+        let upload_seed = encrypted.image_upload_key; // Upload seed (cryptographically independent)
 
-        // Derive encryption key from seed
+        // Verify seeds are different (cryptographic independence)
+        assert_ne!(image_seed, upload_seed);
+
+        // Derive encryption key from image_seed
         let hk_enc = Hkdf::<Sha256>::new(None, &image_seed);
         let mut encryption_key = [0u8; 32];
         hk_enc
             .expand(IMAGE_ENCRYPTION_CONTEXT_V2, &mut encryption_key)
             .unwrap();
 
-        // Derive upload keypair from same seed (v2 format)
-        let upload_keypair = derive_upload_keypair(&image_seed, 2).unwrap();
+        // Derive upload keypair from upload_seed (v2 format - separate from encryption seed)
+        let upload_keypair = derive_upload_keypair(&upload_seed, 2).unwrap();
 
         // Verify we can decrypt using the derived encryption key
         let cipher = ChaCha20Poly1305::new_from_slice(&encryption_key).unwrap();
@@ -1052,9 +1060,13 @@ mod tests {
             .unwrap();
         assert_eq!(decrypted.as_slice(), original_data);
 
-        // Verify upload keypair derivation is deterministic
-        let upload_keypair2 = derive_upload_keypair(&image_seed, 2).unwrap();
+        // Verify upload keypair derivation is deterministic from upload_seed
+        let upload_keypair2 = derive_upload_keypair(&upload_seed, 2).unwrap();
         assert_eq!(upload_keypair.public_key(), upload_keypair2.public_key());
+
+        // Verify that deriving from image_seed would give a different keypair (cryptographic independence)
+        let different_keypair = derive_upload_keypair(&image_seed, 2).unwrap();
+        assert_ne!(upload_keypair.public_key(), different_keypair.public_key());
     }
 
     /// Test migration from v1 to v2 format
@@ -1252,9 +1264,9 @@ mod tests {
         assert_eq!(v2_prepared.original_size, image_data.len());
     }
 
-    /// Test that changing image_key doesn't affect upload keypair derivation
+    /// Test that upload keypair derivation depends only on upload_seed, not image_seed
     #[test]
-    fn test_changing_image_key_does_not_affect_upload_keypair() {
+    fn test_upload_keypair_depends_only_on_upload_seed() {
         // Create test image
         use image::{ImageBuffer, Rgb};
         let img = ImageBuffer::from_fn(32, 32, |x, y| Rgb([x as u8, y as u8, 128]));
@@ -1270,7 +1282,7 @@ mod tests {
 
         // Manually create another prepared image with same upload key but different image key
         let mut prepared2 = prepare_group_image_for_upload(&image_data, "image/png").unwrap();
-        prepared2.image_key = [0xAAu8; 32]; // Change image key
+        prepared2.image_key = [0xAAu8; 32]; // Change encryption seed (should not affect upload keypair)
 
         // Upload keypairs should be different (since different upload seeds)
         assert_ne!(
@@ -1278,7 +1290,8 @@ mod tests {
             prepared2.upload_keypair.public_key()
         );
 
-        // But if we manually set the upload key to be the same, the keypair should be the same
+        // But if we manually set the upload seed to be the same, the keypair should be the same
+        // (demonstrating that upload keypair depends only on upload_seed, not image_seed)
         prepared2.image_upload_key = prepared1.image_upload_key;
         let keypair2 = derive_upload_keypair(&prepared2.image_upload_key, 2).unwrap();
         assert_eq!(keypair2.public_key(), prepared1.upload_keypair.public_key());

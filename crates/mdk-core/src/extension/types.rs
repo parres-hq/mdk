@@ -349,7 +349,7 @@ impl NostrGroupDataExtension {
             Some(
                 raw.image_upload_key
                     .try_into()
-                    .map_err(|_| Error::InvalidImageKeyLength)?,
+                    .map_err(|_| Error::InvalidImageUploadKeyLength)?,
             )
         };
 
