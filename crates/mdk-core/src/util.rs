@@ -154,3 +154,76 @@ pub(crate) fn decode_content(
             .map_err(|e| format!("Failed to decode {} as hex: {}", label, e)),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nostr::Tag;
+
+    #[test]
+    fn test_encode_decode_roundtrip() {
+        let original = vec![0xde, 0xad, 0xbe, 0xef];
+
+        // Hex roundtrip
+        let hex_encoded = encode_content(&original, ContentEncoding::Hex);
+        let (hex_decoded, hex_fmt) =
+            decode_content(&hex_encoded, ContentEncoding::Hex, "test").unwrap();
+        assert_eq!(original, hex_decoded);
+        assert_eq!(hex_fmt, "hex");
+
+        // Base64 roundtrip
+        let b64_encoded = encode_content(&original, ContentEncoding::Base64);
+        let (b64_decoded, b64_fmt) =
+            decode_content(&b64_encoded, ContentEncoding::Base64, "test").unwrap();
+        assert_eq!(original, b64_decoded);
+        assert_eq!(b64_fmt, "base64");
+    }
+
+    #[test]
+    fn test_decode_invalid_content() {
+        assert!(decode_content("!!!", ContentEncoding::Hex, "test").is_err());
+        assert!(decode_content("!!!", ContentEncoding::Base64, "test").is_err());
+    }
+
+    #[test]
+    fn test_ambiguous_string_decodes_differently() {
+        let ambiguous = "deadbeef";
+        let hex_bytes = decode_content(ambiguous, ContentEncoding::Hex, "test")
+            .unwrap()
+            .0;
+        let b64_bytes = decode_content(ambiguous, ContentEncoding::Base64, "test")
+            .unwrap()
+            .0;
+        assert_ne!(hex_bytes, b64_bytes);
+    }
+
+    #[test]
+    fn test_content_encoding_tag_value_roundtrip() {
+        assert_eq!(
+            ContentEncoding::from_tag_value(ContentEncoding::Hex.as_tag_value()),
+            Some(ContentEncoding::Hex)
+        );
+        assert_eq!(
+            ContentEncoding::from_tag_value(ContentEncoding::Base64.as_tag_value()),
+            Some(ContentEncoding::Base64)
+        );
+        assert_eq!(ContentEncoding::from_tag_value("invalid"), None);
+    }
+
+    #[test]
+    fn test_from_tags_returns_encoding() {
+        let tags = [Tag::custom(
+            nostr::TagKind::Custom("encoding".into()),
+            ["base64"],
+        )];
+        assert_eq!(
+            ContentEncoding::from_tags(tags.iter()),
+            ContentEncoding::Base64
+        );
+        let empty: [Tag; 0] = [];
+        assert_eq!(
+            ContentEncoding::from_tags(empty.iter()),
+            ContentEncoding::Hex
+        );
+    }
+}
