@@ -212,14 +212,24 @@ mod tests {
 
     #[test]
     fn test_from_tags_returns_encoding() {
-        let tags = [Tag::custom(
+        let tags_base64 = [Tag::custom(
             nostr::TagKind::Custom("encoding".into()),
             ["base64"],
         )];
         assert_eq!(
-            ContentEncoding::from_tags(tags.iter()),
+            ContentEncoding::from_tags(tags_base64.iter()),
             ContentEncoding::Base64
         );
+
+        let tags_hex = [Tag::custom(
+            nostr::TagKind::Custom("encoding".into()),
+            ["hex"],
+        )];
+        assert_eq!(
+            ContentEncoding::from_tags(tags_hex.iter()),
+            ContentEncoding::Hex
+        );
+
         let empty: [Tag; 0] = [];
         assert_eq!(
             ContentEncoding::from_tags(empty.iter()),
