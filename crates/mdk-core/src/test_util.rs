@@ -143,6 +143,174 @@ pub fn create_test_rumor(sender_keys: &Keys, content: &str) -> nostr::UnsignedEv
     EventBuilder::new(Kind::TextNote, content).build(sender_keys.public_key())
 }
 
+/// Helper structure for managing multiple clients in tests
+///
+/// This structure simplifies testing scenarios involving multiple clients
+/// for the same user or multiple users in a group.
+pub struct MultiClientTestSetup<Storage>
+where
+    Storage: MdkStorageProvider,
+{
+    /// List of clients with their keys and MDK instances
+    pub clients: Vec<(Keys, MDK<Storage>)>,
+    /// Optional group ID for the test group
+    pub group_id: Option<GroupId>,
+}
+
+impl<Storage> MultiClientTestSetup<Storage>
+where
+    Storage: MdkStorageProvider + Default,
+{
+    /// Create a new multi-client test setup with the specified number of clients
+    ///
+    /// Each client gets a unique identity (Keys) and MDK instance.
+    pub fn new(num_clients: usize) -> Self {
+        let mut clients = Vec::new();
+        for _ in 0..num_clients {
+            let keys = Keys::generate();
+            let mdk = MDK::new(Storage::default());
+            clients.push((keys, mdk));
+        }
+
+        Self {
+            clients,
+            group_id: None,
+        }
+    }
+
+    /// Get a reference to a specific client by index
+    pub fn get_client(&self, index: usize) -> Option<&(Keys, MDK<Storage>)> {
+        self.clients.get(index)
+    }
+
+    /// Get a mutable reference to a specific client by index
+    pub fn get_client_mut(&mut self, index: usize) -> Option<&mut (Keys, MDK<Storage>)> {
+        self.clients.get_mut(index)
+    }
+
+    /// Advance the group epoch by creating an update proposal
+    ///
+    /// This is useful for testing epoch transitions and lookback mechanisms.
+    pub fn advance_epoch(&mut self, client_idx: usize) -> Result<(), crate::Error> {
+        let group_id = self.group_id.as_ref().ok_or(crate::Error::GroupNotFound)?;
+
+        let client = self
+            .get_client(client_idx)
+            .ok_or(crate::Error::GroupNotFound)?;
+        let mdk = &client.1;
+
+        // Create self-update to advance epoch
+        let _update_result = mdk.self_update(group_id)?;
+        mdk.merge_pending_commit(group_id)?;
+
+        Ok(())
+    }
+}
+
+/// Helper for simulating race conditions with controlled timestamps
+///
+/// This structure helps create deterministic race condition scenarios
+/// by allowing control over event timestamps and IDs.
+pub struct RaceConditionSimulator {
+    /// Base timestamp for generating offset timestamps
+    pub base_timestamp: nostr::Timestamp,
+}
+
+impl RaceConditionSimulator {
+    /// Create a new race condition simulator with the current timestamp
+    pub fn new() -> Self {
+        Self {
+            base_timestamp: nostr::Timestamp::now(),
+        }
+    }
+
+    /// Create a new simulator with a specific base timestamp
+    pub fn with_timestamp(timestamp: nostr::Timestamp) -> Self {
+        Self {
+            base_timestamp: timestamp,
+        }
+    }
+
+    /// Get a timestamp offset from the base by the specified number of seconds
+    pub fn timestamp_offset(&self, offset_seconds: i64) -> nostr::Timestamp {
+        let new_timestamp = (self.base_timestamp.as_u64() as i64 + offset_seconds).max(0) as u64;
+        nostr::Timestamp::from(new_timestamp)
+    }
+}
+
+impl Default for RaceConditionSimulator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+// ============================================================================
+// Test Infrastructure (MockRelay, CorruptionSimulator, TimeController)
+// ============================================================================
+
+/// Helper to create a group and simulate restart
+///
+/// This function creates a group, then drops the MDK instance and creates
+/// a new one with the same storage to simulate an application restart.
+pub fn create_group_and_restart<S>(storage: S) -> (MDK<S>, GroupId, Keys, Vec<Keys>)
+where
+    S: MdkStorageProvider + Clone,
+{
+    // Create initial MDK and group
+    let mdk = MDK::new(storage.clone());
+    let (creator, members, admins) = create_test_group_members();
+    let group_id = create_test_group(&mdk, &creator, &members, &admins);
+
+    // Drop the MDK to simulate shutdown
+    drop(mdk);
+
+    // Create new MDK with same storage (simulating restart)
+    let new_mdk = MDK::new(storage);
+
+    (new_mdk, group_id, creator, members)
+}
+
+/// Assert that two group states are equal
+///
+/// This helper provides detailed error messages when group states don't match,
+/// making it easier to debug test failures.
+pub fn assert_group_state_equal(
+    group1: &mdk_storage_traits::groups::types::Group,
+    group2: &mdk_storage_traits::groups::types::Group,
+    message: &str,
+) {
+    assert_eq!(
+        group1.mls_group_id, group2.mls_group_id,
+        "{}: Group IDs don't match",
+        message
+    );
+    assert_eq!(
+        group1.nostr_group_id, group2.nostr_group_id,
+        "{}: Nostr Group IDs don't match",
+        message
+    );
+    assert_eq!(
+        group1.name, group2.name,
+        "{}: Group names don't match",
+        message
+    );
+    assert_eq!(
+        group1.description, group2.description,
+        "{}: Group descriptions don't match",
+        message
+    );
+    assert_eq!(
+        group1.epoch, group2.epoch,
+        "{}: Epochs don't match",
+        message
+    );
+    assert_eq!(
+        group1.admin_pubkeys, group2.admin_pubkeys,
+        "{}: Admin lists don't match",
+        message
+    );
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

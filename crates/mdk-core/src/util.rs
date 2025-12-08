@@ -1,8 +1,33 @@
 use mdk_storage_traits::groups::types::GroupExporterSecret;
+use nostr::base64::Engine;
+use nostr::base64::engine::general_purpose::STANDARD as BASE64;
 use nostr::nips::nip44;
 use nostr::{Keys, SecretKey};
+use openmls::prelude::{Ciphersuite, ExtensionType};
 
 use crate::Error;
+
+/// Trait for formatting MLS types as Nostr tag values
+///
+/// This trait provides a consistent way to format MLS types (Ciphersuite, ExtensionType)
+/// as hex strings for use in Nostr tags. The format is always "0x" followed by 4 lowercase
+/// hex digits.
+pub(crate) trait NostrTagFormat {
+    /// Convert to Nostr tag hex format (e.g., "0x0001")
+    fn to_nostr_tag(&self) -> String;
+}
+
+impl NostrTagFormat for Ciphersuite {
+    fn to_nostr_tag(&self) -> String {
+        format!("0x{:04x}", u16::from(*self))
+    }
+}
+
+impl NostrTagFormat for ExtensionType {
+    fn to_nostr_tag(&self) -> String {
+        format!("0x{:04x}", u16::from(*self))
+    }
+}
 
 pub(crate) fn decrypt_with_exporter_secret(
     secret: &GroupExporterSecret,
@@ -20,4 +45,112 @@ pub(crate) fn decrypt_with_exporter_secret(
     )?;
 
     Ok(message_bytes)
+}
+
+/// Encoding format for content fields
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ContentEncoding {
+    /// Legacy hex encoding (default for backward compatibility)
+    #[default]
+    Hex,
+    /// Base64 encoding (~33% smaller than hex)
+    Base64,
+}
+
+impl ContentEncoding {
+    /// Returns the tag value for this encoding format
+    pub fn as_tag_value(&self) -> &'static str {
+        match self {
+            ContentEncoding::Hex => "hex",
+            ContentEncoding::Base64 => "base64",
+        }
+    }
+
+    /// Parse encoding from tag value
+    pub fn from_tag_value(value: &str) -> Option<Self> {
+        match value.to_lowercase().as_str() {
+            "base64" => Some(ContentEncoding::Base64),
+            "hex" => Some(ContentEncoding::Hex),
+            _ => None,
+        }
+    }
+
+    /// Extracts the encoding format from an iterator of tags.
+    ///
+    /// Looks for an `["encoding", "..."]` tag.
+    /// - `["encoding", "base64"]` → Base64 encoding
+    /// - `["encoding", "hex"]` → Hex encoding
+    /// - No encoding tag → Hex encoding (legacy default)
+    ///
+    /// # Arguments
+    ///
+    /// * `tags` - An iterator over tags (works with both Event and UnsignedEvent)
+    ///
+    /// # Returns
+    ///
+    /// The ContentEncoding specified by the tag, or Hex if no tag present.
+    pub fn from_tags<'a>(tags: impl Iterator<Item = &'a nostr::Tag>) -> Self {
+        for tag in tags {
+            let slice = tag.as_slice();
+            if slice.len() >= 2
+                && slice[0] == "encoding"
+                && let Some(encoding) = Self::from_tag_value(&slice[1])
+            {
+                return encoding;
+            }
+        }
+        // Default to hex for backward compatibility
+        ContentEncoding::Hex
+    }
+}
+
+/// Encodes content using the specified encoding format
+///
+/// # Arguments
+///
+/// * `bytes` - The bytes to encode
+/// * `encoding` - The encoding format to use
+///
+/// # Returns
+///
+/// The encoded string (pure base64 or hex, no prefix)
+pub(crate) fn encode_content(bytes: &[u8], encoding: ContentEncoding) -> String {
+    match encoding {
+        ContentEncoding::Base64 => BASE64.encode(bytes),
+        ContentEncoding::Hex => hex::encode(bytes),
+    }
+}
+
+/// Decodes content using the specified encoding format
+///
+/// The encoding format is determined by the `["encoding", "..."]` tag on the event:
+/// - `["encoding", "base64"]` → base64 decoding
+/// - `["encoding", "hex"]` or no encoding tag → hex decoding (legacy default)
+///
+/// This tag-based approach eliminates ambiguity for strings like `deadbeef` that are valid
+/// in both hex and base64 formats but decode to completely different bytes.
+///
+/// # Arguments
+///
+/// * `content` - The encoded string
+/// * `encoding` - The encoding format (from the event's encoding tag, or Hex if absent)
+/// * `label` - A label for the content type (e.g., "key package", "welcome") used in error messages
+///
+/// # Returns
+///
+/// A tuple of (decoded bytes, format description) on success, or an error message string.
+pub(crate) fn decode_content(
+    content: &str,
+    encoding: ContentEncoding,
+    label: &str,
+) -> Result<(Vec<u8>, &'static str), String> {
+    match encoding {
+        ContentEncoding::Base64 => BASE64
+            .decode(content)
+            .map(|bytes| (bytes, "base64"))
+            .map_err(|e| format!("Failed to decode {} as base64: {}", label, e)),
+        ContentEncoding::Hex => hex::decode(content)
+            .map(|bytes| (bytes, "hex"))
+            .map_err(|e| format!("Failed to decode {} as hex: {}", label, e)),
+    }
 }

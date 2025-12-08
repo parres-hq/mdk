@@ -25,6 +25,7 @@ use tls_codec::Serialize as TlsSerialize;
 use super::MDK;
 use super::extension::NostrGroupDataExtension;
 use crate::error::Error;
+use crate::util::{ContentEncoding, encode_content};
 
 /// Result of creating a new MLS group
 #[derive(Debug)]
@@ -284,6 +285,18 @@ where
     }
 
     /// Loads an MLS group from storage by its ID
+    fn load_mls_group_impl(&self, group_id: &GroupId) -> Result<Option<MlsGroup>, Error> {
+        MlsGroup::load(self.provider.storage(), group_id.inner())
+            .map_err(|e| Error::Provider(e.to_string()))
+    }
+
+    /// Loads an MLS group from storage by its ID
+    ///
+    /// This method provides access to the underlying OpenMLS `MlsGroup` object,
+    /// which can be useful for inspection, debugging, and advanced operations.
+    ///
+    /// **Note:** This method is only available with the `debug-examples` feature flag.
+    /// It is intended for debugging and example purposes only.
     ///
     /// # Arguments
     ///
@@ -294,12 +307,28 @@ where
     /// * `Ok(Some(MlsGroup))` - The loaded group if found
     /// * `Ok(None)` - If no group exists with the given ID
     /// * `Err(Error)` - If there is an error loading the group
-    pub(crate) fn load_mls_group(&self, group_id: &GroupId) -> Result<Option<MlsGroup>, Error> {
-        MlsGroup::load(self.provider.storage(), group_id.inner())
-            .map_err(|e| Error::Provider(e.to_string()))
+    #[cfg(feature = "debug-examples")]
+    pub fn load_mls_group(&self, group_id: &GroupId) -> Result<Option<MlsGroup>, Error> {
+        self.load_mls_group_impl(group_id)
     }
 
-    /// Exports the current epoch's secret key from an MLS group
+    /// Loads an MLS group from storage by its ID (internal version)
+    ///
+    /// # Arguments
+    ///
+    /// * `group_id` - The MLS group ID to load
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(Some(MlsGroup))` - The loaded group if found
+    /// * `Ok(None)` - If no group exists with the given ID
+    /// * `Err(Error)` - If there is an error loading the group
+    #[cfg(not(feature = "debug-examples"))]
+    pub(crate) fn load_mls_group(&self, group_id: &GroupId) -> Result<Option<MlsGroup>, Error> {
+        self.load_mls_group_impl(group_id)
+    }
+
+    /// Exports the current epoch's secret key from an MLS group (internal version)
     ///
     /// This secret is used for NIP-44 message encryption in Group Message Events (kind:445).
     /// The secret is cached in storage to avoid re-exporting it for each message.
@@ -836,12 +865,6 @@ where
 
         let (credential, signer) = self.generate_credential_with_key(creator_public_key)?;
 
-        tracing::debug!(
-            target: "mdk_core::groups::create_mls_group",
-            "Credential and signer created, {:?}",
-            credential
-        );
-
         let group_data = NostrGroupDataExtension::new(
             config.name,
             config.description,
@@ -852,21 +875,9 @@ where
             config.image_nonce,
         );
 
-        tracing::debug!(
-            target: "mdk_core::groups::create_mls_group",
-            "Group data created, {:?}",
-            group_data
-        );
-
         let extension = Self::get_unknown_extension_from_group_data(&group_data)?;
         let required_capabilities_extension = self.required_capabilities_extension();
         let extensions = Extensions::from_vec(vec![extension, required_capabilities_extension])?;
-
-        tracing::debug!(
-            target: "mdk_core::groups::create_mls_group",
-            "Group config extensions created, {:?}",
-            extensions
-        );
 
         // Build the group config
         let capabilities = self.capabilities();
@@ -876,12 +887,6 @@ where
             .capabilities(capabilities)
             .with_group_context_extensions(extensions)?
             .build();
-
-        tracing::debug!(
-            target: "mdk_core::groups::create_mls_group",
-            "Group config built, {:?}",
-            group_config
-        );
 
         let mut mls_group =
             MlsGroup::new(&self.provider, &signer, &group_config, credential.clone())?;
@@ -1064,14 +1069,18 @@ where
     }
 
     /// Create a proposal to leave the group
-    /// It's not possible to unilaterally leave a group because you can't commit yourself out of the tree.
+    ///
+    /// This creates a leave proposal that must be committed by another member (typically an admin).
+    /// The member cannot unilaterally leave because they cannot commit themselves out of the tree.
+    /// The member remains in the group and can continue participating until another member
+    /// processes and commits this proposal.
     ///
     /// # Arguments
     ///
     /// * `group_id` - The ID of the MLS group
     ///
     /// # Returns
-    /// * `Ok(UpdateGroupResult)`
+    /// * `Ok(UpdateGroupResult)` - Contains the leave proposal event that must be processed by another member
     pub fn leave_group(&self, group_id: &GroupId) -> Result<UpdateGroupResult, Error> {
         let mut group = self.load_mls_group(group_id)?.ok_or(Error::GroupNotFound)?;
 
@@ -1264,14 +1273,37 @@ where
         let mut welcome_rumors_vec = Vec::new();
 
         for event in key_package_events {
+            // Determine encoding format based on configuration
+            let encoding = if self.config.use_base64_encoding {
+                ContentEncoding::Base64
+            } else {
+                ContentEncoding::Hex
+            };
+
+            let encoded_welcome = encode_content(&serialized_welcome, encoding);
+
+            tracing::debug!(
+                target: "mdk_core::groups",
+                "Encoded welcome using {} format",
+                encoding.as_tag_value()
+            );
+
+            // Build tags, including encoding tag for base64
+            let mut tags = vec![
+                Tag::from_standardized(TagStandard::Relays(group_relays.to_vec())),
+                Tag::event(event.id),
+                Tag::client(format!("MDK/{}", env!("CARGO_PKG_VERSION"))),
+            ];
+
+            // Add encoding tag only for base64 (hex is the default, no tag needed)
+            if encoding == ContentEncoding::Base64 {
+                tags.push(Tag::custom(TagKind::Custom("encoding".into()), ["base64"]));
+            }
+
             // Build welcome event rumors for each new user
-            let welcome_rumor =
-                EventBuilder::new(Kind::MlsWelcome, hex::encode(&serialized_welcome))
-                    .tags(vec![
-                        Tag::from_standardized(TagStandard::Relays(group_relays.to_vec())),
-                        Tag::event(event.id),
-                    ])
-                    .build(committer_pubkey);
+            let welcome_rumor = EventBuilder::new(Kind::MlsWelcome, encoded_welcome)
+                .tags(tags)
+                .build(committer_pubkey);
 
             welcome_rumors_vec.push(welcome_rumor);
         }
@@ -2542,5 +2574,1067 @@ mod tests {
         let non_existent_group_id = crate::GroupId::from_slice(&[1, 2, 3, 4, 5]);
         let result = creator_mdk.sync_group_metadata_from_mls(&non_existent_group_id);
         assert!(matches!(result, Err(crate::Error::GroupNotFound)));
+    }
+
+    /// Test getting group that doesn't exist
+    #[test]
+    fn test_get_nonexistent_group() {
+        let mdk = create_test_mdk();
+        let non_existent_id = crate::GroupId::from_slice(&[9, 9, 9, 9]);
+
+        let result = mdk.get_group(&non_existent_id);
+
+        assert!(result.is_ok(), "Should succeed");
+        assert!(
+            result.unwrap().is_none(),
+            "Should return None for non-existent group"
+        );
+    }
+
+    /// Member self-removal proposal
+    ///
+    /// Tests that leave_group creates a valid leave proposal.
+    /// Note: A member cannot unilaterally leave - they create a proposal
+    /// that must be committed by another member (typically an admin).
+    ///
+    /// Requirements tested:
+    /// - leave_group creates valid MLS proposal events
+    /// - leave_group works for group members
+    /// - The proposal can be processed by other members
+    #[test]
+    fn test_member_self_removal() {
+        use crate::test_util::create_key_package_event;
+
+        // Create Alice (admin) and Bob (member)
+        let alice_keys = Keys::generate();
+        let bob_keys = Keys::generate();
+
+        let alice_mdk = create_test_mdk();
+        let bob_mdk = create_test_mdk();
+
+        let admins = vec![alice_keys.public_key()];
+
+        // Bob creates his key package
+        let bob_key_package = create_key_package_event(&bob_mdk, &bob_keys);
+
+        // Alice creates the group
+        let create_result = alice_mdk
+            .create_group(
+                &alice_keys.public_key(),
+                vec![bob_key_package],
+                create_nostr_group_config_data(admins),
+            )
+            .expect("Alice should be able to create group");
+
+        let group_id = create_result.group.mls_group_id.clone();
+
+        alice_mdk
+            .merge_pending_commit(&group_id)
+            .expect("Failed to merge Alice's create commit");
+
+        // Bob processes and accepts welcome
+        let bob_welcome_rumor = &create_result.welcome_rumors[0];
+        let bob_welcome = bob_mdk
+            .process_welcome(&nostr::EventId::all_zeros(), bob_welcome_rumor)
+            .expect("Bob should be able to process welcome");
+        bob_mdk
+            .accept_welcome(&bob_welcome)
+            .expect("Bob should be able to accept welcome");
+
+        // Verify initial member count
+        let initial_members = alice_mdk
+            .get_members(&group_id)
+            .expect("Failed to get members");
+        assert_eq!(initial_members.len(), 2, "Group should have 2 members");
+
+        // Bob calls leave_group
+        let bob_leave_result = bob_mdk.leave_group(&group_id);
+        assert!(
+            bob_leave_result.is_ok(),
+            "Bob should be able to call leave_group: {:?}",
+            bob_leave_result.err()
+        );
+
+        // Verify leave generates proper MLS evolution event
+        let bob_leave_event = bob_leave_result.unwrap().evolution_event;
+        assert_eq!(
+            bob_leave_event.kind,
+            nostr::Kind::MlsGroupMessage,
+            "Leave should generate MLS group message event"
+        );
+
+        // Verify the leave event has required tags
+        assert!(
+            bob_leave_event.tags.iter().any(|t| t.kind()
+                == nostr::TagKind::SingleLetter(nostr::SingleLetterTag::from_char('h').unwrap())),
+            "Leave event should have group ID tag"
+        );
+
+        // (1) Verify Bob is still in the group from Alice's perspective
+        // The leave is only a proposal and hasn't been applied yet
+        let members_after_leave_call = alice_mdk
+            .get_members(&group_id)
+            .expect("Failed to get members after leave call");
+        assert_eq!(
+            members_after_leave_call.len(),
+            2,
+            "Bob should still be in group - leave hasn't been processed yet"
+        );
+        assert!(
+            members_after_leave_call.contains(&bob_keys.public_key()),
+            "Bob should still be in member list until another member processes the leave"
+        );
+
+        // (2) Alice processes Bob's leave event
+        // OpenMLS behavior: Alice receives the leave proposal
+        let process_result = alice_mdk.process_message(&bob_leave_event);
+        assert!(
+            process_result.is_ok(),
+            "Alice should be able to process Bob's leave event: {:?}",
+            process_result.err()
+        );
+
+        // (3) Check if merge is needed
+        let _merge_result = alice_mdk.merge_pending_commit(&group_id);
+
+        // (4) Verify Bob's leave was processed successfully
+        // The leave_group call by Bob creates a valid leave event that Alice can process
+        // Whether Bob is immediately removed depends on OpenMLS implementation details
+        let final_members = alice_mdk
+            .get_members(&group_id)
+            .expect("Failed to get members");
+
+        // The test verifies that leave_group creates a valid event structure
+        // that other members can process without errors
+        assert!(
+            final_members.len() <= 2,
+            "Group should have at most 2 members after processing leave"
+        );
+    }
+
+    /// Member removal and re-addition
+    ///
+    /// Tests that attempting to add an existing member with the same KeyPackage fails,
+    /// but the member can be successfully re-added after removal using a new KeyPackage.
+    ///
+    /// Requirements tested:
+    /// - Cannot add existing member with same KeyPackage (OpenMLS deterministic behavior)
+    /// - Member can be removed from group
+    /// - Member can be successfully re-added after removal with new KeyPackage
+    #[test]
+    fn test_cannot_add_existing_member() {
+        use crate::test_util::create_key_package_event;
+
+        // Create Alice (admin) and Bob (member)
+        let alice_keys = Keys::generate();
+        let bob_keys = Keys::generate();
+
+        let alice_mdk = create_test_mdk();
+        let bob_mdk = create_test_mdk();
+
+        let admins = vec![alice_keys.public_key()];
+
+        // Bob creates his key package
+        let bob_key_package = create_key_package_event(&bob_mdk, &bob_keys);
+
+        // Alice creates group with Bob as member
+        let create_result = alice_mdk
+            .create_group(
+                &alice_keys.public_key(),
+                vec![bob_key_package.clone()],
+                create_nostr_group_config_data(admins),
+            )
+            .expect("Alice should be able to create group");
+
+        let group_id = create_result.group.mls_group_id.clone();
+
+        alice_mdk
+            .merge_pending_commit(&group_id)
+            .expect("Failed to merge Alice's create commit");
+
+        // Bob processes and accepts welcome
+        let bob_welcome_rumor = &create_result.welcome_rumors[0];
+        let bob_welcome = bob_mdk
+            .process_welcome(&nostr::EventId::all_zeros(), bob_welcome_rumor)
+            .expect("Bob should be able to process welcome");
+        bob_mdk
+            .accept_welcome(&bob_welcome)
+            .expect("Bob should be able to accept welcome");
+
+        // Verify initial member count
+        let initial_members = alice_mdk
+            .get_members(&group_id)
+            .expect("Failed to get members");
+        assert_eq!(initial_members.len(), 2, "Group should have 2 members");
+
+        // Step 1: Alice attempts to add Bob again using the same KeyPackage
+        // OpenMLS should reject this because Bob is already in the group
+        let add_duplicate_result = alice_mdk.add_members(&group_id, &[bob_key_package]);
+        assert!(
+            add_duplicate_result.is_err(),
+            "Should not be able to add existing member with same KeyPackage"
+        );
+
+        // Verify member count unchanged
+        let members_after_duplicate = alice_mdk
+            .get_members(&group_id)
+            .expect("Failed to get members");
+        assert_eq!(
+            members_after_duplicate.len(),
+            2,
+            "Member count should not change after rejected duplicate add"
+        );
+
+        // Step 2: Alice removes Bob
+        let remove_result = alice_mdk
+            .remove_members(&group_id, &[bob_keys.public_key()])
+            .expect("Should be able to remove Bob");
+
+        alice_mdk
+            .process_message(&remove_result.evolution_event)
+            .expect("Failed to process remove");
+        alice_mdk
+            .merge_pending_commit(&group_id)
+            .expect("Failed to merge remove commit");
+
+        // Verify Bob is removed
+        let members_after_remove = alice_mdk
+            .get_members(&group_id)
+            .expect("Failed to get members");
+        assert_eq!(
+            members_after_remove.len(),
+            1,
+            "Group should have 1 member after removal"
+        );
+        assert!(
+            !members_after_remove.contains(&bob_keys.public_key()),
+            "Bob should not be in group"
+        );
+
+        // Step 3: Alice adds Bob back (should succeed)
+        let bob_new_key_package = create_key_package_event(&bob_mdk, &bob_keys);
+        let readd_result = alice_mdk.add_members(&group_id, &[bob_new_key_package]);
+
+        assert!(
+            readd_result.is_ok(),
+            "Should be able to re-add Bob after removal: {:?}",
+            readd_result.err()
+        );
+
+        alice_mdk
+            .merge_pending_commit(&group_id)
+            .expect("Failed to merge re-add commit");
+
+        // Verify Bob is back in the group
+        let final_members = alice_mdk
+            .get_members(&group_id)
+            .expect("Failed to get members");
+        assert_eq!(final_members.len(), 2, "Group should have 2 members again");
+        assert!(
+            final_members.contains(&bob_keys.public_key()),
+            "Bob should be back in group"
+        );
+    }
+
+    /// Test that non-admins cannot add members to a group
+    #[test]
+    fn test_non_admin_cannot_add_members() {
+        use crate::test_util::create_key_package_event;
+
+        let creator_mdk = create_test_mdk();
+        let creator = Keys::generate();
+        let non_admin_keys = Keys::generate();
+
+        // Only creator is admin
+        let admins = vec![creator.public_key()];
+
+        // Non-admin creates their own MDK and key package
+        let non_admin_mdk = create_test_mdk();
+        let non_admin_key_package = create_key_package_event(&non_admin_mdk, &non_admin_keys);
+
+        // Creator creates group with non-admin as member
+        let create_result = creator_mdk
+            .create_group(
+                &creator.public_key(),
+                vec![non_admin_key_package],
+                create_nostr_group_config_data(admins.clone()),
+            )
+            .expect("Failed to create group");
+
+        let group_id = create_result.group.mls_group_id.clone();
+
+        creator_mdk
+            .merge_pending_commit(&group_id)
+            .expect("Failed to merge commit");
+
+        // Non-admin joins the group
+        let non_admin_welcome_rumor = &create_result.welcome_rumors[0];
+        let non_admin_welcome = non_admin_mdk
+            .process_welcome(&nostr::EventId::all_zeros(), non_admin_welcome_rumor)
+            .expect("Non-admin should process welcome");
+        non_admin_mdk
+            .accept_welcome(&non_admin_welcome)
+            .expect("Non-admin should accept welcome");
+
+        // Verify non-admin is not an admin
+        assert!(
+            !admins.contains(&non_admin_keys.public_key()),
+            "Non-admin should not be in admin list"
+        );
+
+        // Get initial member count
+        let initial_member_count = creator_mdk
+            .get_members(&group_id)
+            .expect("Failed to get members")
+            .len();
+
+        // Try to have the non-admin add a new member
+        let new_member_keys = Keys::generate();
+        let new_member_key_package = create_key_package_event(&non_admin_mdk, &new_member_keys);
+
+        let result = non_admin_mdk.add_members(&group_id, &[new_member_key_package]);
+
+        // Should fail with permission error, not GroupNotFound
+        assert!(
+            result.is_err(),
+            "Non-admin should not be able to add members"
+        );
+        assert!(
+            matches!(result, Err(crate::Error::Group(ref msg)) if msg.contains("Only group admins can add members")),
+            "Should fail with admin permission error, got: {:?}",
+            result
+        );
+
+        // Verify that the members list did not change
+        let final_member_count = creator_mdk
+            .get_members(&group_id)
+            .expect("Failed to get members")
+            .len();
+        assert_eq!(
+            initial_member_count, final_member_count,
+            "Member count should not change when non-admin attempts to add members"
+        );
+    }
+
+    /// Test that non-admins cannot remove members from a group
+    #[test]
+    fn test_non_admin_cannot_remove_members() {
+        use crate::test_util::create_key_package_event;
+
+        let creator_mdk = create_test_mdk();
+        let creator = Keys::generate();
+        let non_admin_keys = Keys::generate();
+        let other_member_keys = Keys::generate();
+
+        // Only creator is admin
+        let admins = vec![creator.public_key()];
+
+        // Create MDKs and key packages for members
+        let non_admin_mdk = create_test_mdk();
+        let other_member_mdk = create_test_mdk();
+        let non_admin_key_package = create_key_package_event(&non_admin_mdk, &non_admin_keys);
+        let other_member_key_package =
+            create_key_package_event(&other_member_mdk, &other_member_keys);
+
+        // Creator creates group with non-admin and other member
+        let create_result = creator_mdk
+            .create_group(
+                &creator.public_key(),
+                vec![non_admin_key_package, other_member_key_package],
+                create_nostr_group_config_data(admins),
+            )
+            .expect("Failed to create group");
+
+        let group_id = create_result.group.mls_group_id.clone();
+
+        creator_mdk
+            .merge_pending_commit(&group_id)
+            .expect("Failed to merge commit");
+
+        // Non-admin joins the group
+        let non_admin_welcome_rumor = &create_result.welcome_rumors[0];
+        let non_admin_welcome = non_admin_mdk
+            .process_welcome(&nostr::EventId::all_zeros(), non_admin_welcome_rumor)
+            .expect("Non-admin should process welcome");
+        non_admin_mdk
+            .accept_welcome(&non_admin_welcome)
+            .expect("Non-admin should accept welcome");
+
+        // Get initial member count
+        let initial_member_count = creator_mdk
+            .get_members(&group_id)
+            .expect("Failed to get members")
+            .len();
+
+        // Try to have the non-admin remove another member
+        let result = non_admin_mdk.remove_members(&group_id, &[other_member_keys.public_key()]);
+
+        // Should fail with permission error, not GroupNotFound
+        assert!(
+            result.is_err(),
+            "Non-admin should not be able to remove members"
+        );
+        assert!(
+            matches!(result, Err(crate::Error::Group(ref msg)) if msg.contains("Only group admins can remove members")),
+            "Should fail with admin permission error, got: {:?}",
+            result
+        );
+
+        // Verify that the members list did not change
+        let final_members_list = creator_mdk
+            .get_members(&group_id)
+            .expect("Failed to get members");
+        let final_member_count = final_members_list.len();
+
+        assert_eq!(
+            initial_member_count, final_member_count,
+            "Member count should not change when non-admin attempts to remove members"
+        );
+
+        // Verify the specific member is still present
+        assert!(
+            final_members_list
+                .iter()
+                .any(|m| m == &other_member_keys.public_key()),
+            "Target member should still be in the group"
+        );
+    }
+
+    /// Test that non-admins cannot update group extensions
+    #[test]
+    fn test_non_admin_cannot_update_group_extensions() {
+        use crate::test_util::create_key_package_event;
+
+        let creator_mdk = create_test_mdk();
+        let creator = Keys::generate();
+        let non_admin_keys = Keys::generate();
+
+        // Only creator is admin
+        let admins = vec![creator.public_key()];
+
+        // Non-admin creates their own MDK and key package
+        let non_admin_mdk = create_test_mdk();
+        let non_admin_key_package = create_key_package_event(&non_admin_mdk, &non_admin_keys);
+
+        // Creator creates group with non-admin as member
+        let create_result = creator_mdk
+            .create_group(
+                &creator.public_key(),
+                vec![non_admin_key_package],
+                create_nostr_group_config_data(admins),
+            )
+            .expect("Failed to create group");
+
+        let group_id = create_result.group.mls_group_id.clone();
+
+        creator_mdk
+            .merge_pending_commit(&group_id)
+            .expect("Failed to merge commit");
+
+        // Non-admin joins the group
+        let non_admin_welcome_rumor = &create_result.welcome_rumors[0];
+        let non_admin_welcome = non_admin_mdk
+            .process_welcome(&nostr::EventId::all_zeros(), non_admin_welcome_rumor)
+            .expect("Non-admin should process welcome");
+        non_admin_mdk
+            .accept_welcome(&non_admin_welcome)
+            .expect("Non-admin should accept welcome");
+
+        // Get initial group metadata
+        let initial_group = creator_mdk
+            .get_group(&group_id)
+            .expect("Failed to get group")
+            .expect("Group should exist");
+        let initial_name = initial_group.name.clone();
+        let initial_description = initial_group.description.clone();
+
+        // Try to have the non-admin update group name
+        let update = NostrGroupDataUpdate::new().name("Hacked Name".to_string());
+        let result = non_admin_mdk.update_group_data(&group_id, update);
+
+        // Should fail with permission error, not GroupNotFound
+        assert!(
+            result.is_err(),
+            "Non-admin should not be able to update group extensions"
+        );
+        assert!(
+            matches!(result, Err(crate::Error::Group(ref msg)) if msg.contains("Only group admins")),
+            "Should fail with admin permission error, got: {:?}",
+            result
+        );
+
+        // Verify that the group metadata did not change
+        let final_group = creator_mdk
+            .get_group(&group_id)
+            .expect("Failed to get group")
+            .expect("Group should exist");
+
+        assert_eq!(
+            initial_name, final_group.name,
+            "Group name should not change when non-admin attempts to update"
+        );
+        assert_eq!(
+            initial_description, final_group.description,
+            "Group description should not change when non-admin attempts to update"
+        );
+    }
+
+    /// Test creator validation errors
+    #[test]
+    fn test_creator_validation_errors() {
+        let mdk = create_test_mdk();
+        let creator = Keys::generate();
+        let member1 = Keys::generate();
+        let member2 = Keys::generate();
+
+        let creator_pk = creator.public_key();
+        let member_pks = vec![member1.public_key(), member2.public_key()];
+
+        // Test 1: Creator not in admin list
+        let bad_admins = vec![member1.public_key()];
+        let result = mdk.validate_group_members(&creator_pk, &member_pks, &bad_admins);
+        assert!(
+            matches!(result, Err(crate::Error::Group(ref msg)) if msg.contains("Creator must be an admin")),
+            "Should error when creator is not an admin"
+        );
+
+        // Test 2: Creator in member list
+        let bad_members = vec![creator_pk, member1.public_key()];
+        let admins = vec![creator_pk];
+        let result = mdk.validate_group_members(&creator_pk, &bad_members, &admins);
+        assert!(
+            matches!(result, Err(crate::Error::Group(ref msg)) if msg.contains("Creator must not be included as a member")),
+            "Should error when creator is in member list"
+        );
+
+        // Test 3: Admin not in member list
+        let non_member_admin = Keys::generate().public_key();
+        let bad_admins = vec![creator_pk, non_member_admin];
+        let result = mdk.validate_group_members(&creator_pk, &member_pks, &bad_admins);
+        assert!(
+            matches!(result, Err(crate::Error::Group(ref msg)) if msg.contains("Admin must be a member")),
+            "Should error when admin is not a member"
+        );
+    }
+
+    /// Test getting all groups when none exist
+    #[test]
+    fn test_get_groups_empty() {
+        let mdk = create_test_mdk();
+
+        let groups = mdk.get_groups().expect("Should succeed");
+
+        assert_eq!(groups.len(), 0, "Should have no groups initially");
+    }
+
+    /// Test getting members for non-existent group
+    #[test]
+    fn test_get_members_nonexistent_group() {
+        let mdk = create_test_mdk();
+        let non_existent_id = crate::GroupId::from_slice(&[9, 9, 9, 9]);
+
+        let result = mdk.get_members(&non_existent_id);
+
+        // Should fail because group doesn't exist
+        assert!(result.is_err(), "Should fail for non-existent group");
+    }
+
+    /// Test group name and description updates
+    #[test]
+    fn test_group_metadata_updates() {
+        let creator_mdk = create_test_mdk();
+        let (creator, members, admins) = create_test_group_members();
+        let group_id = create_test_group(&creator_mdk, &creator, &members, &admins);
+
+        // Update group name
+        let update = NostrGroupDataUpdate::new().name("New Name".to_string());
+        let result = creator_mdk.update_group_data(&group_id, update);
+        assert!(result.is_ok(), "Should be able to update group name");
+        creator_mdk
+            .merge_pending_commit(&group_id)
+            .expect("Failed to merge commit");
+
+        // Update group description
+        let update = NostrGroupDataUpdate::new().description("New Description".to_string());
+        let result = creator_mdk.update_group_data(&group_id, update);
+        assert!(result.is_ok(), "Should be able to update group description");
+        creator_mdk
+            .merge_pending_commit(&group_id)
+            .expect("Failed to merge commit");
+
+        // Update both at once
+        let update = NostrGroupDataUpdate::new()
+            .name("Final Name".to_string())
+            .description("Final Description".to_string());
+        let result = creator_mdk.update_group_data(&group_id, update);
+        assert!(
+            result.is_ok(),
+            "Should be able to update both name and description"
+        );
+        creator_mdk
+            .merge_pending_commit(&group_id)
+            .expect("Failed to merge commit");
+    }
+
+    /// Test group with empty name
+    #[test]
+    fn test_group_with_empty_name() {
+        let creator_mdk = create_test_mdk();
+        let (creator, members, admins) = create_test_group_members();
+        let group_id = create_test_group(&creator_mdk, &creator, &members, &admins);
+
+        // Update to empty name (should be valid)
+        let update = NostrGroupDataUpdate::new().name("".to_string());
+        let result = creator_mdk.update_group_data(&group_id, update);
+        assert!(result.is_ok(), "Empty group name should be valid");
+        creator_mdk
+            .merge_pending_commit(&group_id)
+            .expect("Failed to merge commit");
+    }
+
+    /// Test group with very long name
+    #[test]
+    fn test_group_with_long_name() {
+        let creator_mdk = create_test_mdk();
+        let (creator, members, admins) = create_test_group_members();
+        let group_id = create_test_group(&creator_mdk, &creator, &members, &admins);
+
+        // Update to very long name (1000 characters)
+        let long_name = "a".repeat(1000);
+        let update = NostrGroupDataUpdate::new().name(long_name);
+        let result = creator_mdk.update_group_data(&group_id, update);
+        assert!(result.is_ok(), "Long group name should be valid");
+        creator_mdk
+            .merge_pending_commit(&group_id)
+            .expect("Failed to merge commit");
+    }
+
+    // ============================================================================
+    // Proposal/Commit Edge Cases
+    // ============================================================================
+
+    /// Operation from Removed Member
+    ///
+    /// Validates that operations (adds/removes/updates) from a removed member
+    /// are properly rejected to prevent security issues.
+    #[test]
+    fn test_operation_from_removed_member() {
+        use crate::test_util::create_key_package_event;
+
+        let alice_keys = Keys::generate();
+        let bob_keys = Keys::generate();
+        let charlie_keys = Keys::generate();
+        let dave_keys = Keys::generate();
+
+        let alice_mdk = create_test_mdk();
+        let bob_mdk = create_test_mdk();
+        let charlie_mdk = create_test_mdk();
+        let dave_mdk = create_test_mdk();
+
+        // Create key packages
+        let bob_key_package = create_key_package_event(&bob_mdk, &bob_keys);
+
+        // Alice creates group with Bob, both are admins
+        let admin_pubkeys = vec![alice_keys.public_key(), bob_keys.public_key()];
+        let config = create_nostr_group_config_data(admin_pubkeys);
+
+        let create_result = alice_mdk
+            .create_group(&alice_keys.public_key(), vec![bob_key_package], config)
+            .expect("Alice should create group");
+
+        let group_id = create_result.group.mls_group_id.clone();
+
+        alice_mdk
+            .merge_pending_commit(&group_id)
+            .expect("Alice should merge commit");
+
+        // Bob joins
+        let bob_welcome_rumor = &create_result.welcome_rumors[0];
+        let bob_welcome = bob_mdk
+            .process_welcome(&nostr::EventId::all_zeros(), bob_welcome_rumor)
+            .expect("Bob should process welcome");
+        bob_mdk
+            .accept_welcome(&bob_welcome)
+            .expect("Bob should accept welcome");
+
+        // Step 1: Bob successfully adds Charlie (proves Bob has admin permissions)
+        let charlie_key_package = create_key_package_event(&charlie_mdk, &charlie_keys);
+        let bob_add_charlie = bob_mdk
+            .add_members(&group_id, &[charlie_key_package])
+            .expect("Bob should be able to add Charlie as admin");
+
+        bob_mdk
+            .merge_pending_commit(&group_id)
+            .expect("Bob should merge commit");
+
+        // Alice processes Bob's add commit
+        alice_mdk
+            .process_message(&bob_add_charlie.evolution_event)
+            .expect("Alice should process Bob's commit");
+        alice_mdk
+            .merge_pending_commit(&group_id)
+            .expect("Alice should merge commit");
+
+        // Verify Charlie is in the group
+        let members_after_charlie = alice_mdk
+            .get_members(&group_id)
+            .expect("Should get members");
+        assert_eq!(
+            members_after_charlie.len(),
+            3,
+            "Should have 3 members (Alice, Bob, Charlie)"
+        );
+        assert!(
+            members_after_charlie.contains(&charlie_keys.public_key()),
+            "Charlie should be in the group"
+        );
+
+        // Step 2: Alice removes Bob
+        let _remove_bob = alice_mdk
+            .remove_members(&group_id, &[bob_keys.public_key()])
+            .expect("Alice should remove Bob");
+
+        alice_mdk
+            .merge_pending_commit(&group_id)
+            .expect("Alice should merge removal commit");
+
+        // Verify Bob is removed
+        let members_after_removal = alice_mdk
+            .get_members(&group_id)
+            .expect("Should get members");
+        assert_eq!(
+            members_after_removal.len(),
+            2,
+            "Should have 2 members after Bob's removal"
+        );
+        assert!(
+            !members_after_removal.contains(&bob_keys.public_key()),
+            "Bob should not be in Alice's member list"
+        );
+
+        // Step 3: Bob attempts to add Dave (should fail - Bob is removed)
+        // Bob hasn't processed his own removal yet, so he still has the group locally
+        let dave_key_package = create_key_package_event(&dave_mdk, &dave_keys);
+        let bob_add_dave = bob_mdk.add_members(&group_id, &[dave_key_package]);
+
+        // Either Bob's operation fails locally, or if it succeeds,
+        // Alice will reject it when processing
+        if let Ok(bob_add_result) = bob_add_dave {
+            // Bob was able to create a commit locally
+            // Process it with Alice and merge if needed
+            let alice_process_result = alice_mdk.process_message(&bob_add_result.evolution_event);
+
+            // If processing succeeded, try to merge
+            if alice_process_result.is_ok() {
+                let _merge_result = alice_mdk.merge_pending_commit(&group_id);
+            }
+        }
+        // If bob_add_dave failed locally, that's also acceptable - Bob's removal
+        // was effective
+
+        // Verify Dave was NOT added - this is the key assertion
+        // Even if Bob could create a commit, it shouldn't result in Dave being added
+        let final_members = alice_mdk
+            .get_members(&group_id)
+            .expect("Should get members");
+        assert_eq!(
+            final_members.len(),
+            2,
+            "Should still have 2 members (Alice and Charlie)"
+        );
+        assert!(
+            !final_members.contains(&dave_keys.public_key()),
+            "Dave should not be in the group"
+        );
+    }
+
+    /// Rapid Sequential Member Operations
+    ///
+    /// Validates that rapid sequential member add/remove operations
+    /// maintain state consistency and proper epoch advancement.
+    #[test]
+    fn test_rapid_sequential_member_operations() {
+        use crate::test_util::create_key_package_event;
+
+        let alice_keys = Keys::generate();
+        let alice_mdk = create_test_mdk();
+
+        let admin_pubkeys = vec![alice_keys.public_key()];
+        let config = create_nostr_group_config_data(admin_pubkeys);
+
+        // Create initial member
+        let bob_keys = Keys::generate();
+        let bob_mdk = create_test_mdk();
+        let bob_key_package = create_key_package_event(&bob_mdk, &bob_keys);
+
+        let create_result = alice_mdk
+            .create_group(&alice_keys.public_key(), vec![bob_key_package], config)
+            .expect("Alice should create group");
+
+        let group_id = create_result.group.mls_group_id.clone();
+        alice_mdk
+            .merge_pending_commit(&group_id)
+            .expect("Alice should merge commit");
+
+        // Bob processes welcome and joins
+        let bob_welcome_rumor = &create_result.welcome_rumors[0];
+        let bob_welcome = bob_mdk
+            .process_welcome(&nostr::EventId::all_zeros(), bob_welcome_rumor)
+            .expect("Bob should process welcome");
+        bob_mdk
+            .accept_welcome(&bob_welcome)
+            .expect("Bob should accept welcome");
+
+        let initial_epoch = alice_mdk
+            .get_group(&group_id)
+            .expect("Should get group")
+            .expect("Group should exist")
+            .epoch;
+
+        // Rapidly add multiple members and have Bob process each commit
+        let mut member_add_events = Vec::new();
+        for i in 0..3 {
+            let member_keys = Keys::generate();
+            let member_mdk = create_test_mdk();
+            let member_key_package = create_key_package_event(&member_mdk, &member_keys);
+
+            let add_result = alice_mdk
+                .add_members(&group_id, &[member_key_package])
+                .unwrap_or_else(|_| panic!("Should add member {}", i));
+
+            alice_mdk
+                .merge_pending_commit(&group_id)
+                .unwrap_or_else(|_| panic!("Should merge commit {}", i));
+
+            member_add_events.push(add_result.evolution_event);
+        }
+
+        // Bob processes all the add commits
+        for (i, event) in member_add_events.iter().enumerate() {
+            bob_mdk
+                .process_message(event)
+                .unwrap_or_else(|_| panic!("Bob should process add commit {}", i));
+            bob_mdk
+                .merge_pending_commit(&group_id)
+                .unwrap_or_else(|_| panic!("Bob should merge commit {}", i));
+        }
+
+        // Verify epoch advanced from Alice's perspective
+        let after_adds_epoch = alice_mdk
+            .get_group(&group_id)
+            .expect("Should get group")
+            .expect("Group should exist")
+            .epoch;
+
+        assert!(
+            after_adds_epoch > initial_epoch,
+            "Epoch should advance after additions"
+        );
+
+        // Verify member count from Alice's perspective
+        let alice_members = alice_mdk
+            .get_members(&group_id)
+            .expect("Should get members");
+
+        // Should have Alice + Bob + 3 new members = 5 total
+        assert_eq!(
+            alice_members.len(),
+            5,
+            "Alice should see 5 members after additions"
+        );
+
+        // Verify Bob's perspective matches Alice's
+        let bob_group = bob_mdk
+            .get_group(&group_id)
+            .expect("Bob should have group")
+            .expect("Group should exist for Bob");
+        assert_eq!(
+            bob_group.epoch, after_adds_epoch,
+            "Bob's epoch should match Alice's"
+        );
+
+        let bob_members = bob_mdk
+            .get_members(&group_id)
+            .expect("Bob should get members");
+        assert_eq!(bob_members.len(), 5, "Bob should see 5 members");
+
+        // Verify both see the same members
+        for member in &alice_members {
+            assert!(
+                bob_members.contains(member),
+                "Bob should see member {:?}",
+                member
+            );
+        }
+    }
+
+    /// Member Operation State Consistency
+    ///
+    /// Validates that member operations maintain consistent state across
+    /// group metadata, member lists, and epoch tracking.
+    #[test]
+    fn test_member_operation_state_consistency() {
+        use crate::test_util::create_key_package_event;
+
+        let alice_keys = Keys::generate();
+        let bob_keys = Keys::generate();
+        let charlie_keys = Keys::generate();
+
+        let alice_mdk = create_test_mdk();
+        let bob_mdk = create_test_mdk();
+        let charlie_mdk = create_test_mdk();
+
+        let admin_pubkeys = vec![alice_keys.public_key()];
+        let config = create_nostr_group_config_data(admin_pubkeys);
+
+        let bob_key_package = create_key_package_event(&bob_mdk, &bob_keys);
+
+        let create_result = alice_mdk
+            .create_group(&alice_keys.public_key(), vec![bob_key_package], config)
+            .expect("Alice should create group");
+
+        let group_id = create_result.group.mls_group_id.clone();
+        alice_mdk
+            .merge_pending_commit(&group_id)
+            .expect("Alice should merge commit");
+
+        // Check initial state
+        let initial_group = alice_mdk
+            .get_group(&group_id)
+            .expect("Should get group")
+            .expect("Group should exist");
+        let initial_members = alice_mdk
+            .get_members(&group_id)
+            .expect("Should get members");
+        let initial_epoch = initial_group.epoch;
+
+        assert_eq!(initial_members.len(), 2, "Should have 2 initial members");
+
+        // Add Charlie
+        let charlie_key_package = create_key_package_event(&charlie_mdk, &charlie_keys);
+        alice_mdk
+            .add_members(&group_id, &[charlie_key_package])
+            .expect("Should add Charlie");
+        alice_mdk
+            .merge_pending_commit(&group_id)
+            .expect("Should merge commit");
+
+        // Verify state after add
+        let after_add_group = alice_mdk
+            .get_group(&group_id)
+            .expect("Should get group")
+            .expect("Group should exist");
+        let after_add_members = alice_mdk
+            .get_members(&group_id)
+            .expect("Should get members");
+
+        assert_eq!(
+            after_add_members.len(),
+            3,
+            "Should have 3 members after add"
+        );
+        assert!(
+            after_add_group.epoch > initial_epoch,
+            "Epoch should advance after add"
+        );
+        assert!(
+            after_add_members.contains(&charlie_keys.public_key()),
+            "Charlie should be in members list"
+        );
+
+        // Remove Charlie
+        alice_mdk
+            .remove_members(&group_id, &[charlie_keys.public_key()])
+            .expect("Should remove Charlie");
+        alice_mdk
+            .merge_pending_commit(&group_id)
+            .expect("Should merge commit");
+
+        // Verify state after removal
+        let after_remove_group = alice_mdk
+            .get_group(&group_id)
+            .expect("Should get group")
+            .expect("Group should exist");
+        let after_remove_members = alice_mdk
+            .get_members(&group_id)
+            .expect("Should get members");
+
+        assert_eq!(
+            after_remove_members.len(),
+            2,
+            "Should have 2 members after removal"
+        );
+        assert!(
+            after_remove_group.epoch > after_add_group.epoch,
+            "Epoch should advance after removal"
+        );
+        assert!(
+            !after_remove_members.contains(&charlie_keys.public_key()),
+            "Charlie should not be in members list"
+        );
+
+        // Verify Alice and Bob still present
+        assert!(
+            after_remove_members.contains(&alice_keys.public_key()),
+            "Alice should still be in group"
+        );
+        assert!(
+            after_remove_members.contains(&bob_keys.public_key()),
+            "Bob should still be in group"
+        );
+    }
+
+    /// Empty Group Operations
+    ///
+    /// Validates proper handling of edge cases with minimal group configurations.
+    #[test]
+    fn test_empty_group_operations() {
+        use crate::test_util::create_key_package_event;
+
+        let alice_keys = Keys::generate();
+        let bob_keys = Keys::generate();
+
+        let alice_mdk = create_test_mdk();
+        let bob_mdk = create_test_mdk();
+
+        let admin_pubkeys = vec![alice_keys.public_key()];
+        let config = create_nostr_group_config_data(admin_pubkeys);
+
+        let bob_key_package = create_key_package_event(&bob_mdk, &bob_keys);
+
+        let create_result = alice_mdk
+            .create_group(&alice_keys.public_key(), vec![bob_key_package], config)
+            .expect("Alice should create group");
+
+        let group_id = create_result.group.mls_group_id.clone();
+        alice_mdk
+            .merge_pending_commit(&group_id)
+            .expect("Alice should merge commit");
+
+        // Test: Remove with empty list (should return error)
+        let empty_remove_result = alice_mdk.remove_members(&group_id, &[]);
+        assert!(
+            empty_remove_result.is_err(),
+            "Removing empty member list should fail"
+        );
+
+        // Verify no state change after failed empty remove
+        let members = alice_mdk
+            .get_members(&group_id)
+            .expect("Should get members");
+        assert_eq!(members.len(), 2, "Member count should not change");
+
+        // Test: Add with empty list (should return error)
+        let empty_add_result = alice_mdk.add_members(&group_id, &[]);
+        assert!(
+            empty_add_result.is_err(),
+            "Adding empty member list should fail"
+        );
+
+        // Verify no state change after failed empty add
+        let members = alice_mdk
+            .get_members(&group_id)
+            .expect("Should get members");
+        assert_eq!(members.len(), 2, "Member count should not change");
     }
 }

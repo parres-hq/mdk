@@ -33,6 +33,44 @@
 
 ### Fixed
 
+### Removed
+
+### Deprecated
+
+## [0.5.3] - 2025-11-14
+
+### Breaking changes
+
+### Changed
+
+- **Key Package Formatting**: Centralized hex formatting with new `NostrTagFormat` trait
+  - All MLS types (Ciphersuite, ExtensionType) now use consistent lowercase hex format via `to_nostr_tag()` method
+  - Eliminates duplicate formatting logic across the codebase
+  - Normalized ciphersuite strings for consistency
+- **Key Package Validation**: Enhanced validation with closure-based approach
+  - More flexible and maintainable validation architecture
+  - Added MLS protocol version validation to ensure version 1 compliance
+  - Improved error messages for validation failures
+
+### Added
+
+- **Key Package Tag Validation**: Added comprehensive validation for MIP-00 key package tags
+  - Validates `mls_ciphersuite` tag format and value (must be `0x0001`)
+  - Validates `mls_extensions` tag hex format (0x prefix + 4 hex digits)
+  - Validates presence of all required extensions
+  - Case-insensitive validation for hex values (handles both uppercase and lowercase)
+  - Maintains backward compatibility with legacy tag formats
+  - Added validation for MLS protocol version (must be version 1)
+- **Protected Tag Support**: Key packages now include a `protected` tag to mark events as protected
+- **Client Tags**: Added support for client-specific tags in key packages
+  - Enables clients to identify themselves and their capabilities
+- **Examples**: Added comprehensive examples demonstrating key package and group functionality
+  - `key_package_inspection`: Demonstrates key package creation, validation, and inspection
+  - `group_inspection`: Shows group creation, member management, and message processing
+  - Examples showcase best practices for using the MDK library
+
+### Fixed
+
 - Blurhash Generation: Fixed blurhash generation to use RGBA format instead of RGB (changed `to_rgb8()` to `to_rgba8()`)
 
 ### Removed
@@ -68,7 +106,7 @@
 ### Fixed
 
 - **MIP-00 Compliance**: Fixed key package tag format to match specification
-  - `ciphersuite` tag now uses single hex value format: `["ciphersuite", "0x0001"]` instead of string format
+  - `mls_ciphersuite` tag now uses single hex value format: `["mls_ciphersuite", "0x0001"]` instead of string format
   - `mls_extensions` tag now uses multiple hex values: `["mls_extensions", "0x0003", "0x000a", "0x0002", "0xf2ee"]` instead of single comma-separated string
   - Ensures interoperability with other Marmot protocol implementations
 

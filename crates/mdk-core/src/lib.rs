@@ -30,11 +30,130 @@ pub mod test_util;
 mod util;
 pub mod welcomes;
 
-use self::constant::{DEFAULT_CIPHERSUITE, REQUIRED_EXTENSIONS};
+use self::constant::{
+    DEFAULT_CIPHERSUITE, GROUP_CONTEXT_REQUIRED_EXTENSIONS, SUPPORTED_EXTENSIONS,
+};
 pub use self::error::Error;
+use self::util::NostrTagFormat;
 
 // Re-export GroupId for convenience
 pub use mdk_storage_traits::GroupId;
+
+/// Configuration for MDK behavior
+#[derive(Debug, Clone, Default)]
+pub struct MdkConfig {
+    /// Use base64 encoding for key packages and welcomes (new format)
+    /// Set to false for backward compatibility (hex encoding)
+    /// Default: false
+    pub use_base64_encoding: bool,
+}
+
+impl MdkConfig {
+    /// Create a new configuration with default settings
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Create configuration with base64 encoding enabled
+    ///
+    /// This reduces payload size by approximately 33% compared to hex encoding.
+    pub fn with_base64() -> Self {
+        Self {
+            use_base64_encoding: true,
+        }
+    }
+}
+
+/// Builder for constructing MDK instances
+///
+/// This builder provides a fluent API for configuring and creating MDK instances.
+/// It follows the builder pattern commonly used in Rust libraries.
+///
+/// # Examples
+///
+/// ```no_run
+/// use mdk_core::{MDK, MdkConfig};
+/// use mdk_memory_storage::MdkMemoryStorage;
+///
+/// // Simple usage with defaults
+/// let mdk = MDK::new(MdkMemoryStorage::default());
+///
+/// // With base64 encoding enabled
+/// let mdk = MDK::builder(MdkMemoryStorage::default())
+///     .with_base64_encoding(true)
+///     .build();
+/// ```
+#[derive(Debug)]
+pub struct MdkBuilder<Storage> {
+    storage: Storage,
+    config: MdkConfig,
+}
+
+impl<Storage> MdkBuilder<Storage>
+where
+    Storage: MdkStorageProvider,
+{
+    /// Create a new MDK builder with the given storage
+    pub fn new(storage: Storage) -> Self {
+        Self {
+            storage,
+            config: MdkConfig::default(),
+        }
+    }
+
+    /// Enable or disable base64 encoding for key packages and welcomes
+    ///
+    /// When enabled, reduces payload size by approximately 33% compared to hex encoding.
+    /// Both formats can be read regardless of this setting.
+    ///
+    /// # Arguments
+    ///
+    /// * `enabled` - true to use base64 encoding, false to use hex encoding
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use mdk_core::MDK;
+    /// # use mdk_memory_storage::MdkMemoryStorage;
+    /// let mdk = MDK::builder(MdkMemoryStorage::default())
+    ///     .with_base64_encoding(true)
+    ///     .build();
+    /// ```
+    pub fn with_base64_encoding(mut self, enabled: bool) -> Self {
+        self.config.use_base64_encoding = enabled;
+        self
+    }
+
+    /// Set a custom configuration
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use mdk_core::{MDK, MdkConfig};
+    /// # use mdk_memory_storage::MdkMemoryStorage;
+    /// let config = MdkConfig::with_base64();
+    /// let mdk = MDK::builder(MdkMemoryStorage::default())
+    ///     .with_config(config)
+    ///     .build();
+    /// ```
+    pub fn with_config(mut self, config: MdkConfig) -> Self {
+        self.config = config;
+        self
+    }
+
+    /// Build the MDK instance with the configured settings
+    pub fn build(self) -> MDK<Storage> {
+        MDK {
+            ciphersuite: DEFAULT_CIPHERSUITE,
+            extensions: SUPPORTED_EXTENSIONS.to_vec(),
+            provider: MdkProvider {
+                crypto: RustCrypto::default(),
+                storage: self.storage,
+            },
+            config: self.config,
+        }
+    }
+}
 
 /// The main struct for the Nostr MLS implementation.
 ///
@@ -56,6 +175,8 @@ where
     pub extensions: Vec<ExtensionType>,
     /// The OpenMLS provider implementation for cryptographic and storage operations
     pub provider: MdkProvider<Storage>,
+    /// Configuration for encoding behavior
+    pub config: MdkConfig,
 }
 
 /// Provider implementation for OpenMLS that integrates with Nostr.
@@ -98,16 +219,44 @@ impl<Storage> MDK<Storage>
 where
     Storage: MdkStorageProvider,
 {
-    /// Construct new nostr MLS instance
+    /// Create a builder for constructing an MDK instance
+    ///
+    /// This is the recommended way to create MDK instances when you need
+    /// custom configuration.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use mdk_core::MDK;
+    /// # use mdk_memory_storage::MdkMemoryStorage;
+    /// let mdk = MDK::builder(MdkMemoryStorage::default())
+    ///     .with_base64_encoding(true)
+    ///     .build();
+    /// ```
+    pub fn builder(storage: Storage) -> MdkBuilder<Storage> {
+        MdkBuilder::new(storage)
+    }
+
+    /// Construct a new MDK instance with default configuration
+    ///
+    /// Uses hex encoding for backward compatibility. To enable base64 encoding,
+    /// use the builder pattern.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use mdk_core::MDK;
+    /// # use mdk_memory_storage::MdkMemoryStorage;
+    /// // Default configuration (hex encoding)
+    /// let mdk = MDK::new(MdkMemoryStorage::default());
+    ///
+    /// // With base64 encoding (recommended)
+    /// let mdk = MDK::builder(MdkMemoryStorage::default())
+    ///     .with_base64_encoding(true)
+    ///     .build();
+    /// ```
     pub fn new(storage: Storage) -> Self {
-        Self {
-            ciphersuite: DEFAULT_CIPHERSUITE,
-            extensions: REQUIRED_EXTENSIONS.to_vec(),
-            provider: MdkProvider {
-                crypto: RustCrypto::default(),
-                storage,
-            },
-        }
+        Self::builder(storage).build()
     }
 
     /// Get nostr MLS capabilities
@@ -126,7 +275,7 @@ where
     #[inline]
     pub(crate) fn required_capabilities_extension(&self) -> Extension {
         Extension::RequiredCapabilities(RequiredCapabilitiesExtension::new(
-            &self.extensions,
+            &GROUP_CONTEXT_REQUIRED_EXTENSIONS,
             &[],
             &[],
         ))
@@ -134,15 +283,12 @@ where
 
     /// Get the ciphersuite value formatted for Nostr tags (hex with 0x prefix)
     pub(crate) fn ciphersuite_value(&self) -> String {
-        format!("0x{:04x}", u16::from(self.ciphersuite))
+        self.ciphersuite.to_nostr_tag()
     }
 
     /// Get the extensions value formatted for Nostr tags (array of hex values)
     pub(crate) fn extensions_value(&self) -> Vec<String> {
-        self.extensions
-            .iter()
-            .map(|e| format!("0x{:04x}", u16::from(*e)))
-            .collect()
+        self.extensions.iter().map(|e| e.to_nostr_tag()).collect()
     }
 
     /// Get the storage provider
@@ -161,5 +307,12 @@ pub mod tests {
     /// Create a test MDK instance with an in-memory storage provider
     pub fn create_test_mdk() -> MDK<MdkMemoryStorage> {
         MDK::new(MdkMemoryStorage::default())
+    }
+
+    /// Create a test MDK instance with custom configuration
+    pub fn create_test_mdk_with_config(config: MdkConfig) -> MDK<MdkMemoryStorage> {
+        MDK::builder(MdkMemoryStorage::default())
+            .with_config(config)
+            .build()
     }
 }

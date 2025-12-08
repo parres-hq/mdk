@@ -191,3 +191,41 @@ gen-binding-ruby: (gen-binding "ruby")
     # Validate the Ruby file parses correctly
     ruby -c "$RUBY_BINDING" || (echo "Error: Ruby binding file does not parse correctly after patching" >&2 && exit 1)
     echo "✓ Ruby binding patched (MdkUniffiError classes)"
+# Run test coverage with summary output
+coverage:
+    @bash scripts/coverage.sh
+
+# Generate HTML coverage report
+coverage-html:
+    @bash scripts/coverage.sh --html
+
+# Run the key package inspection example
+example-keypackage:
+    cargo run -p mdk-core --example key_package_inspection
+
+# Run the group inspection example (requires debug-examples feature)
+example-group:
+    cargo run -p mdk-core --example group_inspection --features debug-examples
+
+# Run the MLS memory storage example
+example-memory:
+    cargo run -p mdk-core --example mls_memory
+
+# Run the MLS SQLite storage example
+example-sqlite:
+    cargo run -p mdk-core --example mls_sqlite
+
+# Run all examples
+examples:
+    @echo "→ Running key package inspection example..."
+    @just example-keypackage
+    @echo ""
+    @echo "→ Running group inspection example..."
+    @just example-group
+    @echo ""
+    @echo "→ Running memory storage example..."
+    @just example-memory
+    @echo ""
+    @echo "→ Running SQLite storage example..."
+    @just example-sqlite
+
