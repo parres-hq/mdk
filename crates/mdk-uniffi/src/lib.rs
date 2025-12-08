@@ -979,13 +979,13 @@ pub fn decrypt_group_image(
 
 /// Derive upload keypair for group image
 #[uniffi::export]
-pub fn derive_upload_keypair(image_key: Vec<u8>) -> Result<String, MdkUniffiError> {
+pub fn derive_upload_keypair(image_key: Vec<u8>, version: u16) -> Result<String, MdkUniffiError> {
     let key_arr: [u8; 32] = image_key
         .try_into()
         .map_err(|_| MdkUniffiError::InvalidInput("Image key must be 32 bytes".to_string()))?;
 
     let keys =
-        core_derive_upload_keypair(&key_arr).map_err(|e| MdkUniffiError::Mdk(e.to_string()))?;
+        core_derive_upload_keypair(&key_arr, version).map_err(|e| MdkUniffiError::Mdk(e.to_string()))?;
 
     Ok(keys.secret_key().to_secret_hex())
 }
