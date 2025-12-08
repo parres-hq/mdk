@@ -984,8 +984,8 @@ pub fn derive_upload_keypair(image_key: Vec<u8>, version: u16) -> Result<String,
         .try_into()
         .map_err(|_| MdkUniffiError::InvalidInput("Image key must be 32 bytes".to_string()))?;
 
-    let keys =
-        core_derive_upload_keypair(&key_arr, version).map_err(|e| MdkUniffiError::Mdk(e.to_string()))?;
+    let keys = core_derive_upload_keypair(&key_arr, version)
+        .map_err(|e| MdkUniffiError::Mdk(e.to_string()))?;
 
     Ok(keys.secret_key().to_secret_hex())
 }
