@@ -1,0 +1,576 @@
+name: Package MDK Bindings
+
+on:
+  push:
+    branches: [ master, uniffi-bindings ]
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  SWIFT_PACKAGE_REPO: "marmot-protocol/mdk-swift"
+  PYTHON_PACKAGE_REPO: "marmot-protocol/mdk-python"
+  RUBY_PACKAGE_REPO: "marmot-protocol/mdk-ruby"
+  KOTLIN_PACKAGE_REPO: "marmot-protocol/mdk-kotlin"
+
+jobs:
+  package-swift:
+    runs-on: macos-latest
+    name: Build and Package Swift Bindings
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Setup Rust
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Cache Rust dependencies
+      uses: Swatinem/rust-cache@v2
+
+    - name: Install just
+      uses: extractions/setup-just@v2
+
+    - name: Build iOS targets
+      run: |
+        rustup target add aarch64-apple-ios aarch64-apple-ios-sim
+        just _build-uniffi-ios aarch64-apple-ios
+        just _build-uniffi-ios aarch64-apple-ios-sim
+
+    - name: Build host library
+      run: cargo build --release --lib -p mdk-uniffi
+
+    - name: Generate Swift bindings
+      run: just gen-binding-swift
+
+    - name: Assemble Swift package
+      run: |
+        rm -rf swift/MDKPackage
+        mkdir -p swift/MDKPackage/Sources/{MDKBindings,mdk_uniffiFFI/include} swift/MDKPackage/Binary
+        cp crates/mdk-uniffi/bindings/swift/mdk_uniffi.swift swift/MDKPackage/Sources/MDKBindings/
+        cp crates/mdk-uniffi/bindings/swift/mdk_uniffiFFI.{h,modulemap} swift/MDKPackage/Sources/mdk_uniffiFFI/include/
+        echo '#include "mdk_uniffiFFI.h"' > swift/MDKPackage/Sources/mdk_uniffiFFI/mdk_uniffiFFI.c
+        cp -R ios-artifacts/mdk_uniffi.xcframework swift/MDKPackage/Binary/
+        cp crates/mdk-uniffi/src/swift/Package.swift swift/MDKPackage/Package.swift
+        sed 's/{{lang}}/Swift/g' crates/mdk-uniffi/src/README.md > swift/MDKPackage/README.md
+        cp crates/mdk-uniffi/src/swift/docs.md swift/MDKPackage/docs.md
+        echo "✓ Swift package assembled"
+
+    - name: Checkout Swift package repo
+      uses: actions/checkout@v4
+      with:
+        repository: ${{ env.SWIFT_PACKAGE_REPO }}
+        path: swift-package-repo
+        token: ${{ secrets.BINDINGS_PACKAGE_PAT }}
+        lfs: true
+
+    - name: Configure Git
+      run: |
+        git config --global user.name "github-actions[bot]"
+        git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+    - name: Copy Swift package to repo
+      run: |
+        # Remove all files except .git
+        find swift-package-repo -mindepth 1 -maxdepth 1 ! -name '.git' ! -iname 'README.md' -exec rm -rf {} +
+        # Copy package contents
+        cp -R swift/MDKPackage/* swift-package-repo/
+        cd swift-package-repo
+        git add -A
+
+    - name: Commit and push
+      run: |
+        cd swift-package-repo
+        if git diff --staged --quiet; then
+          echo "No changes to commit"
+        else
+          git commit -m "Update Swift package from mdk@${GITHUB_SHA:0:7}"
+          git remote set-url origin https://x-access-token:${{ secrets.BINDINGS_PACKAGE_PAT }}@github.com/${{ env.SWIFT_PACKAGE_REPO }}.git
+          git push origin HEAD
+        fi
+
+  package-python:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    name: Build Python Bindings (${{ matrix.os }})
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Setup Rust
+      uses: dtolnay/rust-toolchain@stable
+    
+    - name: Add aarch64-apple-ios target if matrix.os is macos-latest
+      if: matrix.os == 'macos-latest'
+      run: |
+        rustup target add aarch64-apple-ios
+        rustup target add aarch64-apple-ios-sim
+
+    - name: Cache Rust dependencies
+      uses: Swatinem/rust-cache@v2
+
+    - name: Install just
+      uses: extractions/setup-just@v2
+
+    - name: Setup Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: Build host library (debug for bindgen)
+      run: cargo build --lib -p mdk-uniffi
+
+    - name: Generate Python bindings
+      run: just gen-binding "python"
+
+    - name: Build release library
+      run: cargo build --lib -p mdk-uniffi --release
+
+    - name: Determine library filename
+      id: lib_filename
+      shell: bash
+      run: |
+        if [ "${{ runner.os }}" == "Windows" ]; then
+          echo "filename=mdk_uniffi.dll" >> $GITHUB_OUTPUT
+          echo "libs=mdk_uniffi.dll" >> $GITHUB_OUTPUT
+        elif [ "${{ runner.os }}" == "macOS" ]; then
+          echo "filename=libmdk_uniffi.dylib" >> $GITHUB_OUTPUT
+          echo "libs=libmdk_uniffi.dylib" >> $GITHUB_OUTPUT
+        else
+          echo "filename=libmdk_uniffi.so" >> $GITHUB_OUTPUT
+          echo "libs=libmdk_uniffi.so" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Prepare Python artifacts
+      shell: bash
+      run: |
+        mkdir -p python-artifacts/mdk
+        # Copy Python bindings
+        cp crates/mdk-uniffi/bindings/python/mdk_uniffi.py python-artifacts/mdk_uniffi.py
+        # Copy current platform's library
+        cp target/release/${{ steps.lib_filename.outputs.filename }} python-artifacts/mdk/${{ steps.lib_filename.outputs.filename }}
+        echo "✓ Python artifacts prepared for ${{ runner.os }}"
+
+    - name: Upload Python artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: python-artifacts-${{ matrix.os }}
+        path: python-artifacts/
+        retention-days: 1
+
+  publish-python:
+    needs: package-python
+    runs-on: ubuntu-latest
+    name: Publish Python Package
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Download all Python artifacts
+      uses: actions/download-artifact@v4
+      with:
+        path: python-artifacts-all
+        pattern: python-artifacts-*
+        merge-multiple: false
+
+    - name: Assemble complete Python package
+      shell: bash
+      run: |
+        mkdir -p python-package/mdk
+        
+        # Copy package metadata files (same for all platforms)
+        cp crates/mdk-uniffi/src/python/__init__.py python-package/mdk/__init__.py
+        cp crates/mdk-uniffi/src/python/pyproject.toml python-package/pyproject.toml
+        sed 's/{{lang}}/Python/g' crates/mdk-uniffi/src/README.md > python-package/README.md
+        cp crates/mdk-uniffi/src/python/docs.md python-package/docs.md
+        
+        # Copy Python bindings (same for all platforms, use from any artifact)
+        cp python-artifacts-all/python-artifacts-ubuntu-latest/mdk_uniffi.py python-package/mdk/mdk_uniffi.py
+        
+        # Copy all platform libraries
+        for artifact_dir in python-artifacts-all/python-artifacts-*/; do
+          if [ -d "$artifact_dir/mdk" ]; then
+            cp "$artifact_dir/mdk"/*.so python-package/mdk/ 2>/dev/null || true
+            cp "$artifact_dir/mdk"/*.dylib python-package/mdk/ 2>/dev/null || true
+            cp "$artifact_dir/mdk"/*.dll python-package/mdk/ 2>/dev/null || true
+          fi
+        done
+        
+        echo "✓ Complete Python package assembled with all platform libraries"
+
+    - name: Checkout Python package repo
+      uses: actions/checkout@v4
+      with:
+        repository: ${{ env.PYTHON_PACKAGE_REPO }}
+        path: python-package-repo
+        token: ${{ secrets.BINDINGS_PACKAGE_PAT }}
+        lfs: true
+
+    - name: Configure Git
+      run: |
+        git config --global user.name "github-actions[bot]"
+        git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+    - name: Copy Python package to repo
+      shell: bash
+      run: |
+        cp -R python-package/* python-package-repo/
+        cd python-package-repo
+        git add -A
+
+    - name: Commit and push
+      shell: bash
+      run: |
+        cd python-package-repo
+        if git diff --staged --quiet; then
+          echo "No changes to commit"
+        else
+          git commit -m "Update Python package from mdk@${GITHUB_SHA:0:7}"
+          git remote set-url origin https://x-access-token:${{ secrets.BINDINGS_PACKAGE_PAT }}@github.com/${{ env.PYTHON_PACKAGE_REPO }}.git
+          git push origin HEAD
+        fi
+
+  package-ruby:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    name: Build Ruby Bindings (${{ matrix.os }})
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Setup Rust
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Add aarch64-apple-ios target if matrix.os is macos-latest
+      if: matrix.os == 'macos-latest'
+      run: |
+        rustup target add aarch64-apple-ios
+        rustup target add aarch64-apple-ios-sim
+
+    - name: Cache Rust dependencies
+      uses: Swatinem/rust-cache@v2
+
+    - name: Install just
+      uses: extractions/setup-just@v2
+
+    - name: Setup Ruby
+      uses: ruby/setup-ruby@v1
+      with:
+        ruby-version: '3.2'
+
+    - name: Build host library (debug for bindgen)
+      run: cargo build --lib -p mdk-uniffi
+
+    - name: Generate Ruby bindings
+      run: just gen-binding "ruby"
+
+    - name: Build release library
+      run: cargo build --lib -p mdk-uniffi --release
+
+    - name: Determine library filename
+      id: lib_filename
+      shell: bash
+      run: |
+        if [ "${{ runner.os }}" == "Windows" ]; then
+          echo "filename=mdk_uniffi.dll" >> $GITHUB_OUTPUT
+        elif [ "${{ runner.os }}" == "macOS" ]; then
+          echo "filename=libmdk_uniffi.dylib" >> $GITHUB_OUTPUT
+        else
+          echo "filename=libmdk_uniffi.so" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Prepare Ruby artifacts
+      shell: bash
+      run: |
+        mkdir -p ruby-artifacts/lib/mdk
+        # Copy Ruby bindings
+        cp crates/mdk-uniffi/bindings/ruby/mdk_uniffi.rb ruby-artifacts/lib/mdk/mdk_uniffi.rb
+        # Copy current platform's library
+        cp target/release/${{ steps.lib_filename.outputs.filename }} ruby-artifacts/lib/mdk/${{ steps.lib_filename.outputs.filename }}
+        echo "✓ Ruby artifacts prepared for ${{ runner.os }}"
+
+    - name: Upload Ruby artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: ruby-artifacts-${{ matrix.os }}
+        path: ruby-artifacts/
+        retention-days: 1
+
+  publish-ruby:
+    needs: package-ruby
+    runs-on: ubuntu-latest
+    name: Publish Ruby Package
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Download all Ruby artifacts
+      uses: actions/download-artifact@v4
+      with:
+        path: ruby-artifacts-all
+        pattern: ruby-artifacts-*
+        merge-multiple: false
+
+    - name: Assemble complete Ruby gem
+      shell: bash
+      run: |
+        mkdir -p ruby-gem/lib/mdk
+        
+        # Copy gem structure (same for all platforms)
+        cp crates/mdk-uniffi/src/ruby/lib/mdk.rb ruby-gem/lib/
+        cp crates/mdk-uniffi/src/ruby/lib/mdk/version.rb ruby-gem/lib/mdk/
+        cp crates/mdk-uniffi/src/ruby/mdk.gemspec ruby-gem/mdk.gemspec
+        sed 's/{{lang}}/Ruby/g' crates/mdk-uniffi/src/README.md > ruby-gem/README.md
+        cp crates/mdk-uniffi/src/ruby/docs.md ruby-gem/docs.md
+        
+        # Copy Ruby bindings (same for all platforms, use from any artifact)
+        cp ruby-artifacts-all/ruby-artifacts-ubuntu-latest/lib/mdk/mdk_uniffi.rb ruby-gem/lib/mdk/mdk_uniffi.rb
+        
+        # Copy all platform libraries
+        for artifact_dir in ruby-artifacts-all/ruby-artifacts-*/; do
+          if [ -d "$artifact_dir/lib/mdk" ]; then
+            cp "$artifact_dir/lib/mdk"/*.so ruby-gem/lib/mdk/ 2>/dev/null || true
+            cp "$artifact_dir/lib/mdk"/*.dylib ruby-gem/lib/mdk/ 2>/dev/null || true
+            cp "$artifact_dir/lib/mdk"/*.dll ruby-gem/lib/mdk/ 2>/dev/null || true
+          fi
+        done
+        
+        echo "✓ Complete Ruby gem assembled with all platform libraries"
+
+    - name: Checkout Ruby package repo
+      uses: actions/checkout@v4
+      with:
+        repository: ${{ env.RUBY_PACKAGE_REPO }}
+        path: ruby-package-repo
+        token: ${{ secrets.BINDINGS_PACKAGE_PAT }}
+        lfs: true
+
+    - name: Configure Git
+      run: |
+        git config --global user.name "github-actions[bot]"
+        git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+    - name: Copy Ruby gem to repo
+      shell: bash
+      run: |
+        cp -R ruby-gem/* ruby-package-repo/
+        cd ruby-package-repo
+        git add -A
+
+    - name: Commit and push
+      shell: bash
+      run: |
+        cd ruby-package-repo
+        if git diff --staged --quiet; then
+          echo "No changes to commit"
+        else
+          git commit -m "Update Ruby gem from mdk@${GITHUB_SHA:0:7}"
+          git remote set-url origin https://x-access-token:${{ secrets.BINDINGS_PACKAGE_PAT }}@github.com/${{ env.RUBY_PACKAGE_REPO }}.git
+          git push origin HEAD
+        fi
+
+  package-kotlin:
+    runs-on: ubuntu-latest
+    name: Build and Package Kotlin/Android Bindings
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Clean Github Actions cache to save space
+      run: |
+        rm -rf /opt/hostedtoolcache
+
+    - name: Setup Rust
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Cache Rust dependencies
+      uses: Swatinem/rust-cache@v2
+
+    - name: Install just
+      uses: extractions/setup-just@v2
+
+    - name: Setup Java
+      uses: actions/setup-java@v4
+      with:
+        distribution: 'temurin'
+        java-version: '17'
+
+    - name: Setup Android SDK
+      uses: android-actions/setup-android@v3
+
+    - name: Setup Android NDK
+      id: setup-ndk
+      uses: nttld/setup-ndk@v1
+      with:
+        ndk-version: r27d
+        add-to-path: false
+        link-to-sdk: true
+        local-cache: true
+
+    - name: Build Android targets
+      env: 
+        ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+        NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+      run: |
+        rustup target add aarch64-linux-android
+        rustup target add armv7-linux-androideabi
+        rustup target add x86_64-linux-android
+        just _build-uniffi-android aarch64-linux-android aarch64-linux-android21-clang
+        just _build-uniffi-android armv7-linux-androideabi armv7a-linux-androideabi21-clang
+        just _build-uniffi-android x86_64-linux-android x86_64-linux-android21-clang
+
+    - name: Generate Kotlin bindings
+      env: 
+        ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+        NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+      run: just gen-binding-kotlin
+
+    - name: Configure Android SDK
+      run: |
+        yes | sdkmanager --licenses
+        sdkmanager "platforms;android-34" "build-tools;34.0.0"
+
+    - name: Verify Gradle Build
+      env:
+        ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+        NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+      run: |
+        cd crates/mdk-uniffi/src/kotlin
+        echo "sdk.dir=$ANDROID_HOME" > local.properties
+        chmod +x gradlew
+        ./gradlew build
+
+    - name: Extract version from Cargo.toml
+      id: cargo_version
+      shell: bash
+      run: |
+        VERSION=$(grep -E '^version\s*=' crates/mdk-uniffi/Cargo.toml | head -1 | sed -E 's/version\s*=\s*"([^"]+)"/\1/')
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        echo "Extracted version: $VERSION"
+
+    - name: Update gradle.properties with version
+      shell: bash
+      run: |
+        VERSION="${{ steps.cargo_version.outputs.version }}"
+        # Update or add libraryVersion in gradle.properties
+        if grep -q "^libraryVersion=" crates/mdk-uniffi/src/kotlin/gradle.properties; then
+          sed -i "s/^libraryVersion=.*/libraryVersion=$VERSION/" crates/mdk-uniffi/src/kotlin/gradle.properties
+        else
+          echo "libraryVersion=$VERSION" >> crates/mdk-uniffi/src/kotlin/gradle.properties
+        fi
+        echo "Updated gradle.properties with version: $VERSION"
+
+    - name: Checkout Kotlin package repo
+      uses: actions/checkout@v6
+      with:
+        repository: ${{ env.KOTLIN_PACKAGE_REPO }}
+        path: kotlin-package-repo
+        token: ${{ secrets.BINDINGS_PACKAGE_PAT }}
+        lfs: false
+
+    - name: Configure Git
+      run: |
+        git config --global user.name "github-actions[bot]"
+        git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+    - name: Copy Kotlin package to repo
+      shell: bash
+      run: |
+        # Clean existing repo content (except .git)
+        find kotlin-package-repo -mindepth 1 -maxdepth 1 ! -name '.git' -exec rm -rf {} +
+        
+        # Copy Android project content
+        # Exclude build artifacts to keep repo clean
+        rsync -av --exclude='build' --exclude='.gradle' --exclude='local.properties' crates/mdk-uniffi/src/kotlin/ kotlin-package-repo/
+
+        cd kotlin-package-repo
+
+        # Remove old files from Git index before setting up LFS to avoid tracking errors
+        git rm --cached -r src/main/jniLibs/android-aarch64 2>/dev/null || true
+        git rm --cached -r src/main/jniLibs/android-armv7 2>/dev/null || true
+
+        mkdir -p src/main/kotlin/build/marmot/mdk
+        cp ../crates/mdk-uniffi/bindings/kotlin/build/marmot/mdk/mdk_uniffi.kt src/main/kotlin/build/marmot/mdk/mdk_uniffi.kt
+        git add src/main/kotlin/build/marmot/mdk/mdk_uniffi.kt
+
+        # Ensure jniLibs directories exist
+        mkdir -p src/main/jniLibs/arm64-v8a
+        mkdir -p src/main/jniLibs/armeabi-v7a
+        # mkdir -p src/main/jniLibs/x86-64
+
+        # Clean up any old directory structure that might exist
+        rm -rf src/main/jniLibs/android-aarch64 || true
+        rm -rf src/main/jniLibs/android-armv7 || true
+        # rm -rf src/main/jniLibs/android-x86-64 || true
+
+        # Setup LFS and ensure tracking is set before adding files
+        git lfs install
+        git lfs track "*.so"
+        git add .gitattributes
+
+        # Replace {{version}} template variable in README with actual version
+        VERSION="${{ steps.cargo_version.outputs.version }}"
+        if [ -f Readme.md ]; then
+          sed -i "s/{{version}}/$VERSION/g" Readme.md
+          echo "Updated README with version: $VERSION"
+        fi
+        
+        git add -A
+
+    - name: Commit and push
+      shell: bash
+      run: |
+        cd kotlin-package-repo
+        if git diff --staged --quiet; then
+          echo "No changes to commit"
+        else
+          git commit -m "Update Kotlin package from mdk@${GITHUB_SHA:0:7}"
+          git remote set-url origin https://x-access-token:${{ secrets.BINDINGS_PACKAGE_PAT }}@github.com/${{ env.KOTLIN_PACKAGE_REPO }}.git
+          git push origin HEAD
+        fi
+
+    - name: Create and push version tag
+      shell: bash
+      run: |
+        cd kotlin-package-repo
+        VERSION="${{ steps.cargo_version.outputs.version }}"
+        TAG="$VERSION"
+        
+        # Check if tag already exists locally
+        if git rev-parse "$TAG" >/dev/null 2>&1; then
+          echo "Tag $TAG already exists locally, updating it"
+          git tag -d "$TAG" 2>/dev/null || true
+        fi
+        
+        # Create or update the tag
+        git tag -a "$TAG" -m "Release version $VERSION"
+        git remote set-url origin https://x-access-token:${{ secrets.BINDINGS_PACKAGE_PAT }}@github.com/${{ env.KOTLIN_PACKAGE_REPO }}.git
+        
+        # Force push to update remote tag if it exists
+        git push origin "$TAG" --force
+        echo "Created/updated and pushed tag: $TAG"
+

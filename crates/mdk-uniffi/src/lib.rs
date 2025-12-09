@@ -1,0 +1,1420 @@
+//! UniFFI bindings for mdk-core with SQLite storage
+//!
+//! This crate provides foreign language bindings for mdk-core using UniFFI.
+//! It wraps the MDK core functionality with SQLite storage backend.
+
+#![warn(missing_docs)]
+
+use std::path::PathBuf;
+use std::sync::Mutex;
+
+use mdk_core::{
+    Error as MdkError, MDK,
+    extension::group_image::{
+        decrypt_group_image as core_decrypt_group_image,
+        derive_upload_keypair as core_derive_upload_keypair,
+        prepare_group_image_for_upload as core_prepare_group_image_for_upload,
+    },
+    groups::{NostrGroupConfigData, NostrGroupDataUpdate},
+    messages::MessageProcessingResult,
+};
+use mdk_sqlite_storage::MdkSqliteStorage;
+use mdk_storage_traits::{
+    GroupId, groups::types as group_types, messages::types as message_types,
+    welcomes::types as welcome_types,
+};
+use nostr::{Event, EventBuilder, EventId, Kind, PublicKey, RelayUrl, Tag, TagKind, UnsignedEvent};
+
+uniffi::setup_scaffolding!();
+
+/// Main MDK instance with SQLite storage
+#[derive(uniffi::Object)]
+pub struct Mdk {
+    mdk: Mutex<MDK<MdkSqliteStorage>>,
+}
+
+/// Error type for MDK UniFFI operations
+#[derive(uniffi::Enum, Debug, thiserror::Error)]
+pub enum MdkUniffiError {
+    /// Storage-related error
+    #[error("Storage error: {0}")]
+    Storage(String),
+    /// MDK core error
+    #[error("MDK error: {0}")]
+    Mdk(String),
+    /// Invalid input parameter error
+    #[error("Invalid input: {0}")]
+    InvalidInput(String),
+}
+
+impl From<mdk_sqlite_storage::error::Error> for MdkUniffiError {
+    fn from(err: mdk_sqlite_storage::error::Error) -> Self {
+        Self::Storage(err.to_string())
+    }
+}
+
+impl From<MdkError> for MdkUniffiError {
+    fn from(err: MdkError) -> Self {
+        Self::Mdk(err.to_string())
+    }
+}
+
+// Helper functions
+
+fn parse_group_id(hex: &str) -> Result<GroupId, MdkUniffiError> {
+    hex::decode(hex)
+        .map_err(|e| MdkUniffiError::InvalidInput(format!("Invalid group ID hex: {e}")))
+        .map(|bytes| GroupId::from_slice(&bytes))
+}
+
+fn parse_event_id(hex: &str) -> Result<EventId, MdkUniffiError> {
+    EventId::from_hex(hex)
+        .map_err(|e| MdkUniffiError::InvalidInput(format!("Invalid event ID: {e}")))
+}
+
+fn parse_public_key(hex: &str) -> Result<PublicKey, MdkUniffiError> {
+    PublicKey::from_hex(hex)
+        .map_err(|e| MdkUniffiError::InvalidInput(format!("Invalid public key: {e}")))
+}
+
+fn parse_relay_urls(relays: &[String]) -> Result<Vec<RelayUrl>, MdkUniffiError> {
+    relays
+        .iter()
+        .map(|r| RelayUrl::parse(r))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| MdkUniffiError::InvalidInput(format!("Invalid relay URL: {e}")))
+}
+
+fn parse_json<T>(json: &str, context: &str) -> Result<T, MdkUniffiError>
+where
+    T: serde::de::DeserializeOwned,
+{
+    serde_json::from_str(json)
+        .map_err(|e| MdkUniffiError::InvalidInput(format!("Invalid {context}: {e}")))
+}
+
+fn vec_to_array<const N: usize>(vec: Option<Vec<u8>>) -> Result<Option<[u8; N]>, MdkUniffiError> {
+    match vec {
+        Some(bytes) if bytes.len() == N => {
+            let mut arr = [0u8; N];
+            arr.copy_from_slice(&bytes);
+            Ok(Some(arr))
+        }
+        Some(bytes) => Err(MdkUniffiError::InvalidInput(format!(
+            "Expected {} bytes, got {} bytes",
+            N,
+            bytes.len()
+        ))),
+        None => Ok(None),
+    }
+}
+
+fn parse_tags(tags: Vec<Vec<String>>) -> Result<Vec<Tag>, MdkUniffiError> {
+    tags.into_iter()
+        .map(|tag_vec| {
+            Tag::parse(tag_vec)
+                .map_err(|e| MdkUniffiError::InvalidInput(format!("Failed to parse tag: {e}")))
+        })
+        .collect()
+}
+
+impl Mdk {
+    /// Lock the internal MDK instance for exclusive access.
+    /// Returns an error if the mutex is poisoned.
+    /// Using MDK correctly (do NOT share memory across threads) should never result in a poisoned mutex.
+    fn lock(&self) -> Result<std::sync::MutexGuard<'_, MDK<MdkSqliteStorage>>, MdkUniffiError> {
+        self.mdk.lock().map_err(|_| {
+            MdkUniffiError::Mdk(
+                "MDK mutex poisoned. This indicates a critical internal error. Using MDK correctly (do NOT share memory across threads) should never result in a poisoned mutex.".to_string(),
+            )
+        })
+    }
+}
+
+/// Create a new MDK instance with SQLite storage
+#[uniffi::export]
+pub fn new_mdk(db_path: String) -> Result<Mdk, MdkUniffiError> {
+    let storage = MdkSqliteStorage::new(PathBuf::from(db_path))?;
+    let mdk = MDK::new(storage);
+    Ok(Mdk {
+        mdk: Mutex::new(mdk),
+    })
+}
+
+#[uniffi::export]
+impl Mdk {
+    /// Create a key package for a Nostr event
+    pub fn create_key_package_for_event(
+        &self,
+        public_key: String,
+        relays: Vec<String>,
+    ) -> Result<KeyPackageResult, MdkUniffiError> {
+        let pubkey = parse_public_key(&public_key)?;
+        let relay_urls = parse_relay_urls(&relays)?;
+
+        let mdk = self.lock()?;
+        let (key_package_hex, tags) = mdk.create_key_package_for_event(&pubkey, relay_urls)?;
+
+        let tags: Vec<Vec<String>> = tags.iter().map(|tag| tag.as_slice().to_vec()).collect();
+
+        Ok(KeyPackageResult {
+            key_package: key_package_hex,
+            tags,
+        })
+    }
+
+    /// Parse a key package from a Nostr event
+    pub fn parse_key_package(&self, event_json: String) -> Result<String, MdkUniffiError> {
+        let event: Event = parse_json(&event_json, "event JSON")?;
+        self.lock()?.parse_key_package(&event)?;
+        Ok(event.content)
+    }
+
+    /// Get all groups
+    pub fn get_groups(&self) -> Result<Vec<Group>, MdkUniffiError> {
+        Ok(self
+            .lock()?
+            .get_groups()?
+            .into_iter()
+            .map(Group::from)
+            .collect())
+    }
+
+    /// Get a group by MLS group ID
+    pub fn get_group(&self, mls_group_id: String) -> Result<Option<Group>, MdkUniffiError> {
+        let group_id = parse_group_id(&mls_group_id)?;
+        Ok(self.lock()?.get_group(&group_id)?.map(Group::from))
+    }
+
+    /// Get members of a group
+    pub fn get_members(&self, mls_group_id: String) -> Result<Vec<String>, MdkUniffiError> {
+        let group_id = parse_group_id(&mls_group_id)?;
+        Ok(self
+            .lock()?
+            .get_members(&group_id)?
+            .into_iter()
+            .map(|pk| pk.to_hex())
+            .collect())
+    }
+
+    /// Get messages for a group
+    pub fn get_messages(&self, mls_group_id: String) -> Result<Vec<Message>, MdkUniffiError> {
+        let group_id = parse_group_id(&mls_group_id)?;
+        Ok(self
+            .lock()?
+            .get_messages(&group_id)?
+            .into_iter()
+            .map(Message::from)
+            .collect())
+    }
+
+    /// Get a message by event ID
+    pub fn get_message(&self, event_id: String) -> Result<Option<Message>, MdkUniffiError> {
+        let event_id = parse_event_id(&event_id)?;
+        Ok(self.lock()?.get_message(&event_id)?.map(Message::from))
+    }
+
+    /// Get pending welcomes
+    pub fn get_pending_welcomes(&self) -> Result<Vec<Welcome>, MdkUniffiError> {
+        Ok(self
+            .lock()?
+            .get_pending_welcomes()?
+            .into_iter()
+            .map(Welcome::from)
+            .collect())
+    }
+
+    /// Get a welcome by event ID
+    pub fn get_welcome(&self, event_id: String) -> Result<Option<Welcome>, MdkUniffiError> {
+        let event_id = parse_event_id(&event_id)?;
+        Ok(self.lock()?.get_welcome(&event_id)?.map(Welcome::from))
+    }
+
+    /// Process a welcome message
+    pub fn process_welcome(
+        &self,
+        wrapper_event_id: String,
+        rumor_event_json: String,
+    ) -> Result<Welcome, MdkUniffiError> {
+        let wrapper_id = parse_event_id(&wrapper_event_id)?;
+        let rumor_event: UnsignedEvent = parse_json(&rumor_event_json, "rumor event JSON")?;
+        Ok(Welcome::from(
+            self.lock()?.process_welcome(&wrapper_id, &rumor_event)?,
+        ))
+    }
+
+    /// Accept a welcome message
+    pub fn accept_welcome(&self, welcome_json: String) -> Result<(), MdkUniffiError> {
+        let welcome: welcome_types::Welcome = parse_json(&welcome_json, "welcome JSON")?;
+        self.lock()?.accept_welcome(&welcome)?;
+        Ok(())
+    }
+
+    /// Decline a welcome message
+    pub fn decline_welcome(&self, welcome_json: String) -> Result<(), MdkUniffiError> {
+        let welcome: welcome_types::Welcome = parse_json(&welcome_json, "welcome JSON")?;
+        self.lock()?.decline_welcome(&welcome)?;
+        Ok(())
+    }
+
+    /// Get relays for a group
+    pub fn get_relays(&self, mls_group_id: String) -> Result<Vec<String>, MdkUniffiError> {
+        let group_id = parse_group_id(&mls_group_id)?;
+        Ok(self
+            .lock()?
+            .get_relays(&group_id)?
+            .into_iter()
+            .map(|r| r.to_string())
+            .collect())
+    }
+
+    /// Create a new group
+    pub fn create_group(
+        &self,
+        creator_public_key: String,
+        member_key_package_events_json: Vec<String>,
+        name: String,
+        description: String,
+        relays: Vec<String>,
+        admins: Vec<String>,
+    ) -> Result<CreateGroupResult, MdkUniffiError> {
+        let creator_pubkey = parse_public_key(&creator_public_key)?;
+        let relay_urls = parse_relay_urls(&relays)?;
+        let admin_pubkeys: Result<Vec<PublicKey>, _> =
+            admins.iter().map(|a| parse_public_key(a)).collect();
+        let admin_pubkeys = admin_pubkeys?;
+
+        let member_key_package_events: Result<Vec<Event>, _> = member_key_package_events_json
+            .iter()
+            .map(|json| parse_json(json, "key package event JSON"))
+            .collect();
+        let member_key_package_events = member_key_package_events?;
+
+        let config = NostrGroupConfigData::new(
+            name,
+            description,
+            None, // image_hash
+            None, // image_key
+            None, // image_nonce
+            relay_urls,
+            admin_pubkeys,
+        );
+
+        let mdk = self.lock()?;
+        let result = mdk.create_group(&creator_pubkey, member_key_package_events, config)?;
+
+        let welcome_rumors_json: Vec<String> = result
+            .welcome_rumors
+            .iter()
+            .map(|rumor| {
+                serde_json::to_string(rumor).map_err(|e| {
+                    MdkUniffiError::InvalidInput(format!("Failed to serialize welcome rumor: {e}"))
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(CreateGroupResult {
+            group: Group::from(result.group),
+            welcome_rumors_json,
+        })
+    }
+
+    /// Add members to a group
+    pub fn add_members(
+        &self,
+        mls_group_id: String,
+        key_package_events_json: Vec<String>,
+    ) -> Result<UpdateGroupResult, MdkUniffiError> {
+        let group_id = parse_group_id(&mls_group_id)?;
+
+        let key_package_events: Result<Vec<Event>, _> = key_package_events_json
+            .iter()
+            .map(|json| parse_json(json, "key package event JSON"))
+            .collect();
+        let key_package_events = key_package_events?;
+
+        let mdk = self.lock()?;
+        let result = mdk.add_members(&group_id, &key_package_events)?;
+
+        let evolution_event_json = serde_json::to_string(&result.evolution_event).map_err(|e| {
+            MdkUniffiError::InvalidInput(format!("Failed to serialize evolution event: {e}"))
+        })?;
+
+        let welcome_rumors_json: Option<Vec<String>> = result
+            .welcome_rumors
+            .map(|rumors| {
+                rumors
+                    .iter()
+                    .map(|rumor| {
+                        serde_json::to_string(rumor).map_err(|e| {
+                            MdkUniffiError::InvalidInput(format!(
+                                "Failed to serialize welcome rumor: {e}"
+                            ))
+                        })
+                    })
+                    .collect::<Result<Vec<_>, _>>()
+            })
+            .transpose()?;
+
+        Ok(UpdateGroupResult {
+            evolution_event_json,
+            welcome_rumors_json,
+            mls_group_id: hex::encode(result.mls_group_id.as_slice()),
+        })
+    }
+
+    /// Remove members from a group
+    pub fn remove_members(
+        &self,
+        mls_group_id: String,
+        member_public_keys: Vec<String>,
+    ) -> Result<UpdateGroupResult, MdkUniffiError> {
+        let group_id = parse_group_id(&mls_group_id)?;
+
+        let pubkeys: Result<Vec<PublicKey>, _> = member_public_keys
+            .iter()
+            .map(|pk| parse_public_key(pk))
+            .collect();
+        let pubkeys = pubkeys?;
+
+        let mdk = self.lock()?;
+        let result = mdk.remove_members(&group_id, &pubkeys)?;
+
+        let evolution_event_json = serde_json::to_string(&result.evolution_event).map_err(|e| {
+            MdkUniffiError::InvalidInput(format!("Failed to serialize evolution event: {e}"))
+        })?;
+
+        let welcome_rumors_json: Option<Vec<String>> = result
+            .welcome_rumors
+            .map(|rumors| {
+                rumors
+                    .iter()
+                    .map(|rumor| {
+                        serde_json::to_string(rumor).map_err(|e| {
+                            MdkUniffiError::InvalidInput(format!(
+                                "Failed to serialize welcome rumor: {e}"
+                            ))
+                        })
+                    })
+                    .collect::<Result<Vec<_>, _>>()
+            })
+            .transpose()?;
+
+        Ok(UpdateGroupResult {
+            evolution_event_json,
+            welcome_rumors_json,
+            mls_group_id: hex::encode(result.mls_group_id.as_slice()),
+        })
+    }
+
+    /// Merge pending commit for a group
+    pub fn merge_pending_commit(&self, mls_group_id: String) -> Result<(), MdkUniffiError> {
+        let group_id = parse_group_id(&mls_group_id)?;
+        self.lock()?.merge_pending_commit(&group_id)?;
+        Ok(())
+    }
+
+    /// Sync group metadata from MLS
+    pub fn sync_group_metadata_from_mls(&self, mls_group_id: String) -> Result<(), MdkUniffiError> {
+        let group_id = parse_group_id(&mls_group_id)?;
+        self.lock()?.sync_group_metadata_from_mls(&group_id)?;
+        Ok(())
+    }
+
+    /// Create a message in a group
+    pub fn create_message(
+        &self,
+        mls_group_id: String,
+        sender_public_key: String,
+        content: String,
+        kind: u16,
+        tags: Option<Vec<Vec<String>>>,
+    ) -> Result<String, MdkUniffiError> {
+        let group_id = parse_group_id(&mls_group_id)?;
+        let sender_pubkey = parse_public_key(&sender_public_key)?;
+        let mdk = self.lock()?;
+
+        let mut builder = EventBuilder::new(Kind::Custom(kind), content);
+
+        if let Some(tags_vec) = tags {
+            let parsed_tags = parse_tags(tags_vec)?;
+            builder = builder.tags(parsed_tags);
+        }
+
+        let rumor = builder.build(sender_pubkey);
+
+        let event = mdk.create_message(&group_id, rumor)?;
+
+        let event_json = serde_json::to_string(&event)
+            .map_err(|e| MdkUniffiError::InvalidInput(format!("Failed to serialize event: {e}")))?;
+
+        Ok(event_json)
+    }
+
+    /// Update the current member's leaf node in an MLS group
+    pub fn self_update(&self, mls_group_id: String) -> Result<UpdateGroupResult, MdkUniffiError> {
+        let group_id = parse_group_id(&mls_group_id)?;
+        let mdk = self.lock()?;
+        let result = mdk.self_update(&group_id)?;
+
+        let evolution_event_json = serde_json::to_string(&result.evolution_event).map_err(|e| {
+            MdkUniffiError::InvalidInput(format!("Failed to serialize evolution event: {e}"))
+        })?;
+
+        let welcome_rumors_json: Option<Vec<String>> = result
+            .welcome_rumors
+            .map(|rumors| {
+                rumors
+                    .iter()
+                    .map(|rumor| {
+                        serde_json::to_string(rumor).map_err(|e| {
+                            MdkUniffiError::InvalidInput(format!(
+                                "Failed to serialize welcome rumor: {e}"
+                            ))
+                        })
+                    })
+                    .collect::<Result<Vec<_>, _>>()
+            })
+            .transpose()?;
+
+        Ok(UpdateGroupResult {
+            evolution_event_json,
+            welcome_rumors_json,
+            mls_group_id: hex::encode(result.mls_group_id.as_slice()),
+        })
+    }
+
+    /// Create a proposal to leave the group
+    pub fn leave_group(&self, mls_group_id: String) -> Result<UpdateGroupResult, MdkUniffiError> {
+        let group_id = parse_group_id(&mls_group_id)?;
+        let mdk = self.lock()?;
+        let result = mdk.leave_group(&group_id)?;
+
+        let evolution_event_json = serde_json::to_string(&result.evolution_event).map_err(|e| {
+            MdkUniffiError::InvalidInput(format!("Failed to serialize evolution event: {e}"))
+        })?;
+
+        let welcome_rumors_json: Option<Vec<String>> = result
+            .welcome_rumors
+            .map(|rumors| {
+                rumors
+                    .iter()
+                    .map(|rumor| {
+                        serde_json::to_string(rumor).map_err(|e| {
+                            MdkUniffiError::InvalidInput(format!(
+                                "Failed to serialize welcome rumor: {e}"
+                            ))
+                        })
+                    })
+                    .collect::<Result<Vec<_>, _>>()
+            })
+            .transpose()?;
+
+        Ok(UpdateGroupResult {
+            evolution_event_json,
+            welcome_rumors_json,
+            mls_group_id: hex::encode(result.mls_group_id.as_slice()),
+        })
+    }
+
+    /// Update group data (name, description, image, relays, admins)
+    pub fn update_group_data(
+        &self,
+        mls_group_id: String,
+        update: GroupDataUpdate,
+    ) -> Result<UpdateGroupResult, MdkUniffiError> {
+        let group_id = parse_group_id(&mls_group_id)?;
+
+        let mut group_update = NostrGroupDataUpdate::new();
+
+        if let Some(name) = update.name {
+            group_update = group_update.name(name);
+        }
+
+        if let Some(description) = update.description {
+            group_update = group_update.description(description);
+        }
+
+        if let Some(image_hash) = update.image_hash {
+            group_update = group_update.image_hash(vec_to_array::<32>(image_hash)?);
+        }
+
+        if let Some(image_key) = update.image_key {
+            group_update = group_update.image_key(vec_to_array::<32>(image_key)?);
+        }
+
+        if let Some(image_nonce) = update.image_nonce {
+            group_update = group_update.image_nonce(vec_to_array::<12>(image_nonce)?);
+        }
+
+        if let Some(relays) = update.relays {
+            let relay_urls = parse_relay_urls(&relays)?;
+            group_update = group_update.relays(relay_urls);
+        }
+
+        if let Some(admins) = update.admins {
+            let admin_pubkeys: Result<Vec<PublicKey>, _> =
+                admins.iter().map(|a| parse_public_key(a)).collect();
+            let admin_pubkeys = admin_pubkeys?;
+            group_update = group_update.admins(admin_pubkeys);
+        }
+
+        let mdk = self.lock()?;
+        let result = mdk.update_group_data(&group_id, group_update)?;
+
+        let evolution_event_json = serde_json::to_string(&result.evolution_event).map_err(|e| {
+            MdkUniffiError::InvalidInput(format!("Failed to serialize evolution event: {e}"))
+        })?;
+
+        let welcome_rumors_json: Option<Vec<String>> = result
+            .welcome_rumors
+            .map(|rumors| {
+                rumors
+                    .iter()
+                    .map(|rumor| {
+                        serde_json::to_string(rumor).map_err(|e| {
+                            MdkUniffiError::InvalidInput(format!(
+                                "Failed to serialize welcome rumor: {e}"
+                            ))
+                        })
+                    })
+                    .collect::<Result<Vec<_>, _>>()
+            })
+            .transpose()?;
+
+        Ok(UpdateGroupResult {
+            evolution_event_json,
+            welcome_rumors_json,
+            mls_group_id: hex::encode(result.mls_group_id.as_slice()),
+        })
+    }
+
+    /// Process an incoming MLS message
+    pub fn process_message(
+        &self,
+        event_json: String,
+    ) -> Result<ProcessMessageResult, MdkUniffiError> {
+        let event: Event = parse_json(&event_json, "event JSON")?;
+        let mdk = self.lock()?;
+        let result = mdk.process_message(&event)?;
+
+        Ok(match result {
+            MessageProcessingResult::ApplicationMessage(message) => {
+                ProcessMessageResult::ApplicationMessage {
+                    message: Message::from(message),
+                }
+            }
+            MessageProcessingResult::Proposal(update_result) => {
+                let evolution_event_json = serde_json::to_string(&update_result.evolution_event)
+                    .map_err(|e| {
+                        MdkUniffiError::InvalidInput(format!(
+                            "Failed to serialize evolution event: {e}"
+                        ))
+                    })?;
+
+                let welcome_rumors_json: Option<Vec<String>> = update_result
+                    .welcome_rumors
+                    .map(|rumors| {
+                        rumors
+                            .iter()
+                            .map(|rumor| {
+                                serde_json::to_string(rumor).map_err(|e| {
+                                    MdkUniffiError::InvalidInput(format!(
+                                        "Failed to serialize welcome rumor: {e}"
+                                    ))
+                                })
+                            })
+                            .collect::<Result<Vec<_>, _>>()
+                    })
+                    .transpose()?;
+
+                ProcessMessageResult::Proposal {
+                    result: UpdateGroupResult {
+                        evolution_event_json,
+                        welcome_rumors_json,
+                        mls_group_id: hex::encode(update_result.mls_group_id.as_slice()),
+                    },
+                }
+            }
+            MessageProcessingResult::ExternalJoinProposal { mls_group_id } => {
+                ProcessMessageResult::ExternalJoinProposal {
+                    mls_group_id: hex::encode(mls_group_id.as_slice()),
+                }
+            }
+            MessageProcessingResult::Commit { mls_group_id } => ProcessMessageResult::Commit {
+                mls_group_id: hex::encode(mls_group_id.as_slice()),
+            },
+            MessageProcessingResult::Unprocessable { mls_group_id } => {
+                ProcessMessageResult::Unprocessable {
+                    mls_group_id: hex::encode(mls_group_id.as_slice()),
+                }
+            }
+        })
+    }
+}
+
+/// Result of creating a key package
+#[derive(uniffi::Record)]
+pub struct KeyPackageResult {
+    /// Hex-encoded key package
+    pub key_package: String,
+    /// JSON-encoded tags for the key package event
+    pub tags: Vec<Vec<String>>,
+}
+
+/// Result of creating a group
+#[derive(uniffi::Record)]
+pub struct CreateGroupResult {
+    /// The created group
+    pub group: Group,
+    /// JSON-encoded welcome rumors to be published
+    pub welcome_rumors_json: Vec<String>,
+}
+
+/// Result of updating a group
+#[derive(uniffi::Record)]
+pub struct UpdateGroupResult {
+    /// JSON-encoded evolution event to be published
+    pub evolution_event_json: String,
+    /// Optional JSON-encoded welcome rumors to be published
+    pub welcome_rumors_json: Option<Vec<String>>,
+    /// Hex-encoded MLS group ID
+    pub mls_group_id: String,
+}
+
+/// Configuration for updating group data with optional fields
+#[derive(uniffi::Record)]
+pub struct GroupDataUpdate {
+    /// Group name (optional)
+    pub name: Option<String>,
+    /// Group description (optional)
+    pub description: Option<String>,
+    /// Group image hash (optional, use Some(None) to clear)
+    pub image_hash: Option<Option<Vec<u8>>>,
+    /// Group image encryption key (optional, use Some(None) to clear)
+    pub image_key: Option<Option<Vec<u8>>>,
+    /// Group image encryption nonce (optional, use Some(None) to clear)
+    pub image_nonce: Option<Option<Vec<u8>>>,
+    /// Relays used by the group (optional)
+    pub relays: Option<Vec<String>>,
+    /// Group admins (optional)
+    pub admins: Option<Vec<String>>,
+}
+
+/// Result of processing a message
+#[derive(uniffi::Enum)]
+pub enum ProcessMessageResult {
+    /// An application message (usually a chat message)
+    ApplicationMessage {
+        /// The processed message
+        message: Message,
+    },
+    /// A proposal message (add/remove member proposal)
+    Proposal {
+        /// The proposal result containing evolution event and welcome rumors
+        result: UpdateGroupResult,
+    },
+    /// External join proposal
+    ExternalJoinProposal {
+        /// Hex-encoded MLS group ID this proposal belongs to
+        mls_group_id: String,
+    },
+    /// Commit message
+    Commit {
+        /// Hex-encoded MLS group ID this commit applies to
+        mls_group_id: String,
+    },
+    /// Unprocessable message
+    Unprocessable {
+        /// Hex-encoded MLS group ID of the message that could not be processed
+        mls_group_id: String,
+    },
+}
+
+/// Group representation
+#[derive(uniffi::Record)]
+pub struct Group {
+    /// Hex-encoded MLS group ID
+    pub mls_group_id: String,
+    /// Hex-encoded Nostr group ID
+    pub nostr_group_id: String,
+    /// Group name
+    pub name: String,
+    /// Group description
+    pub description: String,
+    /// Optional group image hash
+    pub image_hash: Option<Vec<u8>>,
+    /// Optional group image encryption key
+    pub image_key: Option<Vec<u8>>,
+    /// Optional group image encryption nonce
+    pub image_nonce: Option<Vec<u8>>,
+    /// List of admin public keys (hex-encoded)
+    pub admin_pubkeys: Vec<String>,
+    /// Last message event ID (hex-encoded)
+    pub last_message_id: Option<String>,
+    /// Timestamp of last message (Unix timestamp)
+    pub last_message_at: Option<u64>,
+    /// Current epoch number
+    pub epoch: u64,
+    /// Group state (e.g., "active", "archived")
+    pub state: String,
+}
+
+impl From<group_types::Group> for Group {
+    fn from(g: group_types::Group) -> Self {
+        Self {
+            mls_group_id: hex::encode(g.mls_group_id.as_slice()),
+            nostr_group_id: hex::encode(g.nostr_group_id),
+            name: g.name,
+            description: g.description,
+            image_hash: g.image_hash.map(Into::into),
+            image_key: g.image_key.map(Into::into),
+            image_nonce: g.image_nonce.map(Into::into),
+            admin_pubkeys: g.admin_pubkeys.into_iter().map(|pk| pk.to_hex()).collect(),
+            last_message_id: g.last_message_id.map(|id| id.to_hex()),
+            last_message_at: g.last_message_at.map(|ts| ts.as_u64()),
+            epoch: g.epoch,
+            state: g.state.as_str().to_string(),
+        }
+    }
+}
+
+/// Message representation
+#[derive(uniffi::Record)]
+pub struct Message {
+    /// Message ID (hex-encoded event ID)
+    pub id: String,
+    /// Hex-encoded MLS group ID
+    pub mls_group_id: String,
+    /// Hex-encoded Nostr group ID
+    pub nostr_group_id: String,
+    /// Event ID (hex-encoded)
+    pub event_id: String,
+    /// Sender public key (hex-encoded)
+    pub sender_pubkey: String,
+    /// JSON representation of the event
+    pub event_json: String,
+    /// Timestamp when message was processed (Unix timestamp)
+    pub processed_at: u64,
+    /// Message kind
+    pub kind: u16,
+    /// Message state (e.g., "processed", "pending")
+    pub state: String,
+}
+
+impl From<message_types::Message> for Message {
+    fn from(m: message_types::Message) -> Self {
+        let nostr_group_id = m
+            .event
+            .tags
+            .iter()
+            .find(|t| t.kind() == TagKind::h())
+            .and_then(|t| t.content())
+            .unwrap_or_default()
+            .to_string();
+
+        let event_json = serde_json::to_string(&m.event).unwrap_or_else(|e| {
+            tracing::error!(target: "mdk_uniffi::message", "Failed to serialize message event: {}", e);
+            "{}".to_string()
+        });
+
+        Self {
+            id: m.id.to_hex(),
+            mls_group_id: hex::encode(m.mls_group_id.as_slice()),
+            nostr_group_id,
+            event_id: m.wrapper_event_id.to_hex(),
+            sender_pubkey: m.pubkey.to_hex(),
+            event_json,
+            processed_at: m.created_at.as_u64(),
+            kind: m.kind.as_u16(),
+            state: m.state.as_str().to_string(),
+        }
+    }
+}
+
+/// Welcome representation
+#[derive(uniffi::Record)]
+pub struct Welcome {
+    /// Welcome ID (hex-encoded event ID)
+    pub id: String,
+    /// JSON representation of the welcome event
+    pub event_json: String,
+    /// Hex-encoded MLS group ID
+    pub mls_group_id: String,
+    /// Hex-encoded Nostr group ID
+    pub nostr_group_id: String,
+    /// Group name
+    pub group_name: String,
+    /// Group description
+    pub group_description: String,
+    /// Optional group image hash
+    pub group_image_hash: Option<Vec<u8>>,
+    /// Optional group image encryption key
+    pub group_image_key: Option<Vec<u8>>,
+    /// Optional group image encryption nonce
+    pub group_image_nonce: Option<Vec<u8>>,
+    /// List of admin public keys (hex-encoded)
+    pub group_admin_pubkeys: Vec<String>,
+    /// List of relay URLs for the group
+    pub group_relays: Vec<String>,
+    /// Welcomer public key (hex-encoded)
+    pub welcomer: String,
+    /// Current member count
+    pub member_count: u32,
+    /// Welcome state (e.g., "pending", "accepted", "declined")
+    pub state: String,
+    /// Wrapper event ID (hex-encoded)
+    pub wrapper_event_id: String,
+}
+
+impl From<welcome_types::Welcome> for Welcome {
+    fn from(w: welcome_types::Welcome) -> Self {
+        let event_json = serde_json::to_string(&w.event).unwrap_or_else(|e| {
+            tracing::error!(target: "mdk_uniffi::welcome", "Failed to serialize welcome event: {}", e);
+            "{}".to_string()
+        });
+
+        Self {
+            id: w.id.to_hex(),
+            event_json,
+            mls_group_id: hex::encode(w.mls_group_id.as_slice()),
+            nostr_group_id: hex::encode(w.nostr_group_id),
+            group_name: w.group_name,
+            group_description: w.group_description,
+            group_image_hash: w.group_image_hash.map(Into::into),
+            group_image_key: w.group_image_key.map(Into::into),
+            group_image_nonce: w.group_image_nonce.map(Into::into),
+            group_admin_pubkeys: w
+                .group_admin_pubkeys
+                .into_iter()
+                .map(|pk| pk.to_hex())
+                .collect(),
+            group_relays: w.group_relays.into_iter().map(|r| r.to_string()).collect(),
+            welcomer: w.welcomer.to_hex(),
+            member_count: w.member_count,
+            state: w.state.as_str().to_string(),
+            wrapper_event_id: w.wrapper_event_id.to_hex(),
+        }
+    }
+}
+
+/// Prepared group image data ready for upload to Blossom
+#[derive(uniffi::Record)]
+pub struct GroupImageUpload {
+    /// Encrypted image data (ready to upload to Blossom)
+    pub encrypted_data: Vec<u8>,
+    /// SHA256 hash of encrypted data (verify against Blossom response)
+    pub encrypted_hash: Vec<u8>,
+    /// Encryption key (store in extension)
+    pub image_key: Vec<u8>,
+    /// Encryption nonce (store in extension)
+    pub image_nonce: Vec<u8>,
+    /// Derived keypair secret for Blossom authentication (hex encoded)
+    pub upload_secret_key: String,
+    /// Original image size before encryption
+    pub original_size: u64,
+    /// Size after encryption
+    pub encrypted_size: u64,
+    /// Validated and canonical MIME type
+    pub mime_type: String,
+    /// Image dimensions (width, height) if available
+    pub dimensions: Option<ImageDimensions>,
+    /// Blurhash for preview if generated
+    pub blurhash: Option<String>,
+}
+
+/// Image dimensions
+#[derive(uniffi::Record)]
+pub struct ImageDimensions {
+    /// Width in pixels
+    pub width: u32,
+    /// Height in pixels
+    pub height: u32,
+}
+
+/// Prepare group image for upload
+#[uniffi::export]
+pub fn prepare_group_image_for_upload(
+    image_data: Vec<u8>,
+    mime_type: String,
+) -> Result<GroupImageUpload, MdkUniffiError> {
+    let prepared = core_prepare_group_image_for_upload(&image_data, &mime_type)
+        .map_err(|e| MdkUniffiError::Mdk(e.to_string()))?;
+
+    Ok(GroupImageUpload {
+        encrypted_data: prepared.encrypted_data,
+        encrypted_hash: prepared.encrypted_hash.to_vec(),
+        image_key: prepared.image_key.to_vec(),
+        image_nonce: prepared.image_nonce.to_vec(),
+        upload_secret_key: prepared.upload_keypair.secret_key().to_secret_hex(),
+        original_size: prepared.original_size as u64,
+        encrypted_size: prepared.encrypted_size as u64,
+        mime_type: prepared.mime_type,
+        dimensions: prepared.dimensions.map(|(w, h)| ImageDimensions {
+            width: w,
+            height: h,
+        }),
+        blurhash: prepared.blurhash,
+    })
+}
+
+/// Decrypt group image
+#[uniffi::export]
+pub fn decrypt_group_image(
+    encrypted_data: Vec<u8>,
+    image_key: Vec<u8>,
+    image_nonce: Vec<u8>,
+) -> Result<Vec<u8>, MdkUniffiError> {
+    let key_arr: [u8; 32] = image_key
+        .try_into()
+        .map_err(|_| MdkUniffiError::InvalidInput("Image key must be 32 bytes".to_string()))?;
+
+    let nonce_arr: [u8; 12] = image_nonce
+        .try_into()
+        .map_err(|_| MdkUniffiError::InvalidInput("Image nonce must be 12 bytes".to_string()))?;
+
+    core_decrypt_group_image(&encrypted_data, &key_arr, &nonce_arr)
+        .map_err(|e| MdkUniffiError::Mdk(e.to_string()))
+}
+
+/// Derive upload keypair for group image
+#[uniffi::export]
+pub fn derive_upload_keypair(image_key: Vec<u8>, version: u16) -> Result<String, MdkUniffiError> {
+    let key_arr: [u8; 32] = image_key
+        .try_into()
+        .map_err(|_| MdkUniffiError::InvalidInput("Image key must be 32 bytes".to_string()))?;
+
+    let keys = core_derive_upload_keypair(&key_arr, version)
+        .map_err(|e| MdkUniffiError::Mdk(e.to_string()))?;
+
+    Ok(keys.secret_key().to_secret_hex())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nostr::{EventBuilder, Keys, Kind, Tag};
+    use tempfile::TempDir;
+
+    fn create_test_mdk() -> Mdk {
+        new_mdk(":memory:".to_string()).unwrap()
+    }
+
+    #[test]
+    fn test_new_mdk_creates_instance() {
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("test.db");
+        let result = new_mdk(db_path.to_string_lossy().to_string());
+        assert!(result.is_ok());
+        let mdk = result.unwrap();
+        // Should be able to get groups (empty initially)
+        let groups = mdk.get_groups().unwrap();
+        assert_eq!(groups.len(), 0);
+    }
+
+    #[test]
+    fn test_create_key_package_for_event() {
+        let mdk = create_test_mdk();
+        let keys = Keys::generate();
+        let pubkey_hex = keys.public_key().to_hex();
+        let relays = vec!["wss://relay.example.com".to_string()];
+
+        let result = mdk.create_key_package_for_event(pubkey_hex, relays);
+        assert!(result.is_ok());
+        let key_package_result = result.unwrap();
+        assert!(!key_package_result.key_package.is_empty());
+        assert!(!key_package_result.tags.is_empty());
+    }
+
+    #[test]
+    fn test_create_key_package_invalid_public_key() {
+        let mdk = create_test_mdk();
+        let invalid_pubkey = "not_a_valid_hex".to_string();
+        let relays = vec!["wss://relay.example.com".to_string()];
+
+        let result = mdk.create_key_package_for_event(invalid_pubkey, relays);
+        assert!(matches!(result, Err(MdkUniffiError::InvalidInput(_))));
+    }
+
+    #[test]
+    fn test_create_key_package_invalid_relay() {
+        let mdk = create_test_mdk();
+        let keys = Keys::generate();
+        let pubkey_hex = keys.public_key().to_hex();
+        let invalid_relays = vec!["not_a_valid_url".to_string()];
+
+        let result = mdk.create_key_package_for_event(pubkey_hex, invalid_relays);
+        assert!(matches!(result, Err(MdkUniffiError::InvalidInput(_))));
+    }
+
+    #[test]
+    fn test_get_groups_empty_initially() {
+        let mdk = create_test_mdk();
+        let groups = mdk.get_groups().unwrap();
+        assert_eq!(groups.len(), 0);
+    }
+
+    #[test]
+    fn test_get_group_nonexistent() {
+        let mdk = create_test_mdk();
+        let fake_group_id = hex::encode([0u8; 32]);
+        let result = mdk.get_group(fake_group_id);
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_none());
+    }
+
+    #[test]
+    fn test_get_group_invalid_hex() {
+        let mdk = create_test_mdk();
+        let invalid_group_id = "not_valid_hex".to_string();
+        let result = mdk.get_group(invalid_group_id);
+        assert!(matches!(result, Err(MdkUniffiError::InvalidInput(_))));
+    }
+
+    #[test]
+    fn test_get_members_nonexistent_group() {
+        let mdk = create_test_mdk();
+        let fake_group_id = hex::encode([0u8; 32]);
+        let result = mdk.get_members(fake_group_id);
+        // Should return error for non-existent group
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_get_messages_empty_group() {
+        let mdk = create_test_mdk();
+        let fake_group_id = hex::encode([0u8; 32]);
+        let result = mdk.get_messages(fake_group_id);
+        // Should return error for non-existent group
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_get_message_invalid_event_id() {
+        let mdk = create_test_mdk();
+        let invalid_event_id = "not_valid_hex".to_string();
+        let result = mdk.get_message(invalid_event_id);
+        assert!(matches!(result, Err(MdkUniffiError::InvalidInput(_))));
+    }
+
+    #[test]
+    fn test_get_pending_welcomes_empty() {
+        let mdk = create_test_mdk();
+        let welcomes = mdk.get_pending_welcomes().unwrap();
+        assert_eq!(welcomes.len(), 0);
+    }
+
+    #[test]
+    fn test_get_relays_nonexistent_group() {
+        let mdk = create_test_mdk();
+        let fake_group_id = hex::encode([0u8; 32]);
+        let result = mdk.get_relays(fake_group_id);
+        // Should return error for non-existent group
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_create_group_basic() {
+        let mdk = create_test_mdk();
+        let creator_keys = Keys::generate();
+        let member_keys = Keys::generate();
+
+        let member_pubkey_hex = member_keys.public_key().to_hex();
+        let relays = vec!["wss://relay.example.com".to_string()];
+        let key_package_result = mdk
+            .create_key_package_for_event(member_pubkey_hex.clone(), relays.clone())
+            .unwrap();
+
+        let key_package_event =
+            EventBuilder::new(Kind::MlsKeyPackage, key_package_result.key_package)
+                .tags(
+                    key_package_result
+                        .tags
+                        .iter()
+                        .map(|t| Tag::parse(t.clone()).unwrap())
+                        .collect::<Vec<_>>(),
+                )
+                .sign_with_keys(&member_keys)
+                .unwrap();
+
+        let key_package_event_json = serde_json::to_string(&key_package_event).unwrap();
+
+        let creator_pubkey_hex = creator_keys.public_key().to_hex();
+        let result = mdk.create_group(
+            creator_pubkey_hex,
+            vec![key_package_event_json],
+            "Test Group".to_string(),
+            "Test Description".to_string(),
+            relays,
+            vec![creator_keys.public_key().to_hex()],
+        );
+
+        assert!(result.is_ok());
+        let create_result = result.unwrap();
+        assert_eq!(create_result.group.name, "Test Group");
+        assert_eq!(create_result.group.description, "Test Description");
+        assert!(!create_result.welcome_rumors_json.is_empty());
+    }
+
+    #[test]
+    fn test_create_group_invalid_creator_key() {
+        let mdk = create_test_mdk();
+        let invalid_pubkey = "not_valid_hex".to_string();
+        let result = mdk.create_group(
+            invalid_pubkey,
+            vec![],
+            "Test".to_string(),
+            "Test".to_string(),
+            vec!["wss://relay.example.com".to_string()],
+            vec![],
+        );
+        assert!(matches!(result, Err(MdkUniffiError::InvalidInput(_))));
+    }
+
+    #[test]
+    fn test_create_group_invalid_admin_key() {
+        let mdk = create_test_mdk();
+        let creator_keys = Keys::generate();
+        let creator_pubkey_hex = creator_keys.public_key().to_hex();
+        let result = mdk.create_group(
+            creator_pubkey_hex,
+            vec![],
+            "Test".to_string(),
+            "Test".to_string(),
+            vec!["wss://relay.example.com".to_string()],
+            vec!["not_valid_hex".to_string()],
+        );
+        assert!(matches!(result, Err(MdkUniffiError::InvalidInput(_))));
+    }
+
+    #[test]
+    fn test_create_group_invalid_relay() {
+        let mdk = create_test_mdk();
+        let creator_keys = Keys::generate();
+        let creator_pubkey_hex = creator_keys.public_key().to_hex();
+        let result = mdk.create_group(
+            creator_pubkey_hex,
+            vec![],
+            "Test".to_string(),
+            "Test".to_string(),
+            vec!["not_a_valid_url".to_string()],
+            vec![],
+        );
+        assert!(matches!(result, Err(MdkUniffiError::InvalidInput(_))));
+    }
+
+    #[test]
+    fn test_create_group_invalid_key_package_json() {
+        let mdk = create_test_mdk();
+        let creator_keys = Keys::generate();
+        let creator_pubkey_hex = creator_keys.public_key().to_hex();
+        let result = mdk.create_group(
+            creator_pubkey_hex,
+            vec!["not_valid_json".to_string()],
+            "Test".to_string(),
+            "Test".to_string(),
+            vec!["wss://relay.example.com".to_string()],
+            vec![],
+        );
+        assert!(matches!(result, Err(MdkUniffiError::InvalidInput(_))));
+    }
+
+    #[test]
+    fn test_add_members_invalid_group_id() {
+        let mdk = create_test_mdk();
+        let invalid_group_id = "not_valid_hex".to_string();
+        let result = mdk.add_members(invalid_group_id, vec![]);
+        assert!(matches!(result, Err(MdkUniffiError::InvalidInput(_))));
+    }
+
+    #[test]
+    fn test_remove_members_invalid_group_id() {
+        let mdk = create_test_mdk();
+        let invalid_group_id = "not_valid_hex".to_string();
+        let result = mdk.remove_members(invalid_group_id, vec![]);
+        assert!(matches!(result, Err(MdkUniffiError::InvalidInput(_))));
+    }
+
+    #[test]
+    fn test_remove_members_invalid_public_key() {
+        let mdk = create_test_mdk();
+        let fake_group_id = hex::encode([0u8; 32]);
+        let result = mdk.remove_members(fake_group_id, vec!["not_valid_hex".to_string()]);
+        assert!(matches!(result, Err(MdkUniffiError::InvalidInput(_))));
+    }
+
+    #[test]
+    fn test_create_message_invalid_group_id() {
+        let mdk = create_test_mdk();
+        let keys = Keys::generate();
+        let invalid_group_id = "not_valid_hex".to_string();
+        let result = mdk.create_message(
+            invalid_group_id,
+            keys.public_key().to_hex(),
+            "Hello".to_string(),
+            1,
+            None,
+        );
+        assert!(matches!(result, Err(MdkUniffiError::InvalidInput(_))));
+    }
+
+    #[test]
+    fn test_create_message_invalid_sender_key() {
+        let mdk = create_test_mdk();
+        let fake_group_id = hex::encode([0u8; 32]);
+        let result = mdk.create_message(
+            fake_group_id,
+            "not_valid_hex".to_string(),
+            "Hello".to_string(),
+            1,
+            None,
+        );
+        assert!(matches!(result, Err(MdkUniffiError::InvalidInput(_))));
+    }
+
+    #[test]
+    fn test_process_message_invalid_json() {
+        let mdk = create_test_mdk();
+        let result = mdk.process_message("not_valid_json".to_string());
+        assert!(matches!(result, Err(MdkUniffiError::InvalidInput(_))));
+    }
+
+    #[test]
+    fn test_update_group_data_invalid_group_id() {
+        let mdk = create_test_mdk();
+        let invalid_group_id = "not_valid_hex".to_string();
+        let update = GroupDataUpdate {
+            name: Some("New Name".to_string()),
+            description: None,
+            image_hash: None,
+            image_key: None,
+            image_nonce: None,
+            relays: None,
+            admins: None,
+        };
+        let result = mdk.update_group_data(invalid_group_id, update);
+        assert!(matches!(result, Err(MdkUniffiError::InvalidInput(_))));
+    }
+
+    #[test]
+    fn test_update_group_data_invalid_relays() {
+        let mdk = create_test_mdk();
+        let fake_group_id = hex::encode([0u8; 32]);
+        let update = GroupDataUpdate {
+            name: None,
+            description: None,
+            image_hash: None,
+            image_key: None,
+            image_nonce: None,
+            relays: Some(vec!["not_a_valid_url".to_string()]),
+            admins: None,
+        };
+        let result = mdk.update_group_data(fake_group_id, update);
+        assert!(matches!(result, Err(MdkUniffiError::InvalidInput(_))));
+    }
+
+    #[test]
+    fn test_update_group_data_invalid_admin() {
+        let mdk = create_test_mdk();
+        let fake_group_id = hex::encode([0u8; 32]);
+        let update = GroupDataUpdate {
+            name: None,
+            description: None,
+            image_hash: None,
+            image_key: None,
+            image_nonce: None,
+            relays: None,
+            admins: Some(vec!["not_valid_hex".to_string()]),
+        };
+        let result = mdk.update_group_data(fake_group_id, update);
+        assert!(matches!(result, Err(MdkUniffiError::InvalidInput(_))));
+    }
+
+    #[test]
+    fn test_vec_to_array_image_key() {
+        let vec = Some(vec![0u8; 32]);
+        let result = vec_to_array::<32>(vec);
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_some());
+    }
+
+    #[test]
+    fn test_vec_to_array_image_nonce() {
+        let vec = Some(vec![0u8; 12]);
+        let result = vec_to_array::<12>(vec);
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_some());
+    }
+
+    #[test]
+    fn test_vec_to_array_wrong_size() {
+        let vec = Some(vec![0u8; 31]); // Wrong size for 32-byte array
+        let result = vec_to_array::<32>(vec);
+        assert!(matches!(result, Err(MdkUniffiError::InvalidInput(_))));
+    }
+
+    #[test]
+    fn test_vec_to_array_none() {
+        let vec: Option<Vec<u8>> = None;
+        let result = vec_to_array::<32>(vec);
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_none());
+    }
+
+    #[test]
+    fn test_error_conversion_storage() {
+        use mdk_sqlite_storage::error::Error as StorageError;
+        let storage_err = StorageError::Database("test error".to_string());
+        let mdk_err: MdkUniffiError = storage_err.into();
+        assert!(matches!(mdk_err, MdkUniffiError::Storage(_)));
+    }
+
+    #[test]
+    fn test_parse_relay_urls_valid() {
+        let valid_urls = vec![
+            "wss://relay.example.com".to_string(),
+            "wss://another.relay.com".to_string(),
+        ];
+        let result = parse_relay_urls(&valid_urls);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().len(), 2);
+    }
+
+    #[test]
+    fn test_parse_relay_urls_invalid() {
+        let invalid_urls = vec!["not_a_valid_url".to_string()];
+        let result = parse_relay_urls(&invalid_urls);
+        assert!(matches!(result, Err(MdkUniffiError::InvalidInput(_))));
+    }
+
+    #[test]
+    fn test_parse_relay_urls_empty() {
+        let empty_urls: Vec<String> = vec![];
+        let result = parse_relay_urls(&empty_urls);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().len(), 0);
+    }
+
+    #[test]
+    fn test_parse_tags_valid() {
+        let keys = Keys::generate();
+        let event_id =
+            EventId::from_hex("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+                .unwrap();
+        let tags = vec![
+            vec!["p".to_string(), keys.public_key().to_hex()],
+            vec!["e".to_string(), event_id.to_hex()],
+        ];
+        let result = parse_tags(tags);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().len(), 2);
+    }
+
+    #[test]
+    fn test_parse_tags_empty() {
+        let tags: Vec<Vec<String>> = vec![];
+        let result = parse_tags(tags);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().len(), 0);
+    }
+}
