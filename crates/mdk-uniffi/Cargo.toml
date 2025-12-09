@@ -36,6 +36,9 @@ uniffi_macros = "0.30"
 default = []
 mip04 = ["mdk-core/mip04"]
 
+[dev-dependencies]
+tempfile.workspace = true
+
 [[bin]]
 name = "uniffi-bindgen"
 path = "src/main.rs"

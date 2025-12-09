@@ -3,8 +3,10 @@
 //! This crate provides foreign language bindings for mdk-core using UniFFI.
 //! It wraps the MDK core functionality with SQLite storage backend.
 
-#![forbid(unsafe_code)]
 #![warn(missing_docs)]
+
+use std::path::PathBuf;
+use std::sync::Mutex;
 
 use mdk_core::{
     Error as MdkError, MDK,
@@ -22,8 +24,6 @@ use mdk_storage_traits::{
     welcomes::types as welcome_types,
 };
 use nostr::{Event, EventBuilder, EventId, Kind, PublicKey, RelayUrl, Tag, TagKind, UnsignedEvent};
-use std::path::PathBuf;
-use std::sync::Mutex;
 
 uniffi::setup_scaffolding!();
 
@@ -85,10 +85,10 @@ fn parse_relay_urls(relays: &[String]) -> Result<Vec<RelayUrl>, MdkUniffiError> 
         .map_err(|e| MdkUniffiError::InvalidInput(format!("Invalid relay URL: {e}")))
 }
 
-fn parse_json<T: serde::de::DeserializeOwned>(
-    json: &str,
-    context: &str,
-) -> Result<T, MdkUniffiError> {
+fn parse_json<T>(json: &str, context: &str) -> Result<T, MdkUniffiError>
+where
+    T: serde::de::DeserializeOwned,
+{
     serde_json::from_str(json)
         .map_err(|e| MdkUniffiError::InvalidInput(format!("Invalid {context}: {e}")))
 }
@@ -988,4 +988,433 @@ pub fn derive_upload_keypair(image_key: Vec<u8>, version: u16) -> Result<String,
         .map_err(|e| MdkUniffiError::Mdk(e.to_string()))?;
 
     Ok(keys.secret_key().to_secret_hex())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nostr::{EventBuilder, Keys, Kind, Tag};
+    use tempfile::TempDir;
+
+    fn create_test_mdk() -> Mdk {
+        new_mdk(":memory:".to_string()).unwrap()
+    }
+
+    #[test]
+    fn test_new_mdk_creates_instance() {
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("test.db");
+        let result = new_mdk(db_path.to_string_lossy().to_string());
+        assert!(result.is_ok());
+        let mdk = result.unwrap();
+        // Should be able to get groups (empty initially)
+        let groups = mdk.get_groups().unwrap();
+        assert_eq!(groups.len(), 0);
+    }
+
+    #[test]
+    fn test_create_key_package_for_event() {
+        let mdk = create_test_mdk();
+        let keys = Keys::generate();
+        let pubkey_hex = keys.public_key().to_hex();
+        let relays = vec!["wss://relay.example.com".to_string()];
+
+        let result = mdk.create_key_package_for_event(pubkey_hex, relays);
+        assert!(result.is_ok());
+        let key_package_result = result.unwrap();
+        assert!(!key_package_result.key_package.is_empty());
+        assert!(!key_package_result.tags.is_empty());
+    }
+
+    #[test]
+    fn test_create_key_package_invalid_public_key() {
+        let mdk = create_test_mdk();
+        let invalid_pubkey = "not_a_valid_hex".to_string();
+        let relays = vec!["wss://relay.example.com".to_string()];
+
+        let result = mdk.create_key_package_for_event(invalid_pubkey, relays);
+        assert!(matches!(result, Err(MdkUniffiError::InvalidInput(_))));
+    }
+
+    #[test]
+    fn test_create_key_package_invalid_relay() {
+        let mdk = create_test_mdk();
+        let keys = Keys::generate();
+        let pubkey_hex = keys.public_key().to_hex();
+        let invalid_relays = vec!["not_a_valid_url".to_string()];
+
+        let result = mdk.create_key_package_for_event(pubkey_hex, invalid_relays);
+        assert!(matches!(result, Err(MdkUniffiError::InvalidInput(_))));
+    }
+
+    #[test]
+    fn test_get_groups_empty_initially() {
+        let mdk = create_test_mdk();
+        let groups = mdk.get_groups().unwrap();
+        assert_eq!(groups.len(), 0);
+    }
+
+    #[test]
+    fn test_get_group_nonexistent() {
+        let mdk = create_test_mdk();
+        let fake_group_id = hex::encode([0u8; 32]);
+        let result = mdk.get_group(fake_group_id);
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_none());
+    }
+
+    #[test]
+    fn test_get_group_invalid_hex() {
+        let mdk = create_test_mdk();
+        let invalid_group_id = "not_valid_hex".to_string();
+        let result = mdk.get_group(invalid_group_id);
+        assert!(matches!(result, Err(MdkUniffiError::InvalidInput(_))));
+    }
+
+    #[test]
+    fn test_get_members_nonexistent_group() {
+        let mdk = create_test_mdk();
+        let fake_group_id = hex::encode([0u8; 32]);
+        let result = mdk.get_members(fake_group_id);
+        // Should return error for non-existent group
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_get_messages_empty_group() {
+        let mdk = create_test_mdk();
+        let fake_group_id = hex::encode([0u8; 32]);
+        let result = mdk.get_messages(fake_group_id);
+        // Should return error for non-existent group
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_get_message_invalid_event_id() {
+        let mdk = create_test_mdk();
+        let invalid_event_id = "not_valid_hex".to_string();
+        let result = mdk.get_message(invalid_event_id);
+        assert!(matches!(result, Err(MdkUniffiError::InvalidInput(_))));
+    }
+
+    #[test]
+    fn test_get_pending_welcomes_empty() {
+        let mdk = create_test_mdk();
+        let welcomes = mdk.get_pending_welcomes().unwrap();
+        assert_eq!(welcomes.len(), 0);
+    }
+
+    #[test]
+    fn test_get_relays_nonexistent_group() {
+        let mdk = create_test_mdk();
+        let fake_group_id = hex::encode([0u8; 32]);
+        let result = mdk.get_relays(fake_group_id);
+        // Should return error for non-existent group
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_create_group_basic() {
+        let mdk = create_test_mdk();
+        let creator_keys = Keys::generate();
+        let member_keys = Keys::generate();
+
+        let member_pubkey_hex = member_keys.public_key().to_hex();
+        let relays = vec!["wss://relay.example.com".to_string()];
+        let key_package_result = mdk
+            .create_key_package_for_event(member_pubkey_hex.clone(), relays.clone())
+            .unwrap();
+
+        let key_package_event =
+            EventBuilder::new(Kind::MlsKeyPackage, key_package_result.key_package)
+                .tags(
+                    key_package_result
+                        .tags
+                        .iter()
+                        .map(|t| Tag::parse(t.clone()).unwrap())
+                        .collect::<Vec<_>>(),
+                )
+                .sign_with_keys(&member_keys)
+                .unwrap();
+
+        let key_package_event_json = serde_json::to_string(&key_package_event).unwrap();
+
+        let creator_pubkey_hex = creator_keys.public_key().to_hex();
+        let result = mdk.create_group(
+            creator_pubkey_hex,
+            vec![key_package_event_json],
+            "Test Group".to_string(),
+            "Test Description".to_string(),
+            relays,
+            vec![creator_keys.public_key().to_hex()],
+        );
+
+        assert!(result.is_ok());
+        let create_result = result.unwrap();
+        assert_eq!(create_result.group.name, "Test Group");
+        assert_eq!(create_result.group.description, "Test Description");
+        assert!(!create_result.welcome_rumors_json.is_empty());
+    }
+
+    #[test]
+    fn test_create_group_invalid_creator_key() {
+        let mdk = create_test_mdk();
+        let invalid_pubkey = "not_valid_hex".to_string();
+        let result = mdk.create_group(
+            invalid_pubkey,
+            vec![],
+            "Test".to_string(),
+            "Test".to_string(),
+            vec!["wss://relay.example.com".to_string()],
+            vec![],
+        );
+        assert!(matches!(result, Err(MdkUniffiError::InvalidInput(_))));
+    }
+
+    #[test]
+    fn test_create_group_invalid_admin_key() {
+        let mdk = create_test_mdk();
+        let creator_keys = Keys::generate();
+        let creator_pubkey_hex = creator_keys.public_key().to_hex();
+        let result = mdk.create_group(
+            creator_pubkey_hex,
+            vec![],
+            "Test".to_string(),
+            "Test".to_string(),
+            vec!["wss://relay.example.com".to_string()],
+            vec!["not_valid_hex".to_string()],
+        );
+        assert!(matches!(result, Err(MdkUniffiError::InvalidInput(_))));
+    }
+
+    #[test]
+    fn test_create_group_invalid_relay() {
+        let mdk = create_test_mdk();
+        let creator_keys = Keys::generate();
+        let creator_pubkey_hex = creator_keys.public_key().to_hex();
+        let result = mdk.create_group(
+            creator_pubkey_hex,
+            vec![],
+            "Test".to_string(),
+            "Test".to_string(),
+            vec!["not_a_valid_url".to_string()],
+            vec![],
+        );
+        assert!(matches!(result, Err(MdkUniffiError::InvalidInput(_))));
+    }
+
+    #[test]
+    fn test_create_group_invalid_key_package_json() {
+        let mdk = create_test_mdk();
+        let creator_keys = Keys::generate();
+        let creator_pubkey_hex = creator_keys.public_key().to_hex();
+        let result = mdk.create_group(
+            creator_pubkey_hex,
+            vec!["not_valid_json".to_string()],
+            "Test".to_string(),
+            "Test".to_string(),
+            vec!["wss://relay.example.com".to_string()],
+            vec![],
+        );
+        assert!(matches!(result, Err(MdkUniffiError::InvalidInput(_))));
+    }
+
+    #[test]
+    fn test_add_members_invalid_group_id() {
+        let mdk = create_test_mdk();
+        let invalid_group_id = "not_valid_hex".to_string();
+        let result = mdk.add_members(invalid_group_id, vec![]);
+        assert!(matches!(result, Err(MdkUniffiError::InvalidInput(_))));
+    }
+
+    #[test]
+    fn test_remove_members_invalid_group_id() {
+        let mdk = create_test_mdk();
+        let invalid_group_id = "not_valid_hex".to_string();
+        let result = mdk.remove_members(invalid_group_id, vec![]);
+        assert!(matches!(result, Err(MdkUniffiError::InvalidInput(_))));
+    }
+
+    #[test]
+    fn test_remove_members_invalid_public_key() {
+        let mdk = create_test_mdk();
+        let fake_group_id = hex::encode([0u8; 32]);
+        let result = mdk.remove_members(fake_group_id, vec!["not_valid_hex".to_string()]);
+        assert!(matches!(result, Err(MdkUniffiError::InvalidInput(_))));
+    }
+
+    #[test]
+    fn test_create_message_invalid_group_id() {
+        let mdk = create_test_mdk();
+        let keys = Keys::generate();
+        let invalid_group_id = "not_valid_hex".to_string();
+        let result = mdk.create_message(
+            invalid_group_id,
+            keys.public_key().to_hex(),
+            "Hello".to_string(),
+            1,
+            None,
+        );
+        assert!(matches!(result, Err(MdkUniffiError::InvalidInput(_))));
+    }
+
+    #[test]
+    fn test_create_message_invalid_sender_key() {
+        let mdk = create_test_mdk();
+        let fake_group_id = hex::encode([0u8; 32]);
+        let result = mdk.create_message(
+            fake_group_id,
+            "not_valid_hex".to_string(),
+            "Hello".to_string(),
+            1,
+            None,
+        );
+        assert!(matches!(result, Err(MdkUniffiError::InvalidInput(_))));
+    }
+
+    #[test]
+    fn test_process_message_invalid_json() {
+        let mdk = create_test_mdk();
+        let result = mdk.process_message("not_valid_json".to_string());
+        assert!(matches!(result, Err(MdkUniffiError::InvalidInput(_))));
+    }
+
+    #[test]
+    fn test_update_group_data_invalid_group_id() {
+        let mdk = create_test_mdk();
+        let invalid_group_id = "not_valid_hex".to_string();
+        let update = GroupDataUpdate {
+            name: Some("New Name".to_string()),
+            description: None,
+            image_hash: None,
+            image_key: None,
+            image_nonce: None,
+            relays: None,
+            admins: None,
+        };
+        let result = mdk.update_group_data(invalid_group_id, update);
+        assert!(matches!(result, Err(MdkUniffiError::InvalidInput(_))));
+    }
+
+    #[test]
+    fn test_update_group_data_invalid_relays() {
+        let mdk = create_test_mdk();
+        let fake_group_id = hex::encode([0u8; 32]);
+        let update = GroupDataUpdate {
+            name: None,
+            description: None,
+            image_hash: None,
+            image_key: None,
+            image_nonce: None,
+            relays: Some(vec!["not_a_valid_url".to_string()]),
+            admins: None,
+        };
+        let result = mdk.update_group_data(fake_group_id, update);
+        assert!(matches!(result, Err(MdkUniffiError::InvalidInput(_))));
+    }
+
+    #[test]
+    fn test_update_group_data_invalid_admin() {
+        let mdk = create_test_mdk();
+        let fake_group_id = hex::encode([0u8; 32]);
+        let update = GroupDataUpdate {
+            name: None,
+            description: None,
+            image_hash: None,
+            image_key: None,
+            image_nonce: None,
+            relays: None,
+            admins: Some(vec!["not_valid_hex".to_string()]),
+        };
+        let result = mdk.update_group_data(fake_group_id, update);
+        assert!(matches!(result, Err(MdkUniffiError::InvalidInput(_))));
+    }
+
+    #[test]
+    fn test_vec_to_array_image_key() {
+        let vec = Some(vec![0u8; 32]);
+        let result = vec_to_array::<32>(vec);
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_some());
+    }
+
+    #[test]
+    fn test_vec_to_array_image_nonce() {
+        let vec = Some(vec![0u8; 12]);
+        let result = vec_to_array::<12>(vec);
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_some());
+    }
+
+    #[test]
+    fn test_vec_to_array_wrong_size() {
+        let vec = Some(vec![0u8; 31]); // Wrong size for 32-byte array
+        let result = vec_to_array::<32>(vec);
+        assert!(matches!(result, Err(MdkUniffiError::InvalidInput(_))));
+    }
+
+    #[test]
+    fn test_vec_to_array_none() {
+        let vec: Option<Vec<u8>> = None;
+        let result = vec_to_array::<32>(vec);
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_none());
+    }
+
+    #[test]
+    fn test_error_conversion_storage() {
+        use mdk_sqlite_storage::error::Error as StorageError;
+        let storage_err = StorageError::Database("test error".to_string());
+        let mdk_err: MdkUniffiError = storage_err.into();
+        assert!(matches!(mdk_err, MdkUniffiError::Storage(_)));
+    }
+
+    #[test]
+    fn test_parse_relay_urls_valid() {
+        let valid_urls = vec![
+            "wss://relay.example.com".to_string(),
+            "wss://another.relay.com".to_string(),
+        ];
+        let result = parse_relay_urls(&valid_urls);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().len(), 2);
+    }
+
+    #[test]
+    fn test_parse_relay_urls_invalid() {
+        let invalid_urls = vec!["not_a_valid_url".to_string()];
+        let result = parse_relay_urls(&invalid_urls);
+        assert!(matches!(result, Err(MdkUniffiError::InvalidInput(_))));
+    }
+
+    #[test]
+    fn test_parse_relay_urls_empty() {
+        let empty_urls: Vec<String> = vec![];
+        let result = parse_relay_urls(&empty_urls);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().len(), 0);
+    }
+
+    #[test]
+    fn test_parse_tags_valid() {
+        let keys = Keys::generate();
+        let event_id =
+            EventId::from_hex("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+                .unwrap();
+        let tags = vec![
+            vec!["p".to_string(), keys.public_key().to_hex()],
+            vec!["e".to_string(), event_id.to_hex()],
+        ];
+        let result = parse_tags(tags);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().len(), 2);
+    }
+
+    #[test]
+    fn test_parse_tags_empty() {
+        let tags: Vec<Vec<String>> = vec![];
+        let result = parse_tags(tags);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().len(), 0);
+    }
 }

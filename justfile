@@ -73,7 +73,7 @@ precommit:
 check-full:
     @just check
 
-_build-uniffi needs_android="false":
+_build-uniffi needs_android="false" needs_ios="false":
     #!/usr/bin/env bash
     set -euo pipefail
     echo "Building mdk-uniffi library..."
@@ -83,7 +83,7 @@ _build-uniffi needs_android="false":
         just _build-uniffi-android armv7-linux-androideabi armv7a-linux-androideabi21-clang
         just _build-uniffi-android x86_64-linux-android x86_64-linux-android21-clang
     fi
-    if [ "{{os()}}" = "macos" ]; then
+    if [ "{{needs_ios}}" = "true" ] && [ "{{os()}}" = "macos" ]; then
         just _build-uniffi-ios aarch64-apple-ios
         just _build-uniffi-ios aarch64-apple-ios-sim
     fi
@@ -151,7 +151,7 @@ lib_filename := if os() == "windows" {
     "libmdk_uniffi.so"
 }
 
-gen-binding lang: _build-uniffi
+gen-binding lang: (_build-uniffi "false" "false")
     @echo "Generating {{lang}} bindings..."
     cd crates/mdk-uniffi && cargo run --bin uniffi-bindgen generate \
         -l {{lang}} \
@@ -184,7 +184,7 @@ build-android-lib: gen-binding-kotlin
     cd crates/mdk-uniffi/src/kotlin && ./gradlew build
     @echo "✓ Android library built"
 
-gen-binding-swift: (gen-binding "swift")
+gen-binding-swift: (_build-uniffi "false" "true") (gen-binding "swift")
     @echo "Creating iOS xcframework..."
     mkdir -p ios-artifacts/headers
     cp crates/mdk-uniffi/bindings/swift/mdk_uniffiFFI.h ios-artifacts/headers/
