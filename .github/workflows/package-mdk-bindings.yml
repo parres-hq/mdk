@@ -9,10 +9,10 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  SWIFT_PACKAGE_REPO: "dannym-arx/mdk-swift" # TODO: move to parres-hq/mdk-swift
-  PYTHON_PACKAGE_REPO: "dannym-arx/mdk-python" # TODO: move to parres-hq/mdk-python
-  RUBY_PACKAGE_REPO: "dannym-arx/mdk-ruby" # TODO: move to parres-hq/mdk-ruby
-  KOTLIN_PACKAGE_REPO: "dannym-arx/mdk-kotlin" # TODO: move to parres-hq/mdk-kotlin
+  SWIFT_PACKAGE_REPO: "marmot-protocol/mdk-swift"
+  PYTHON_PACKAGE_REPO: "marmot-protocol/mdk-python"
+  RUBY_PACKAGE_REPO: "marmot-protocol/mdk-ruby"
+  KOTLIN_PACKAGE_REPO: "marmot-protocol/mdk-kotlin"
 
 jobs:
   package-swift:
