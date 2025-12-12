@@ -2,6 +2,7 @@
 name = "mdk-uniffi"
 version = "0.5.2"
 edition = "2024"
+publish = false
 description = "UniFFI bindings for mdk-core with SQLite storage"
 authors = [
     "Danny Morabito <danny@arx-ccn.com>",

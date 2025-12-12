@@ -9,6 +9,7 @@ homepage = "https://github.com/marmot-protocol/mdk"
 repository = "https://github.com/marmot-protocol/mdk.git"
 license = "MIT"
 rust-version = "1.90.0"
+categories = ["cryptography", "network-programming"]
 
 [workspace.dependencies]
 # Internal crates
