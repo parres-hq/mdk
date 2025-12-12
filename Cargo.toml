@@ -5,8 +5,8 @@ resolver = "2"
 
 [workspace.package]
 authors = ["Jeff Gardner <j@jeffg.me>", "MDK Developers"]
-homepage = "https://github.com/parres-hq/mdk"
-repository = "https://github.com/parres-hq/mdk.git"
+homepage = "https://github.com/marmot-protocol/mdk"
+repository = "https://github.com/marmot-protocol/mdk.git"
 license = "MIT"
 rust-version = "1.90.0"
 

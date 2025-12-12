@@ -24,4 +24,4 @@ This project implements the MLS (Messaging Layer Security) protocol on top of No
 
 ## Marmot Protocol (MLS integration with Nostr protocol)
 
-- This repo is an implementation of the [Marmot protocol](https://github.com/parres-hq/marmot)
+- This repo is an implementation of the [Marmot protocol](https://github.com/marmot-protocol/marmot)
