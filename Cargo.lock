@@ -1553,7 +1553,9 @@ dependencies = [
  "nostr",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror 2.0.16",
+ "tracing",
  "uniffi",
  "uniffi_macros",
 ]

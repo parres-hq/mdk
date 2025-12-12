@@ -1,4 +1,6 @@
 """MDK Python bindings - Marmot Development Kit"""
+from .version import __version__
+
 try:
     from .mdk_uniffi import *  # noqa: F403
 except ImportError as e:
@@ -10,4 +12,6 @@ except ImportError as e:
     print(f"Expected bindings at: {bindings_dir}", file=sys.stderr)
     print(f"Import error: {e}", file=sys.stderr)
     raise
+
+__all__ = ["__version__"]
 

@@ -6,7 +6,7 @@ Gem::Specification.new do |spec|
   spec.name          = "mdk"
   spec.version       = Mdk::VERSION
   spec.authors       = ["MDK Developers"]
-  spec.email         = [""]
+  spec.email         = ["dev@ipf.dev"]
 
   spec.summary       = "Ruby bindings for Marmot Development Kit"
   spec.description   = "Ruby bindings for Marmot Development Kit - A Rust implementation of the Marmot Protocol for secure, decentralized group messaging."

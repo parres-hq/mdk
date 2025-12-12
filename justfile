@@ -97,7 +97,7 @@ _build-uniffi-android TARGET CLANG_PREFIX:
     # Normalize platform detection to match NDK host-tag naming
     OS=$(uname -s | tr '[:upper:]' '[:lower:]')
     ARCH=$(uname -m)
-    
+
     # Map OS variants to canonical NDK host tags
     case "$OS" in
         linux*)
@@ -117,17 +117,17 @@ _build-uniffi-android TARGET CLANG_PREFIX:
             exit 1
             ;;
     esac
-    
+
     NDK_HOST="${NDK_OS}-${ARCH}"
     NDK_PREBUILT="${NDK_HOME:-/opt/android-ndk}/toolchains/llvm/prebuilt/${NDK_HOST}"
-    
+
     # Verify NDK directory exists
     if [ ! -d "$NDK_PREBUILT" ]; then
         echo "Error: NDK prebuilt directory not found: $NDK_PREBUILT" >&2
         echo "Please ensure NDK_HOME is set correctly or NDK is installed at /opt/android-ndk" >&2
         exit 1
     fi
-    
+
     LLVM_BIN="${NDK_PREBUILT}/bin"
 
     TARGET_UPPER=$(echo "{{TARGET}}" | tr '[:lower:]-' '[:upper:]_')
@@ -165,14 +165,14 @@ gen-binding-kotlin: (_build-uniffi "true") (gen-binding "kotlin")
     set -euo pipefail
     BINDINGS_DIR="crates/mdk-uniffi/bindings/kotlin"
     PROJECT_DIR="crates/mdk-uniffi/src/kotlin"
-    
+
     mkdir -p "$PROJECT_DIR/src/main/jniLibs/arm64-v8a"
     mkdir -p "$PROJECT_DIR/src/main/jniLibs/armeabi-v7a"
     # mkdir -p "$PROJECT_DIR/src/main/jniLibs/x86-64"
-    
+
     test -f target/aarch64-linux-android/release/libmdk_uniffi.so || (echo "Error: aarch64 Android library not found. Did the build succeed?" && exit 1)
     test -f target/armv7-linux-androideabi/release/libmdk_uniffi.so || (echo "Error: armv7 Android library not found. Did the build succeed?" && exit 1)
-    
+
     cp target/aarch64-linux-android/release/libmdk_uniffi.so "$PROJECT_DIR/src/main/jniLibs/arm64-v8a/libmdk_uniffi.so"
     cp target/armv7-linux-androideabi/release/libmdk_uniffi.so "$PROJECT_DIR/src/main/jniLibs/armeabi-v7a/libmdk_uniffi.so"
     # cp target/x86_64-linux-android/release/libmdk_uniffi.so "$PROJECT_DIR/src/main/jniLibs/x86-64/libmdk_uniffi.so"
@@ -260,4 +260,10 @@ examples:
     @echo ""
     @echo "→ Running SQLite storage example..."
     @just example-sqlite
+
+# Trigger TestPyPI publish workflow (requires gh CLI and appropriate permissions)
+publish-test-pypi:
+    @echo "Triggering TestPyPI publish workflow..."
+    gh workflow run package-mdk-bindings.yml -f publish_test_pypi=true
+    @echo "✓ Workflow triggered. Check status at: https://github.com/marmot-protocol/mdk/actions"
 

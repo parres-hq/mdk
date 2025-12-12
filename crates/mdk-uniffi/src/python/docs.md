@@ -3,7 +3,7 @@
 ## Installation
 
 ```bash
-pip install mdk
+pip install mdk-python
 ```
 
 Or install from source:
@@ -164,7 +164,7 @@ welcomes = mdk.get_pending_welcomes()
 for welcome in welcomes:
     print(f"Invited to: {welcome.group_name}")
     print(f"By: {welcome.welcomer}")
-    
+
     # Accept the welcome
     mdk.accept_welcome(welcome_json=welcome.event_json)
 ```

@@ -2,11 +2,11 @@
 
 **A Rust implementation of the Marmot Protocol for secure, decentralized group messaging**
 
-![CI](https://github.com/parres-hq/mdk/actions/workflows/ci.yml/badge.svg)
-![Coverage](https://github.com/parres-hq/mdk/actions/workflows/coverage.yml/badge.svg)
+![CI](https://github.com/marmot-protocol/mdk/actions/workflows/ci.yml/badge.svg)
+![Coverage](https://github.com/marmot-protocol/mdk/actions/workflows/coverage.yml/badge.svg)
 [![License: MIT](https://img.shields.io/badge/License-MIT-orange.svg)](https://opensource.org/licenses/MIT)
 
-MDK is a Rust library that implements the [Marmot Protocol](https://github.com/parres-hq/marmot), bringing together the [MLS (Messaging Layer Security) Protocol](https://www.rfc-editor.org/rfc/rfc9420.html) with [Nostr's](https://github.com/nostr-protocol/nostr) decentralized network to enable secure group messaging without centralized servers.
+MDK is a Rust library that implements the [Marmot Protocol](https://github.com/marmot-protocol/marmot), bringing together the [MLS (Messaging Layer Security) Protocol](https://www.rfc-editor.org/rfc/rfc9420.html) with [Nostr's](https://github.com/nostr-protocol/nostr) decentralized network to enable secure group messaging without centralized servers.
 
 ## 🚀 Features
 
@@ -294,7 +294,7 @@ See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md#test-coverage) for detailed covera
 ## 📚 Documentation
 
 - **API Documentation**: [docs.rs/mdk-core](https://docs.rs/mdk-core)
-- **Marmot Protocol**: [github.com/parres-hq/marmot](https://github.com/parres-hq/marmot)
+- **Marmot Protocol**: [github.com/marmot-protocol/marmot](https://github.com/marmot-protocol/marmot)
 - **MLS Specification**: [RFC 9420](https://www.rfc-editor.org/rfc/rfc9420.html)
 - **OpenMLS Library**: [github.com/openmls/openmls](https://github.com/openmls/openmls) - The MLS implementation we build upon
 - **Nostr Protocol**: [github.com/nostr-protocol/nostr](https://github.com/nostr-protocol/nostr)
@@ -310,7 +310,7 @@ See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md#test-coverage) for detailed covera
 ### Building
 
 ```bash
-git clone https://github.com/parres-hq/mdk.git
+git clone https://github.com/marmot-protocol/mdk.git
 cd mdk
 cargo build
 ```
@@ -405,9 +405,9 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## 🔗 Related Projects
 
-- [whitenoise](https://github.com/parres-hq/whitenoise): Full-featured messenger using MDK
-- [whitenoise_flutter](https://github.com/parres-hq/whitenoise_flutter): Flutter app using whitenoise
-- [marmot-ts](https://github.com/parres-hq/marmot-ts): TypeScript implementation of Marmot
+- [whitenoise](https://github.com/marmot-protocol/whitenoise): Full-featured messenger using MDK
+- [whitenoise_flutter](https://github.com/marmot-protocol/whitenoise_flutter): Flutter app using whitenoise
+- [marmot-ts](https://github.com/marmot-protocol/marmot-ts): TypeScript implementation of Marmot
 
 ---
 
