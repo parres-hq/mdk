@@ -64,7 +64,9 @@ impl StorageTestHarness {
                     "Error messages differ"
                 );
             }
-            _ => panic!("save_group results differ: sqlite={sqlite_result:?}, memory={memory_result:?}"),
+            _ => panic!(
+                "save_group results differ: sqlite={sqlite_result:?}, memory={memory_result:?}"
+            ),
         }
     }
 
@@ -88,7 +90,9 @@ impl StorageTestHarness {
                     "Error messages differ"
                 );
             }
-            _ => panic!("replace_group_relays results differ: sqlite={sqlite_result:?}, memory={memory_result:?}"),
+            _ => panic!(
+                "replace_group_relays results differ: sqlite={sqlite_result:?}, memory={memory_result:?}"
+            ),
         }
     }
 
