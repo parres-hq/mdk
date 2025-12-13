@@ -5,12 +5,14 @@ set -euo pipefail
 # Default to stable for fast local checks
 version="${1:-stable}"
 
-# Install toolchain
+# Install/update toolchain
 if [ "$version" != "stable" ]; then
     cargo +$version --version || rustup install $version
     cargo +$version clippy --version || rustup component add clippy --toolchain $version
 else
-    cargo +$version --version || rustup update "$version"
+    # Always update stable to match CI
+    echo "Updating stable toolchain to match CI..."
+    rustup update stable
     cargo +$version clippy --version || rustup component add clippy --toolchain $version
 fi
 
