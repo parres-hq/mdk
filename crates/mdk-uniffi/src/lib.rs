@@ -5,7 +5,9 @@
 
 #![warn(missing_docs)]
 
+use std::collections::BTreeSet;
 use std::path::PathBuf;
+use std::str::FromStr;
 use std::sync::Mutex;
 
 use mdk_core::{
@@ -116,6 +118,81 @@ fn parse_tags(tags: Vec<Vec<String>>) -> Result<Vec<Tag>, MdkUniffiError> {
                 .map_err(|e| MdkUniffiError::InvalidInput(format!("Failed to parse tag: {e}")))
         })
         .collect()
+}
+
+fn welcome_from_uniffi(w: Welcome) -> Result<welcome_types::Welcome, MdkUniffiError> {
+    let id = parse_event_id(&w.id)?;
+    let event: UnsignedEvent = parse_json(&w.event_json, "welcome event JSON")?;
+    let mls_group_id = parse_group_id(&w.mls_group_id)?;
+
+    let nostr_group_id_vec = hex::decode(&w.nostr_group_id)
+        .map_err(|e| MdkUniffiError::InvalidInput(format!("Invalid nostr group ID hex: {e}")))?;
+    let nostr_group_id: [u8; 32] = nostr_group_id_vec
+        .try_into()
+        .map_err(|_| MdkUniffiError::InvalidInput("Nostr group ID must be 32 bytes".to_string()))?;
+
+    let group_image_hash = match w.group_image_hash {
+        Some(vec) => {
+            let arr: [u8; 32] = vec.try_into().map_err(|_| {
+                MdkUniffiError::InvalidInput("Group image hash must be 32 bytes".to_string())
+            })?;
+            Some(arr)
+        }
+        None => None,
+    };
+
+    let group_image_key = match w.group_image_key {
+        Some(vec) => {
+            let arr: [u8; 32] = vec.try_into().map_err(|_| {
+                MdkUniffiError::InvalidInput("Group image key must be 32 bytes".to_string())
+            })?;
+            Some(arr)
+        }
+        None => None,
+    };
+
+    let group_image_nonce = match w.group_image_nonce {
+        Some(vec) => {
+            let arr: [u8; 12] = vec.try_into().map_err(|_| {
+                MdkUniffiError::InvalidInput("Group image nonce must be 12 bytes".to_string())
+            })?;
+            Some(arr)
+        }
+        None => None,
+    };
+
+    let group_admin_pubkeys: Result<BTreeSet<PublicKey>, _> = w
+        .group_admin_pubkeys
+        .into_iter()
+        .map(|pk| parse_public_key(&pk))
+        .collect();
+    let group_admin_pubkeys = group_admin_pubkeys?;
+
+    let group_relays = parse_relay_urls(&w.group_relays)?.into_iter().collect();
+
+    let welcomer = parse_public_key(&w.welcomer)?;
+    let wrapper_event_id = parse_event_id(&w.wrapper_event_id)?;
+
+    let state = welcome_types::WelcomeState::from_str(&w.state)
+        .map_err(|e| MdkUniffiError::InvalidInput(format!("Invalid welcome state: {e}")))?;
+
+    Ok(welcome_types::Welcome {
+        id,
+        event,
+        mls_group_id,
+        nostr_group_id,
+        group_name: w.group_name,
+        group_description: w.group_description,
+        group_image_hash,
+        group_image_key,
+        group_image_nonce,
+        group_admin_pubkeys,
+        group_relays,
+        welcomer,
+        member_count: w.member_count,
+        state,
+        wrapper_event_id,
+    })
 }
 
 impl Mdk {
@@ -244,14 +321,28 @@ impl Mdk {
     }
 
     /// Accept a welcome message
-    pub fn accept_welcome(&self, welcome_json: String) -> Result<(), MdkUniffiError> {
+    pub fn accept_welcome(&self, welcome: Welcome) -> Result<(), MdkUniffiError> {
+        let welcome = welcome_from_uniffi(welcome)?;
+        self.lock()?.accept_welcome(&welcome)?;
+        Ok(())
+    }
+
+    /// Accept a welcome message from JSON
+    pub fn accept_welcome_json(&self, welcome_json: String) -> Result<(), MdkUniffiError> {
         let welcome: welcome_types::Welcome = parse_json(&welcome_json, "welcome JSON")?;
         self.lock()?.accept_welcome(&welcome)?;
         Ok(())
     }
 
     /// Decline a welcome message
-    pub fn decline_welcome(&self, welcome_json: String) -> Result<(), MdkUniffiError> {
+    pub fn decline_welcome(&self, welcome: Welcome) -> Result<(), MdkUniffiError> {
+        let welcome = welcome_from_uniffi(welcome)?;
+        self.lock()?.decline_welcome(&welcome)?;
+        Ok(())
+    }
+
+    /// Decline a welcome message from JSON
+    pub fn decline_welcome_json(&self, welcome_json: String) -> Result<(), MdkUniffiError> {
         let welcome: welcome_types::Welcome = parse_json(&welcome_json, "welcome JSON")?;
         self.lock()?.decline_welcome(&welcome)?;
         Ok(())
