@@ -5,7 +5,9 @@
 
 #![warn(missing_docs)]
 
+use std::collections::BTreeSet;
 use std::path::PathBuf;
+use std::str::FromStr;
 use std::sync::Mutex;
 
 use mdk_core::{
@@ -116,6 +118,55 @@ fn parse_tags(tags: Vec<Vec<String>>) -> Result<Vec<Tag>, MdkUniffiError> {
                 .map_err(|e| MdkUniffiError::InvalidInput(format!("Failed to parse tag: {e}")))
         })
         .collect()
+}
+
+fn welcome_from_uniffi(w: Welcome) -> Result<welcome_types::Welcome, MdkUniffiError> {
+    let id = parse_event_id(&w.id)?;
+    let event: UnsignedEvent = parse_json(&w.event_json, "welcome event JSON")?;
+    let mls_group_id = parse_group_id(&w.mls_group_id)?;
+
+    let nostr_group_id_vec = hex::decode(&w.nostr_group_id)
+        .map_err(|e| MdkUniffiError::InvalidInput(format!("Invalid nostr group ID hex: {e}")))?;
+    let nostr_group_id: [u8; 32] = nostr_group_id_vec
+        .try_into()
+        .map_err(|_| MdkUniffiError::InvalidInput("Nostr group ID must be 32 bytes".to_string()))?;
+
+    let group_image_hash = vec_to_array::<32>(w.group_image_hash)?;
+    let group_image_key = vec_to_array::<32>(w.group_image_key)?;
+    let group_image_nonce = vec_to_array::<12>(w.group_image_nonce)?;
+
+    let group_admin_pubkeys: Result<BTreeSet<PublicKey>, _> = w
+        .group_admin_pubkeys
+        .into_iter()
+        .map(|pk| parse_public_key(&pk))
+        .collect();
+    let group_admin_pubkeys = group_admin_pubkeys?;
+
+    let group_relays = parse_relay_urls(&w.group_relays)?.into_iter().collect();
+
+    let welcomer = parse_public_key(&w.welcomer)?;
+    let wrapper_event_id = parse_event_id(&w.wrapper_event_id)?;
+
+    let state = welcome_types::WelcomeState::from_str(&w.state)
+        .map_err(|e| MdkUniffiError::InvalidInput(format!("Invalid welcome state: {e}")))?;
+
+    Ok(welcome_types::Welcome {
+        id,
+        event,
+        mls_group_id,
+        nostr_group_id,
+        group_name: w.group_name,
+        group_description: w.group_description,
+        group_image_hash,
+        group_image_key,
+        group_image_nonce,
+        group_admin_pubkeys,
+        group_relays,
+        welcomer,
+        member_count: w.member_count,
+        state,
+        wrapper_event_id,
+    })
 }
 
 impl Mdk {
@@ -244,14 +295,28 @@ impl Mdk {
     }
 
     /// Accept a welcome message
-    pub fn accept_welcome(&self, welcome_json: String) -> Result<(), MdkUniffiError> {
+    pub fn accept_welcome(&self, welcome: Welcome) -> Result<(), MdkUniffiError> {
+        let welcome = welcome_from_uniffi(welcome)?;
+        self.lock()?.accept_welcome(&welcome)?;
+        Ok(())
+    }
+
+    /// Accept a welcome message from JSON
+    pub fn accept_welcome_json(&self, welcome_json: String) -> Result<(), MdkUniffiError> {
         let welcome: welcome_types::Welcome = parse_json(&welcome_json, "welcome JSON")?;
         self.lock()?.accept_welcome(&welcome)?;
         Ok(())
     }
 
     /// Decline a welcome message
-    pub fn decline_welcome(&self, welcome_json: String) -> Result<(), MdkUniffiError> {
+    pub fn decline_welcome(&self, welcome: Welcome) -> Result<(), MdkUniffiError> {
+        let welcome = welcome_from_uniffi(welcome)?;
+        self.lock()?.decline_welcome(&welcome)?;
+        Ok(())
+    }
+
+    /// Decline a welcome message from JSON
+    pub fn decline_welcome_json(&self, welcome_json: String) -> Result<(), MdkUniffiError> {
         let welcome: welcome_types::Welcome = parse_json(&welcome_json, "welcome JSON")?;
         self.lock()?.decline_welcome(&welcome)?;
         Ok(())
@@ -993,7 +1058,7 @@ pub fn derive_upload_keypair(image_key: Vec<u8>, version: u16) -> Result<String,
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nostr::{EventBuilder, Keys, Kind, Tag};
+    use nostr::{EventBuilder, Keys, Kind, Tag, UnsignedEvent};
     use tempfile::TempDir;
 
     fn create_test_mdk() -> Mdk {
@@ -1102,6 +1167,312 @@ mod tests {
         let mdk = create_test_mdk();
         let welcomes = mdk.get_pending_welcomes().unwrap();
         assert_eq!(welcomes.len(), 0);
+    }
+
+    #[test]
+    fn test_accept_welcome_with_object() {
+        let mdk = create_test_mdk();
+        let creator_keys = Keys::generate();
+        let member_keys = Keys::generate();
+
+        let member_pubkey_hex = member_keys.public_key().to_hex();
+        let relays = vec!["wss://relay.example.com".to_string()];
+        let key_package_result = mdk
+            .create_key_package_for_event(member_pubkey_hex.clone(), relays.clone())
+            .unwrap();
+
+        let key_package_event =
+            EventBuilder::new(Kind::MlsKeyPackage, key_package_result.key_package)
+                .tags(
+                    key_package_result
+                        .tags
+                        .iter()
+                        .map(|t| Tag::parse(t.clone()).unwrap())
+                        .collect::<Vec<_>>(),
+                )
+                .sign_with_keys(&member_keys)
+                .unwrap();
+
+        let key_package_event_json = serde_json::to_string(&key_package_event).unwrap();
+
+        let creator_pubkey_hex = creator_keys.public_key().to_hex();
+        let create_result = mdk
+            .create_group(
+                creator_pubkey_hex,
+                vec![key_package_event_json],
+                "Test Group".to_string(),
+                "Test Description".to_string(),
+                relays.clone(),
+                vec![creator_keys.public_key().to_hex()],
+            )
+            .unwrap();
+
+        // Get the welcome rumor from the create result
+        let welcome_rumor_json = create_result.welcome_rumors_json.first().unwrap();
+
+        // Process the welcome to get a Welcome object
+        let wrapper_event_id = EventId::all_zeros();
+        let welcome = mdk
+            .process_welcome(wrapper_event_id.to_hex(), welcome_rumor_json.clone())
+            .unwrap();
+
+        // Verify welcome is pending
+        assert_eq!(welcome.state, "pending");
+
+        // Accept the welcome using the new method that takes a Welcome object
+        let result = mdk.accept_welcome(welcome);
+        assert!(result.is_ok());
+
+        // Verify the welcome was accepted by checking pending welcomes
+        let pending_welcomes = mdk.get_pending_welcomes().unwrap();
+        assert_eq!(pending_welcomes.len(), 0);
+    }
+
+    #[test]
+    fn test_decline_welcome_with_object() {
+        let mdk = create_test_mdk();
+        let creator_keys = Keys::generate();
+        let member_keys = Keys::generate();
+
+        let member_pubkey_hex = member_keys.public_key().to_hex();
+        let relays = vec!["wss://relay.example.com".to_string()];
+        let key_package_result = mdk
+            .create_key_package_for_event(member_pubkey_hex.clone(), relays.clone())
+            .unwrap();
+
+        let key_package_event =
+            EventBuilder::new(Kind::MlsKeyPackage, key_package_result.key_package)
+                .tags(
+                    key_package_result
+                        .tags
+                        .iter()
+                        .map(|t| Tag::parse(t.clone()).unwrap())
+                        .collect::<Vec<_>>(),
+                )
+                .sign_with_keys(&member_keys)
+                .unwrap();
+
+        let key_package_event_json = serde_json::to_string(&key_package_event).unwrap();
+
+        let creator_pubkey_hex = creator_keys.public_key().to_hex();
+        let create_result = mdk
+            .create_group(
+                creator_pubkey_hex,
+                vec![key_package_event_json],
+                "Test Group".to_string(),
+                "Test Description".to_string(),
+                relays.clone(),
+                vec![creator_keys.public_key().to_hex()],
+            )
+            .unwrap();
+
+        // Get the welcome rumor from the create result
+        let welcome_rumor_json = create_result.welcome_rumors_json.first().unwrap();
+
+        // Process the welcome to get a Welcome object
+        let wrapper_event_id = EventId::all_zeros();
+        let welcome = mdk
+            .process_welcome(wrapper_event_id.to_hex(), welcome_rumor_json.clone())
+            .unwrap();
+
+        // Verify welcome is pending
+        assert_eq!(welcome.state, "pending");
+
+        // Decline the welcome using the new method that takes a Welcome object
+        let result = mdk.decline_welcome(welcome);
+        assert!(result.is_ok());
+
+        // Verify the welcome was declined by checking pending welcomes
+        let pending_welcomes = mdk.get_pending_welcomes().unwrap();
+        assert_eq!(pending_welcomes.len(), 0);
+    }
+
+    #[test]
+    fn test_accept_welcome_invalid_event_id() {
+        let mdk = create_test_mdk();
+        let welcome = Welcome {
+            id: "invalid_hex".to_string(),
+            event_json: "{}".to_string(),
+            mls_group_id: hex::encode([0u8; 32]),
+            nostr_group_id: hex::encode([0u8; 32]),
+            group_name: "Test".to_string(),
+            group_description: "Test".to_string(),
+            group_image_hash: None,
+            group_image_key: None,
+            group_image_nonce: None,
+            group_admin_pubkeys: vec![],
+            group_relays: vec![],
+            welcomer: "invalid_hex".to_string(),
+            member_count: 0,
+            state: "pending".to_string(),
+            wrapper_event_id: hex::encode([0u8; 32]),
+        };
+
+        let result = mdk.accept_welcome(welcome);
+        assert!(matches!(result, Err(MdkUniffiError::InvalidInput(_))));
+    }
+
+    #[test]
+    fn test_accept_welcome_invalid_event_json() {
+        let mdk = create_test_mdk();
+        let keys = Keys::generate();
+        let event_id = EventId::all_zeros();
+        let welcome = Welcome {
+            id: event_id.to_hex(),
+            event_json: "invalid_json".to_string(),
+            mls_group_id: hex::encode([0u8; 32]),
+            nostr_group_id: hex::encode([0u8; 32]),
+            group_name: "Test".to_string(),
+            group_description: "Test".to_string(),
+            group_image_hash: None,
+            group_image_key: None,
+            group_image_nonce: None,
+            group_admin_pubkeys: vec![keys.public_key().to_hex()],
+            group_relays: vec!["wss://relay.example.com".to_string()],
+            welcomer: keys.public_key().to_hex(),
+            member_count: 0,
+            state: "pending".to_string(),
+            wrapper_event_id: event_id.to_hex(),
+        };
+
+        let result = mdk.accept_welcome(welcome);
+        assert!(matches!(result, Err(MdkUniffiError::InvalidInput(_))));
+    }
+
+    #[test]
+    fn test_accept_welcome_invalid_nostr_group_id() {
+        let mdk = create_test_mdk();
+        let keys = Keys::generate();
+        let event_id = EventId::all_zeros();
+        let event = UnsignedEvent {
+            id: Some(event_id),
+            pubkey: keys.public_key(),
+            created_at: nostr::Timestamp::now(),
+            kind: Kind::Custom(444),
+            tags: nostr::Tags::new(),
+            content: "test".to_string(),
+        };
+        let event_json = serde_json::to_string(&event).unwrap();
+
+        let welcome = Welcome {
+            id: event_id.to_hex(),
+            event_json,
+            mls_group_id: hex::encode([0u8; 32]),
+            nostr_group_id: "invalid_hex".to_string(),
+            group_name: "Test".to_string(),
+            group_description: "Test".to_string(),
+            group_image_hash: None,
+            group_image_key: None,
+            group_image_nonce: None,
+            group_admin_pubkeys: vec![keys.public_key().to_hex()],
+            group_relays: vec!["wss://relay.example.com".to_string()],
+            welcomer: keys.public_key().to_hex(),
+            member_count: 0,
+            state: "pending".to_string(),
+            wrapper_event_id: event_id.to_hex(),
+        };
+
+        let result = mdk.accept_welcome(welcome);
+        assert!(matches!(result, Err(MdkUniffiError::InvalidInput(_))));
+    }
+
+    #[test]
+    fn test_accept_welcome_invalid_state() {
+        let mdk = create_test_mdk();
+        let keys = Keys::generate();
+        let event_id = EventId::all_zeros();
+        let event = UnsignedEvent {
+            id: Some(event_id),
+            pubkey: keys.public_key(),
+            created_at: nostr::Timestamp::now(),
+            kind: Kind::Custom(444),
+            tags: nostr::Tags::new(),
+            content: "test".to_string(),
+        };
+        let event_json = serde_json::to_string(&event).unwrap();
+
+        let welcome = Welcome {
+            id: event_id.to_hex(),
+            event_json,
+            mls_group_id: hex::encode([0u8; 32]),
+            nostr_group_id: hex::encode([0u8; 32]),
+            group_name: "Test".to_string(),
+            group_description: "Test".to_string(),
+            group_image_hash: None,
+            group_image_key: None,
+            group_image_nonce: None,
+            group_admin_pubkeys: vec![keys.public_key().to_hex()],
+            group_relays: vec!["wss://relay.example.com".to_string()],
+            welcomer: keys.public_key().to_hex(),
+            member_count: 0,
+            state: "invalid_state".to_string(),
+            wrapper_event_id: event_id.to_hex(),
+        };
+
+        let result = mdk.accept_welcome(welcome);
+        assert!(matches!(result, Err(MdkUniffiError::InvalidInput(_))));
+    }
+
+    #[test]
+    fn test_accept_welcome_invalid_image_hash_size() {
+        let mdk = create_test_mdk();
+        let keys = Keys::generate();
+        let event_id = EventId::all_zeros();
+        let event = UnsignedEvent {
+            id: Some(event_id),
+            pubkey: keys.public_key(),
+            created_at: nostr::Timestamp::now(),
+            kind: Kind::Custom(444),
+            tags: nostr::Tags::new(),
+            content: "test".to_string(),
+        };
+        let event_json = serde_json::to_string(&event).unwrap();
+
+        let welcome = Welcome {
+            id: event_id.to_hex(),
+            event_json,
+            mls_group_id: hex::encode([0u8; 32]),
+            nostr_group_id: hex::encode([0u8; 32]),
+            group_name: "Test".to_string(),
+            group_description: "Test".to_string(),
+            group_image_hash: Some(vec![0u8; 31]), // Wrong size
+            group_image_key: None,
+            group_image_nonce: None,
+            group_admin_pubkeys: vec![keys.public_key().to_hex()],
+            group_relays: vec!["wss://relay.example.com".to_string()],
+            welcomer: keys.public_key().to_hex(),
+            member_count: 0,
+            state: "pending".to_string(),
+            wrapper_event_id: event_id.to_hex(),
+        };
+
+        let result = mdk.accept_welcome(welcome);
+        assert!(matches!(result, Err(MdkUniffiError::InvalidInput(_))));
+    }
+
+    #[test]
+    fn test_decline_welcome_invalid_event_id() {
+        let mdk = create_test_mdk();
+        let welcome = Welcome {
+            id: "invalid_hex".to_string(),
+            event_json: "{}".to_string(),
+            mls_group_id: hex::encode([0u8; 32]),
+            nostr_group_id: hex::encode([0u8; 32]),
+            group_name: "Test".to_string(),
+            group_description: "Test".to_string(),
+            group_image_hash: None,
+            group_image_key: None,
+            group_image_nonce: None,
+            group_admin_pubkeys: vec![],
+            group_relays: vec![],
+            welcomer: "invalid_hex".to_string(),
+            member_count: 0,
+            state: "pending".to_string(),
+            wrapper_event_id: hex::encode([0u8; 32]),
+        };
+
+        let result = mdk.decline_welcome(welcome);
+        assert!(matches!(result, Err(MdkUniffiError::InvalidInput(_))));
     }
 
     #[test]
