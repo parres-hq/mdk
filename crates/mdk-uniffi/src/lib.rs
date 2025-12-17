@@ -131,35 +131,9 @@ fn welcome_from_uniffi(w: Welcome) -> Result<welcome_types::Welcome, MdkUniffiEr
         .try_into()
         .map_err(|_| MdkUniffiError::InvalidInput("Nostr group ID must be 32 bytes".to_string()))?;
 
-    let group_image_hash = match w.group_image_hash {
-        Some(vec) => {
-            let arr: [u8; 32] = vec.try_into().map_err(|_| {
-                MdkUniffiError::InvalidInput("Group image hash must be 32 bytes".to_string())
-            })?;
-            Some(arr)
-        }
-        None => None,
-    };
-
-    let group_image_key = match w.group_image_key {
-        Some(vec) => {
-            let arr: [u8; 32] = vec.try_into().map_err(|_| {
-                MdkUniffiError::InvalidInput("Group image key must be 32 bytes".to_string())
-            })?;
-            Some(arr)
-        }
-        None => None,
-    };
-
-    let group_image_nonce = match w.group_image_nonce {
-        Some(vec) => {
-            let arr: [u8; 12] = vec.try_into().map_err(|_| {
-                MdkUniffiError::InvalidInput("Group image nonce must be 12 bytes".to_string())
-            })?;
-            Some(arr)
-        }
-        None => None,
-    };
+    let group_image_hash = vec_to_array::<32>(w.group_image_hash)?;
+    let group_image_key = vec_to_array::<32>(w.group_image_key)?;
+    let group_image_nonce = vec_to_array::<12>(w.group_image_nonce)?;
 
     let group_admin_pubkeys: Result<BTreeSet<PublicKey>, _> = w
         .group_admin_pubkeys
