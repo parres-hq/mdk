@@ -405,8 +405,8 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## 🔗 Related Projects
 
-- [whitenoise](https://github.com/marmot-protocol/whitenoise): Full-featured messenger using MDK
-- [whitenoise_flutter](https://github.com/marmot-protocol/whitenoise_flutter): Flutter app using whitenoise
+- [whitenoise](https://github.com/marmot-protocol/whitenoise): Flutter app using whitenoise
+- [whitenoise-rs](https://github.com/marmot-protocol/whitenoise-rs): Rust implementation of Marmot
 - [marmot-ts](https://github.com/marmot-protocol/marmot-ts): TypeScript implementation of Marmot
 
 ---
