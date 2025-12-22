@@ -46,27 +46,30 @@ impl StorageTestHarness {
             "save_group results differ"
         );
 
-        if sqlite_result.is_ok() {
-            let sqlite_group = self
-                .sqlite
-                .find_group_by_mls_group_id(&group.mls_group_id)
-                .unwrap()
-                .unwrap();
-            let memory_group = self
-                .memory
-                .find_group_by_mls_group_id(&group.mls_group_id)
-                .unwrap()
-                .unwrap();
-            assert_eq!(
-                sqlite_group, memory_group,
-                "Stored groups differ after successful save"
-            );
-        } else {
-            assert_eq!(
-                format!("{:?}", sqlite_result.unwrap_err()),
-                format!("{:?}", memory_result.unwrap_err()),
-                "Error messages differ"
-            );
+        match &sqlite_result {
+            Err(sqlite_err) => {
+                assert_eq!(
+                    format!("{:?}", sqlite_err),
+                    format!("{:?}", memory_result.as_ref().unwrap_err()),
+                    "Error messages differ"
+                );
+            }
+            Ok(_) => {
+                let sqlite_group = self
+                    .sqlite
+                    .find_group_by_mls_group_id(&group.mls_group_id)
+                    .unwrap()
+                    .unwrap();
+                let memory_group = self
+                    .memory
+                    .find_group_by_mls_group_id(&group.mls_group_id)
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(
+                    sqlite_group, memory_group,
+                    "Stored groups differ after successful save"
+                );
+            }
         }
     }
 
@@ -80,19 +83,22 @@ impl StorageTestHarness {
             "replace_group_relays results differ"
         );
 
-        if sqlite_result.is_ok() {
-            let sqlite_relays = self.sqlite.group_relays(group_id).unwrap();
-            let memory_relays = self.memory.group_relays(group_id).unwrap();
-            assert_eq!(
-                sqlite_relays, memory_relays,
-                "Stored relays differ after successful replacement"
-            );
-        } else {
-            assert_eq!(
-                format!("{:?}", sqlite_result.unwrap_err()),
-                format!("{:?}", memory_result.unwrap_err()),
-                "Error messages differ"
-            );
+        match &sqlite_result {
+            Err(sqlite_err) => {
+                assert_eq!(
+                    format!("{:?}", sqlite_err),
+                    format!("{:?}", memory_result.as_ref().unwrap_err()),
+                    "Error messages differ"
+                );
+            }
+            Ok(_) => {
+                let sqlite_relays = self.sqlite.group_relays(group_id).unwrap();
+                let memory_relays = self.memory.group_relays(group_id).unwrap();
+                assert_eq!(
+                    sqlite_relays, memory_relays,
+                    "Stored relays differ after successful replacement"
+                );
+            }
         }
     }
 
