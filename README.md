@@ -406,7 +406,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ## 🔗 Related Projects
 
 - [whitenoise](https://github.com/marmot-protocol/whitenoise): Flutter app using whitenoise
-- [whitenoise-rs](https://github.com/marmot-protocol/whitenoise-rs): Rust implementation of Marmot
+- [whitenoise-rs](https://github.com/marmot-protocol/whitenoise-rs): Rust crate that implements Marmot for the White Noise app
 - [marmot-ts](https://github.com/marmot-protocol/marmot-ts): TypeScript implementation of Marmot
 
 ---
